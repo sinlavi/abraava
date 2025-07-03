@@ -5,7 +5,7 @@ import subprocess
 from uuid import uuid4
 from balethon import Client
 
-bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")  # ← توکن اصلی رو اینجا بذار
+bot = Client("توکن_بله_اینجا")  # ← توکن اصلی رو اینجا بذار
 itunes_cache = {}
 platform_cache = {}
 download_links = {}
@@ -55,8 +55,8 @@ def extract_itunes(data):
 def fetch_songlink_priority_url(data):
     platforms = data.get("linksByPlatform", {})
     return (
-            platforms.get("soundcloud", {}).get("url") or
-            platforms.get("youtube", {}).get("url")
+        platforms.get("soundcloud", {}).get("url") or
+        platforms.get("youtube", {}).get("url")
     )
 
 def format_meta(meta):
@@ -96,18 +96,7 @@ def separate_buttons(data, meta):
 
 def download_audio_yt_dlp(url):
     filename = f"/mnt/data/{uuid4()}.mp3"
-
     try:
-        result = subprocess.run(
-            ["yt-dlp", "--get-url", url],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        direct_url = result.stdout.strip()
-        print("🔗 لینک نهایی فایل:", direct_url)
-
-        # شروع دانلود فایل
         subprocess.run([
             "yt-dlp",
             "--extract-audio",
@@ -115,7 +104,6 @@ def download_audio_yt_dlp(url):
             "--output", filename,
             url
         ], check=True)
-
         return filename
     except Exception as e:
         print(f"Download failed: {e}")
