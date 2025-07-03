@@ -1,0 +1,224 @@
+import os
+import re
+import requests
+import subprocess
+from uuid import uuid4
+from balethon import Client
+
+bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")  # ← توکن اصلی رو اینجا بذار
+itunes_cache = {}
+platform_cache = {}
+download_links = {}
+
+PLATFORM_NAMES_FA = {
+    "soundcloud": "پخش در ساندکلاود",
+    "youtube": "پخش در یوتیوب",
+    "spotify": "پخش در اسپاتیفای",
+    "appleMusic": "پخش در اپل موزیک",
+    "itunes": "پخش در آیتونز",
+    "amazonStore": "پخش در فروشگاه آمازون",
+    "deezer": "پخش در دیزر",
+    "pandora": "پخش در پاندورا",
+    "amazonMusic": "پخش در آمازون موزیک",
+    "anghami": "پخش در انگامی",
+    "napster": "پخش در نپستر",
+    "tidal": "پخش در تایدال",
+    "boomplay": "پخش در بوم‌پلی",
+    "lineMusic": "پخش در لاین موزیک",
+    "shazam": "مشاهده در شزم",
+    "spinrilla": "پخش در اسپینریلا",
+    "audiomack": "پخش در آدیومک",
+    "google": "جستجو در گوگل",
+    "instagram": "مشاهده در اینستاگرام",
+    "twitter": "مشاهده در توییتر",
+    "facebook": "مشاهده در فیسبوک",
+    "soundbuzz": "پخش در ساندباز",
+    "youtubeMusic": "پخش در یوتیوب موزیک",
+    "yandex": "پخش در یاندکس"
+}
+
+SOCIAL_PLATFORMS = ["instagram", "twitter", "facebook", "shazam", "google", "yandex"]
+
+def contains_url(text):
+    return bool(re.search(r"https?://", text))
+
+def fetch_songlink(url):
+    r = requests.get("https://api.song.link/v1-alpha.1/links", params={"url": url})
+    return r.json() if r.status_code == 200 else None
+
+def extract_itunes(data):
+    platforms = data.get("linksByPlatform", {})
+    itunes = platforms.get("itunes", {})
+    eid = itunes.get("entityUniqueId")
+    return data.get("entitiesByUniqueId", {}).get(eid)
+
+def fetch_songlink_priority_url(data):
+    platforms = data.get("linksByPlatform", {})
+    return (
+            platforms.get("soundcloud", {}).get("url") or
+            platforms.get("youtube", {}).get("url")
+    )
+
+def format_meta(meta):
+    return (
+        f"🎵 *{meta.get('trackName')}*\n"
+        f"👤 {meta.get('artistName')}\n"
+        f"💿 {meta.get('collectionName')}\n"
+        f"📅 {meta.get('releaseDate', '')[:10]}\n"
+        f"🎧 {meta.get('primaryGenreName', '-')}"
+    )
+
+def search_itunes(query):
+    r = requests.get("https://itunes.apple.com/search", params={
+        "term": query,
+        "media": "music",
+        "limit": 5
+    })
+    return r.json().get("results", [])
+
+def separate_buttons(data, meta):
+    platforms = data.get("linksByPlatform", {})
+    tid = str(meta.get("trackId") or meta.get("trackViewUrl") or "0")
+    platform_cache[tid] = []
+
+    for platform, info in platforms.items():
+        url = info.get("url")
+        if not url or platform in SOCIAL_PLATFORMS:
+            continue
+        fa_name = PLATFORM_NAMES_FA.get(platform, f"پخش در {platform}")
+        platform_cache[tid].append({"text": fa_name, "url": url})
+
+    download_url = fetch_songlink_priority_url(data)
+    if download_url:
+        download_links[tid] = download_url
+
+    return tid
+
+def download_audio_yt_dlp(url):
+    filename = f"/mnt/data/{uuid4()}.mp3"
+
+    try:
+        result = subprocess.run(
+            ["yt-dlp", "--get-url", url],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        direct_url = result.stdout.strip()
+        print("🔗 لینک نهایی فایل:", direct_url)
+
+        # شروع دانلود فایل
+        subprocess.run([
+            "yt-dlp",
+            "--extract-audio",
+            "--audio-format", "mp3",
+            "--output", filename,
+            url
+        ], check=True)
+
+        return filename
+    except Exception as e:
+        print(f"Download failed: {e}")
+        return None
+
+def delete_file(path: str):
+    if os.path.exists(path):
+        os.remove(path)
+
+async def send_song_info(chat_id, meta, data):
+    caption = format_meta(meta)
+    img = meta.get("artworkUrl100", "").replace("100x100", "600x600")
+    tid = separate_buttons(data, meta)
+
+    keyboard = []
+
+    preview = meta.get("previewUrl")
+    if preview:
+        keyboard.append([{"text": "🎧 پخش پیش‌نمایش", "callback_data": f"preview_{preview}"}])
+
+    if tid in download_links:
+        keyboard.append([{"text": "⬇️ دریافت فایل", "callback_data": f"download_{tid}"}])
+
+    keyboard.append([{"text": "🌐 شبکه‌های اجتماعی", "callback_data": f"platforms_{tid}"}])
+
+    await bot.send_photo(
+        chat_id=chat_id,
+        photo=img,
+        caption=caption,
+        reply_markup={"inline_keyboard": keyboard}
+    )
+
+@bot.on_message()
+async def on_message(message):
+    text = message.text
+    chat_id = message.chat.id
+
+    if contains_url(text):
+        data = fetch_songlink(text)
+        if not data:
+            return await bot.send_message(chat_id, "⛔ خطا در ارتباط با song.link")
+
+        meta = extract_itunes(data)
+        if not meta:
+            return await bot.send_message(chat_id, "⚠️ متادیتا یافت نشد")
+
+        return await send_song_info(chat_id, meta, data)
+
+    results = search_itunes(text)
+    if not results:
+        return await bot.send_message(chat_id, "نتیجه‌ای یافت نشد.")
+
+    keyboard = []
+    for r in results:
+        tid = str(r["trackId"])
+        itunes_cache[tid] = r
+        keyboard.append([{"text": f"{r['trackName']} – {r['artistName']}", "callback_data": f"t_{tid}"}])
+
+    await bot.send_message(chat_id, "🎶 نتایج جستجو:", reply_markup={"inline_keyboard": keyboard})
+
+@bot.on_callback_query()
+async def answer_callback_query(callback_query):
+    data = callback_query.data
+    chat_id = callback_query.message.chat.id
+
+    if data.startswith("t_"):
+        tid = data[2:]
+        meta = itunes_cache.get(tid)
+        if not meta:
+            return await callback_query.answer(callback_query.id, "❌ اطلاعات یافت نشد.")
+
+        track_url = meta.get("trackViewUrl")
+        songlink_data = fetch_songlink(track_url) if track_url else None
+        if not songlink_data:
+            return await bot.send_message(chat_id, "⛔ خطا در ارتباط با song.link")
+
+        await send_song_info(chat_id, meta, songlink_data)
+
+    elif data.startswith("platforms_"):
+        tid = data[10:]
+        buttons = platform_cache.get(tid)
+        if not buttons:
+            return await callback_query.answer(callback_query.id, "❌ پلتفرمی یافت نشد.")
+        keyboard = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+        await bot.send_message(chat_id, "🎧 پلتفرم‌های پخش:", reply_markup={"inline_keyboard": keyboard})
+
+    elif data.startswith("preview_"):
+        url = data[8:]
+        await bot.send_voice(chat_id, voice=url)
+
+    elif data.startswith("download_"):
+        tid = data[9:]
+        url = download_links.get(tid)
+        if not url:
+            return await bot.send_message(chat_id, "❌ لینک دانلود موجود نیست.")
+
+        await callback_query.answer("⬇️ در حال دریافت فایل...")
+
+        path = download_audio_yt_dlp(url)
+        if not path:
+            return await bot.send_message(chat_id, "⛔ خطا در دانلود فایل.")
+
+        await bot.send_document(chat_id, document=path)
+        delete_file(path)
+
+bot.run()
