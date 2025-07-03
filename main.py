@@ -5,7 +5,7 @@ import subprocess
 from uuid import uuid4
 from balethon import Client
 
-bot = Client("توکن_بله_اینجا")  # ← توکن اصلی رو اینجا بذار
+bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")  # ← توکن اصلی رو اینجا بذار
 itunes_cache = {}
 platform_cache = {}
 download_links = {}
