@@ -1,11 +1,11 @@
 import os
 import re
 import requests
-import subprocess
 from uuid import uuid4
 from balethon import Client
+from yt_dlp import YoutubeDL
 
-bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")  # ← توکن اصلی رو اینجا بذار
+bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")  # ← توکن اصلی ربات Bale رو اینجا بگذار
 itunes_cache = {}
 platform_cache = {}
 download_links = {}
@@ -16,25 +16,25 @@ PLATFORM_NAMES_FA = {
     "spotify": "پخش در اسپاتیفای",
     "appleMusic": "پخش در اپل موزیک",
     "itunes": "پخش در آیتونز",
-    "amazonStore": "پخش در فروشگاه آمازون",
+    "amazonStore": "فروشگاه آمازون",
     "deezer": "پخش در دیزر",
     "pandora": "پخش در پاندورا",
-    "amazonMusic": "پخش در آمازون موزیک",
-    "anghami": "پخش در انگامی",
-    "napster": "پخش در نپستر",
-    "tidal": "پخش در تایدال",
-    "boomplay": "پخش در بوم‌پلی",
-    "lineMusic": "پخش در لاین موزیک",
-    "shazam": "مشاهده در شزم",
-    "spinrilla": "پخش در اسپینریلا",
-    "audiomack": "پخش در آدیومک",
-    "google": "جستجو در گوگل",
-    "instagram": "مشاهده در اینستاگرام",
-    "twitter": "مشاهده در توییتر",
-    "facebook": "مشاهده در فیسبوک",
-    "soundbuzz": "پخش در ساندباز",
-    "youtubeMusic": "پخش در یوتیوب موزیک",
-    "yandex": "پخش در یاندکس"
+    "amazonMusic": "آمازون موزیک",
+    "anghami": "انگامی",
+    "napster": "نپستر",
+    "tidal": "تایدال",
+    "boomplay": "بوم‌پلی",
+    "lineMusic": "لاین موزیک",
+    "shazam": "شزم",
+    "spinrilla": "اسپینریلا",
+    "audiomack": "آدیومک",
+    "google": "گوگل",
+    "instagram": "اینستاگرام",
+    "twitter": "توییتر",
+    "facebook": "فیسبوک",
+    "soundbuzz": "ساندباز",
+    "youtubeMusic": "یوتیوب موزیک",
+    "yandex": "یاندکس"
 }
 
 SOCIAL_PLATFORMS = ["instagram", "twitter", "facebook", "shazam", "google", "yandex"]
@@ -96,17 +96,23 @@ def separate_buttons(data, meta):
 
 def download_audio_yt_dlp(url):
     filename = f"/mnt/data/{uuid4()}.mp3"
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': filename,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'quiet': True,
+    }
+
     try:
-        subprocess.run([
-            "yt-dlp",
-            "--extract-audio",
-            "--audio-format", "mp3",
-            "--output", filename,
-            url
-        ], check=True)
+        with YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
         return filename
     except Exception as e:
-        print(f"Download failed: {e}")
+        print(f"❌ Download failed: {e}")
         return None
 
 def delete_file(path: str):
@@ -127,7 +133,7 @@ async def send_song_info(chat_id, meta, data):
     if tid in download_links:
         keyboard.append([{"text": "⬇️ دریافت فایل", "callback_data": f"download_{tid}"}])
 
-    keyboard.append([{"text": "🌐 شبکه‌های اجتماعی", "callback_data": f"platforms_{tid}"}])
+    keyboard.append([{"text": "🌐 شبکه‌های پخش", "callback_data": f"platforms_{tid}"}])
 
     await bot.send_photo(
         chat_id=chat_id,
@@ -173,7 +179,7 @@ async def answer_callback_query(callback_query):
         tid = data[2:]
         meta = itunes_cache.get(tid)
         if not meta:
-            return await callback_query.answer(callback_query.id, "❌ اطلاعات یافت نشد.")
+            return await callback_query.answer("❌ اطلاعات یافت نشد.")
 
         track_url = meta.get("trackViewUrl")
         songlink_data = fetch_songlink(track_url) if track_url else None
@@ -186,7 +192,7 @@ async def answer_callback_query(callback_query):
         tid = data[10:]
         buttons = platform_cache.get(tid)
         if not buttons:
-            return await callback_query.answer(callback_query.id, "❌ پلتفرمی یافت نشد.")
+            return await callback_query.answer("❌ پلتفرمی یافت نشد.")
         keyboard = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
         await bot.send_message(chat_id, "🎧 پلتفرم‌های پخش:", reply_markup={"inline_keyboard": keyboard})
 
