@@ -1,3 +1,4 @@
 requests>=2.25.0
 balethon>=0.5.0
 yt-dlp
+browser-cookie3
