@@ -204,7 +204,7 @@ async def answer_callback_query(callback_query):
         if not path:
             return await bot.send_message(chat_id, "⛔ خطا در دانلود فایل.")
 
-        await bot.send_document(chat_id, document=path)
+        await bot.send_audio(chat_id, audio=path)
         delete_file(path)
 
 bot.run()
