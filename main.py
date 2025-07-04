@@ -100,7 +100,7 @@ def download_audio_yt_dlp(url):
         'format': 'bestaudio/best',
         'outtmpl': filename,
         'quiet': True,
-        'cookies': './cookies.txt'
+        'cookiefile': './cookies.txt'
     }
     with YoutubeDL(ydl_opts) as ydl:
         print(ydl)
