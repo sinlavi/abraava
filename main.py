@@ -106,14 +106,10 @@ def download_audio_yt_dlp(url):
         }],
         'quiet': True,
     }
-
-    try:
-        with YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        return filename
-    except Exception as e:
-        print(f"❌ Download failed: {e}")
-        return None
+    with YoutubeDL(ydl_opts) as ydl:
+        print(ydl)
+        ydl.download([url])
+    return filename
 
 def delete_file(path: str):
     if os.path.exists(path):
