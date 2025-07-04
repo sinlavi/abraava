@@ -8,7 +8,7 @@ from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3, APIC, error
 from mutagen.mp3 import MP3
 
-bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")  # توکن ربات Bale
+bot = Client("توکن_بله_اینجا")  # ← توکن اصلی ربات Bale رو اینجا بگذار
 itunes_cache = {}
 platform_cache = {}
 download_links = {}
@@ -98,6 +98,8 @@ def separate_buttons(data, meta):
     return tid
 
 def download_audio_yt_dlp(url, meta):
+    print(f"🔗 Downloading from: {url}")  # چاپ لینک قبل از دانلود
+
     filename = f"{uuid4()}.mp3"
     ydl_opts = {
         'cookiefile': 'cookies.txt',
@@ -121,7 +123,7 @@ def download_audio_yt_dlp(url, meta):
         audio["TPE1"] = meta.get("artistName", "")
         audio["TALB"] = meta.get("collectionName", "")
         audio["TCON"] = meta.get("primaryGenreName", "")
-        audio["TDRC"] = meta.get("releaseDate", "")[:4]  # سال انتشار
+        audio["TDRC"] = meta.get("releaseDate", "")[:4]
 
         cover_url = meta.get("artworkUrl100", "").replace("100x100", "600x600")
         if cover_url:
@@ -138,7 +140,7 @@ def download_audio_yt_dlp(url, meta):
                 )
         audio.save()
     except Exception as e:
-        print("Error setting metadata:", e)
+        print("❌ Error setting metadata:", e)
 
     return filename
 
@@ -230,17 +232,17 @@ async def answer_callback_query(callback_query):
     elif data.startswith("download_"):
         tid = data[9:]
         url = download_links.get(tid)
-        if not url:
-            return await bot.send_message(chat_id, "❌ لینک دانلود موجود نیست.")
+        meta = itunes_cache.get(tid)
+        if not url or not meta:
+            return await bot.send_message(chat_id, "❌ لینک یا متادیتا موجود نیست.")
 
         await callback_query.answer("⬇️ در حال دریافت فایل...")
 
-        # اینجا متا را از کش itunes می‌گیریم تا متادیتا را ست کنیم
-        meta = itunes_cache.get(tid)
         path = download_audio_yt_dlp(url, meta)
         if not path:
             return await bot.send_message(chat_id, "⛔ خطا در دانلود فایل.")
 
+        print(f"📤 Sending file: {path}")
         await bot.send_audio(chat_id, audio=path)
         delete_file(path)
 
