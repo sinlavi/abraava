@@ -102,9 +102,19 @@ def download_audio_yt_dlp(url):
         'outtmpl': filename,
         'quiet': True,
     }
+
     with YoutubeDL(ydl_opts) as ydl:
-        print(ydl)
+        info = ydl.extract_info(url, download=False)
+        if 'url' in info:
+            print("🔗 لینک مستقیم:", info['url'])
+        elif 'formats' in info and info['formats']:
+            # پیدا کردن بهترین فرمت قابل دانلود
+            best_format = info['formats'][-1]  # معمولاً آخرین مورد بهترین کیفیت است
+            print("🔗 لینک مستقیم:", best_format.get('url'))
+
+        # حالا فایل را دانلود می‌کنیم
         ydl.download([url])
+
     return filename
 
 def delete_file(path: str):
