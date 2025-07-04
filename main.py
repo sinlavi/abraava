@@ -97,7 +97,7 @@ def separate_buttons(data, meta):
 def download_audio_yt_dlp(url):
     filename = f"{uuid4()}.mp3"
     ydl_opts = {
-        'cookiefile': 'cookies.txt'
+        'cookiefile': 'cookies.txt',
         'format': 'bestaudio/best',
         'outtmpl': filename,
         'quiet': True,
