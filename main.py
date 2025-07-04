@@ -1,11 +1,13 @@
 import os
 import re
 import requests
+import asyncio
 from uuid import uuid4
 from balethon import Client
 from yt_dlp import YoutubeDL
 
-bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")  # ← توکن اصلی ربات Bale رو اینجا بگذار
+bot = Client("توکن_ربات_بله_اینجا")  # ← توکن اصلی بله را اینجا بگذار
+
 itunes_cache = {}
 platform_cache = {}
 download_links = {}
@@ -94,32 +96,34 @@ def separate_buttons(data, meta):
 
     return tid
 
-def download_audio_yt_dlp(url):
+def delete_file(path: str):
+    if os.path.exists(path):
+        os.remove(path)
+
+async def download_audio_yt_dlp_async(url, chat_id):
     filename = f"{uuid4()}.mp3"
+    message = await bot.send_message(chat_id, "⏳ شروع دانلود...")
+
+    def progress_hook(d):
+        if d['status'] == 'downloading':
+            percent = d.get('_percent_str', '').strip()
+            speed = d.get('_speed_str', '').strip()
+            eta = d.get('_eta_str', '').strip()
+            progress_text = f"⬇️ در حال دانلود...\nدرصد: {percent}\nسرعت: {speed}\nزمان باقی‌مانده: {eta}"
+            asyncio.create_task(bot.edit_message_text(chat_id=chat_id, message_id=message.id, text=progress_text))
+
     ydl_opts = {
         'cookiefile': 'cookies.txt',
         'format': 'bestaudio/best',
         'outtmpl': filename,
         'quiet': True,
+        'progress_hooks': [progress_hook],
     }
 
     with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        if 'url' in info:
-            print("🔗 لینک مستقیم:", info['url'])
-        elif 'formats' in info and info['formats']:
-            # پیدا کردن بهترین فرمت قابل دانلود
-            best_format = info['formats'][-1]  # معمولاً آخرین مورد بهترین کیفیت است
-            print("🔗 لینک مستقیم:", best_format.get('url'))
-
-        # حالا فایل را دانلود می‌کنیم
         ydl.download([url])
 
     return filename
-
-def delete_file(path: str):
-    if os.path.exists(path):
-        os.remove(path)
 
 async def send_song_info(chat_id, meta, data):
     caption = format_meta(meta)
@@ -210,7 +214,7 @@ async def answer_callback_query(callback_query):
 
         await callback_query.answer("⬇️ در حال دریافت فایل...")
 
-        path = download_audio_yt_dlp(url)
+        path = await download_audio_yt_dlp_async(url, chat_id)
         if not path:
             return await bot.send_message(chat_id, "⛔ خطا در دانلود فایل.")
 
