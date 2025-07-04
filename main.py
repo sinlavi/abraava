@@ -95,7 +95,7 @@ def separate_buttons(data, meta):
     return tid
 
 def download_audio_yt_dlp(url):
-    filename = f"/mnt/data/{uuid4()}.mp3"
+    filename = f"{uuid4()}.mp3"
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': filename,
