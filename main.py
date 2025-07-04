@@ -5,7 +5,7 @@ from uuid import uuid4
 from balethon import Client
 from yt_dlp import YoutubeDL
 
-bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")  # ← توکن اصلی ربات Bale رو اینجا بگذار
+bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")
 itunes_cache = {}
 platform_cache = {}
 download_links = {}
@@ -94,12 +94,10 @@ def separate_buttons(data, meta):
 
     return tid
 
-def download_audio_yt_dlp(url):
-    filename = f"{uuid4()}.mp3"
+def get_direct_audio_url(url):
     ydl_opts = {
         'cookiefile': 'cookies.txt',
         'format': 'bestaudio/best',
-        'outtmpl': filename,
         'quiet': True,
     }
 
@@ -107,19 +105,13 @@ def download_audio_yt_dlp(url):
         info = ydl.extract_info(url, download=False)
         if 'url' in info:
             print("🔗 لینک مستقیم:", info['url'])
+            return info['url']
         elif 'formats' in info and info['formats']:
-            # پیدا کردن بهترین فرمت قابل دانلود
-            best_format = info['formats'][-1]  # معمولاً آخرین مورد بهترین کیفیت است
+            best_format = info['formats'][-1]
             print("🔗 لینک مستقیم:", best_format.get('url'))
+            return best_format.get('url')
 
-        # حالا فایل را دانلود می‌کنیم
-        ydl.download([url])
-
-    return filename
-
-def delete_file(path: str):
-    if os.path.exists(path):
-        os.remove(path)
+    return None
 
 async def send_song_info(chat_id, meta, data):
     caption = format_meta(meta)
@@ -208,13 +200,12 @@ async def answer_callback_query(callback_query):
         if not url:
             return await bot.send_message(chat_id, "❌ لینک دانلود موجود نیست.")
 
-        await callback_query.answer("⬇️ در حال دریافت فایل...")
+        await callback_query.answer("🎧 در حال دریافت لینک فایل...")
 
-        path = download_audio_yt_dlp(url)
-        if not path:
-            return await bot.send_message(chat_id, "⛔ خطا در دانلود فایل.")
+        direct_url = get_direct_audio_url(url)
+        if not direct_url:
+            return await bot.send_message(chat_id, "⛔ خطا در دریافت لینک مستقیم.")
 
-        await bot.send_audio(chat_id, audio=path)
-        delete_file(path)
+        await bot.send_audio(chat_id, audio=direct_url)
 
 bot.run()
