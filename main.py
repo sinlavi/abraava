@@ -6,7 +6,7 @@ from uuid import uuid4
 from balethon import Client
 from yt_dlp import YoutubeDL
 
-bot = Client("توکن_ربات_بله_اینجا")  # ← توکن اصلی بله را اینجا بگذار
+bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")  # ← توکن اصلی بله را اینجا بگذار
 
 itunes_cache = {}
 platform_cache = {}
