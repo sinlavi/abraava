@@ -6,7 +6,7 @@ from uuid import uuid4
 from balethon import Client
 from yt_dlp import YoutubeDL
 
-bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")  # ← توکن اصلی بله را اینجا بگذار
+bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")
 
 itunes_cache = {}
 platform_cache = {}
@@ -77,6 +77,14 @@ def search_itunes(query):
         "limit": 5
     })
     return r.json().get("results", [])
+
+def search_soundcloud(query):
+    with YoutubeDL({"quiet": True}) as ydl:
+        try:
+            results = ydl.extract_info(f"scsearch5:{query}", download=False)['entries']
+            return results
+        except Exception:
+            return []
 
 def separate_buttons(data, meta):
     platforms = data.get("linksByPlatform", {})
@@ -164,15 +172,26 @@ async def on_message(message):
 
         return await send_song_info(chat_id, meta, data)
 
-    results = search_itunes(text)
-    if not results:
+    # Search both
+    itunes_results = search_itunes(text)
+    soundcloud_results = search_soundcloud(text)
+
+    if not itunes_results and not soundcloud_results:
         return await bot.send_message(chat_id, "نتیجه‌ای یافت نشد.")
 
     keyboard = []
-    for r in results:
+
+    for r in itunes_results:
         tid = str(r["trackId"])
         itunes_cache[tid] = r
-        keyboard.append([{"text": f"{r['trackName']} – {r['artistName']}", "callback_data": f"t_{tid}"}])
+        keyboard.append([{"text": f"🎵 {r['trackName']} – {r['artistName']}", "callback_data": f"t_{tid}"}])
+
+    for sc in soundcloud_results:
+        scid = f"sc_{sc['id']}"
+        itunes_cache[scid] = sc
+        title = sc.get("title", "بی‌نام")
+        uploader = sc.get("uploader", "")
+        keyboard.append([{"text": f"🎧 {title} – {uploader}", "callback_data": scid}])
 
     await bot.send_message(chat_id, "🎶 نتایج جستجو:", reply_markup={"inline_keyboard": keyboard})
 
@@ -191,6 +210,32 @@ async def answer_callback_query(callback_query):
         songlink_data = fetch_songlink(track_url) if track_url else None
         if not songlink_data:
             return await bot.send_message(chat_id, "⛔ خطا در ارتباط با song.link")
+
+        await send_song_info(chat_id, meta, songlink_data)
+
+    elif data.startswith("sc_"):
+        sc_meta = itunes_cache.get(data)
+        if not sc_meta:
+            return await callback_query.answer("❌ اطلاعات SoundCloud یافت نشد.")
+
+        url = sc_meta.get("webpage_url")
+        if not url:
+            return await bot.send_message(chat_id, "⛔ لینک SoundCloud یافت نشد.")
+
+        songlink_data = fetch_songlink(url)
+        if not songlink_data:
+            return await bot.send_message(chat_id, "⛔ خطا در ارتباط با song.link")
+
+        meta = {
+            "trackName": sc_meta.get("title", "بدون عنوان"),
+            "artistName": sc_meta.get("uploader", "نامشخص"),
+            "collectionName": sc_meta.get("uploader", "SoundCloud"),
+            "releaseDate": sc_meta.get("upload_date", ""),
+            "primaryGenreName": sc_meta.get("genre", "SoundCloud"),
+            "artworkUrl100": sc_meta.get("thumbnail"),
+            "previewUrl": sc_meta.get("url"),
+            "trackId": data
+        }
 
         await send_song_info(chat_id, meta, songlink_data)
 
