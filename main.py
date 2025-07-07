@@ -4,28 +4,28 @@ import json
 import requests
 import asyncio
 from uuid import uuid4
+from collections import defaultdict
 from balethon import Client
 from yt_dlp import YoutubeDL
 
-bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")  # Replace with your token
+bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")  # ← توکن اصلی شما
 
 PLATFORM_NAMES_FA = {
-    "soundcloud": "پخش در ساندکلاود", "youtube": "پخش در یوتیوب",
-    "spotify": "پخش در اسپاتیفای", "appleMusic": "پخش در اپل موزیک",
-    "itunes": "پخش در آیتونز", "amazonStore": "فروشگاه آمازون",
-    "deezer": "پخش در دیزر", "pandora": "پخش در پاندورا",
-    "amazonMusic": "آمازون موزیک", "anghami": "انگامی",
-    "napster": "نپستر", "tidal": "تایدال",
-    "boomplay": "بوم‌پلی", "lineMusic": "لاین موزیک",
-    "shazam": "شزم", "spinrilla": "اسپینریلا", "audiomack": "آدیومک",
-    "google": "گوگل", "instagram": "اینستاگرام", "twitter": "توییتر",
-    "facebook": "فیسبوک", "soundbuzz": "ساندباز",
-    "youtubeMusic": "یوتیوب موزیک", "yandex": "یاندکس"
+    "soundcloud": "پخش در ساندکلاود", "youtube": "پخش در یوتیوب", "spotify": "پخش در اسپاتیفای",
+    "appleMusic": "پخش در اپل موزیک", "itunes": "پخش در آیتونز", "amazonStore": "فروشگاه آمازون",
+    "deezer": "پخش در دیزر", "pandora": "پخش در پاندورا", "amazonMusic": "آمازون موزیک",
+    "anghami": "انگامی", "napster": "نپستر", "tidal": "تایدال", "boomplay": "بوم‌پلی",
+    "lineMusic": "لاین موزیک", "shazam": "شزم", "spinrilla": "اسپینریلا", "audiomack": "آدیومک",
+    "google": "گوگل", "instagram": "اینستاگرام", "twitter": "توییتر", "facebook": "فیسبوک",
+    "soundbuzz": "ساندباز", "youtubeMusic": "یوتیوب موزیک", "yandex": "یاندکس"
 }
-
 SOCIAL_PLATFORMS = ["instagram", "twitter", "facebook", "shazam", "google", "yandex"]
 
-def contains_url(text): return bool(re.search(r"https?://", text))
+# کش متادیتا برای هر کاربر
+user_meta_cache = defaultdict(dict)
+
+def contains_url(text):
+    return bool(re.search(r"https?://", text))
 
 def fetch_songlink(url):
     r = requests.get("https://api.song.link/v1-alpha.1/links", params={"url": url})
@@ -62,13 +62,13 @@ def search_itunes(query):
 def search_soundcloud(query):
     with YoutubeDL({"quiet": True}) as ydl:
         try:
-            results = ydl.extract_info(f"scsearch5:{query}", download=False)['entries']
-            return results
-        except Exception:
+            return ydl.extract_info(f"scsearch5:{query}", download=False)["entries"]
+        except:
             return []
 
 def delete_file(path: str):
-    if os.path.exists(path): os.remove(path)
+    if os.path.exists(path):
+        os.remove(path)
 
 async def download_audio_yt_dlp_async(url, chat_id):
     filename = f"{uuid4()}.mp3"
@@ -92,46 +92,30 @@ async def download_audio_yt_dlp_async(url, chat_id):
 
     with YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
-
     return filename
 
 async def send_song_info(chat_id, meta, data):
     caption = format_meta(meta)
     img = meta.get("artworkUrl100", "").replace("100x100", "600x600")
-
-    platforms = data.get("linksByPlatform", {})
-    download_url = fetch_songlink_priority_url(data)
-    tid = str(meta.get("trackId") or meta.get("trackViewUrl") or uuid4())
+    tid = str(uuid4())
 
     keyboard = []
+    user_meta_cache[chat_id][tid] = (meta, data)
 
     if meta.get("previewUrl"):
         keyboard.append([{
-            "text": "🎧 پخش پیش‌نمایش",
-            "callback_data": f"preview|{meta['previewUrl']}"
+            "text": "🎧 پخش پیش‌نمایش", "callback_data": f"preview|{meta['previewUrl']}"
         }])
 
+    download_url = fetch_songlink_priority_url(data)
     if download_url:
         keyboard.append([{
-            "text": "⬇️ دریافت فایل",
-            "callback_data": f"download|{download_url}"
+            "text": "⬇️ دریافت فایل", "callback_data": f"download|{download_url}"
         }])
 
-    platform_buttons = []
-    for platform, info in platforms.items():
-        if not info.get("url") or platform in SOCIAL_PLATFORMS:
-            continue
-        fa_name = PLATFORM_NAMES_FA.get(platform, f"پخش در {platform}")
-        platform_buttons.append({
-            "text": fa_name,
-            "url": info["url"]
-        })
-
-    if platform_buttons:
-        keyboard.append([{
-            "text": "🌐 شبکه‌های پخش",
-            "callback_data": f"platforms|{json.dumps(platform_buttons)}"
-        }])
+    keyboard.append([{
+        "text": "🌐 شبکه‌های پخش", "callback_data": f"platforms|{tid}"
+    }])
 
     await bot.send_photo(
         chat_id=chat_id,
@@ -156,33 +140,42 @@ async def on_message(message):
 
     itunes_results = search_itunes(text)
     soundcloud_results = search_soundcloud(text)
-
     if not itunes_results and not soundcloud_results:
         return await bot.send_message(chat_id, "نتیجه‌ای یافت نشد.")
 
     keyboard = []
-
-    for r in itunes_results:
-        meta_json = json.dumps(r)
+    for result in itunes_results:
+        tid = str(uuid4())
+        meta = result
+        url = meta.get("trackViewUrl")
+        data = fetch_songlink(url) if url else None
+        if not data:
+            continue
+        user_meta_cache[chat_id][tid] = (meta, data)
         keyboard.append([{
-            "text": f"🎵 {r['trackName']} – {r['artistName']}",
-            "callback_data": f"itunes|{r.get('trackViewUrl')}|{meta_json}"
+            "text": f"🎵 {meta['trackName']} – {meta['artistName']}",
+            "callback_data": f"meta|{tid}"
         }])
 
     for sc in soundcloud_results:
+        url = sc.get("webpage_url")
+        data = fetch_songlink(url) if url else None
+        if not data:
+            continue
         meta = {
-            "title": sc.get("title", "بی‌نام"),
-            "uploader": sc.get("uploader", "نامشخص"),
-            "upload_date": sc.get("upload_date", ""),
-            "genre": sc.get("genre", "SoundCloud"),
-            "thumbnail": sc.get("thumbnail"),
-            "url": sc.get("url"),
-            "webpage_url": sc.get("webpage_url")
+            "trackName": sc.get("title", "بدون عنوان"),
+            "artistName": sc.get("uploader", "نامشخص"),
+            "collectionName": sc.get("uploader", "SoundCloud"),
+            "releaseDate": sc.get("upload_date", ""),
+            "primaryGenreName": sc.get("genre", "SoundCloud"),
+            "artworkUrl100": sc.get("thumbnail", ""),
+            "previewUrl": sc.get("url"),
         }
-        meta_json = json.dumps(meta)
+        tid = str(uuid4())
+        user_meta_cache[chat_id][tid] = (meta, data)
         keyboard.append([{
-            "text": f"🎧 {meta['title']} – {meta['uploader']}",
-            "callback_data": f"sc|{meta['webpage_url']}|{meta_json}"
+            "text": f"🎧 {meta['trackName']} – {meta['artistName']}",
+            "callback_data": f"meta|{tid}"
         }])
 
     await bot.send_message(chat_id, "🎶 نتایج جستجو:", reply_markup={"inline_keyboard": keyboard})
@@ -192,32 +185,12 @@ async def on_callback(callback_query):
     chat_id = callback_query.message.chat.id
     data = callback_query.data
 
-    if data.startswith("itunes|"):
-        _, url, meta_json = data.split("|", 2)
-        meta = json.loads(meta_json)
-        songlink_data = fetch_songlink(url)
-        if not songlink_data:
-            return await bot.send_message(chat_id, "⛔ خطا در ارتباط با song.link")
-        await send_song_info(chat_id, meta, songlink_data)
-
-    elif data.startswith("sc|"):
-        _, url, meta_json = data.split("|", 2)
-        meta_data = json.loads(meta_json)
-        songlink_data = fetch_songlink(url)
-        if not songlink_data:
-            return await bot.send_message(chat_id, "⛔ خطا در ارتباط با song.link")
-
-        meta = {
-            "trackName": meta_data.get("title", "بدون عنوان"),
-            "artistName": meta_data.get("uploader", "نامشخص"),
-            "collectionName": meta_data.get("uploader", "SoundCloud"),
-            "releaseDate": meta_data.get("upload_date", ""),
-            "primaryGenreName": meta_data.get("genre", "SoundCloud"),
-            "artworkUrl100": meta_data.get("thumbnail", ""),
-            "previewUrl": meta_data.get("url"),
-            "trackId": str(uuid4())
-        }
-
+    if data.startswith("meta|"):
+        tid = data.split("|", 1)[1]
+        meta_pair = user_meta_cache[chat_id].get(tid)
+        if not meta_pair:
+            return await callback_query.answer("❌ اطلاعات یافت نشد.")
+        meta, songlink_data = meta_pair
         await send_song_info(chat_id, meta, songlink_data)
 
     elif data.startswith("preview|"):
@@ -232,9 +205,19 @@ async def on_callback(callback_query):
         delete_file(path)
 
     elif data.startswith("platforms|"):
-        raw = data.split("|", 1)[1]
-        buttons = json.loads(raw)
-        grouped = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+        tid = data.split("|", 1)[1]
+        meta_pair = user_meta_cache[chat_id].get(tid)
+        if not meta_pair:
+            return await callback_query.answer("❌ اطلاعات یافت نشد.")
+        _, data = meta_pair
+        platforms = data.get("linksByPlatform", {})
+        buttons = []
+        for platform, info in platforms.items():
+            if not info.get("url") or platform in SOCIAL_PLATFORMS:
+                continue
+            fa = PLATFORM_NAMES_FA.get(platform, f"پخش در {platform}")
+            buttons.append({"text": fa, "url": info["url"]})
+        grouped = [buttons[i:i+2] for i in range(0, len(buttons), 2)]
         await bot.send_message(chat_id, "🌐 پلتفرم‌های پخش:", reply_markup={"inline_keyboard": grouped})
 
 bot.run()
