@@ -1,13 +1,11 @@
 import os
 import re
 import requests
-import asyncio
 from uuid import uuid4
 from balethon import Client
 from yt_dlp import YoutubeDL
 
-bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")
-
+bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")  # ← توکن اصلی ربات Bale رو اینجا بگذار
 itunes_cache = {}
 platform_cache = {}
 download_links = {}
@@ -46,7 +44,6 @@ def contains_url(text):
 
 def fetch_songlink(url):
     r = requests.get("https://api.song.link/v1-alpha.1/links", params={"url": url})
-    print(r)
     return r.json() if r.status_code == 200 else None
 
 def extract_itunes(data):
@@ -79,14 +76,6 @@ def search_itunes(query):
     })
     return r.json().get("results", [])
 
-def search_soundcloud(query):
-    with YoutubeDL({"quiet": True}) as ydl:
-        try:
-            results = ydl.extract_info(f"scsearch5:{query}", download=False)['entries']
-            return results
-        except Exception:
-            return []
-
 def separate_buttons(data, meta):
     platforms = data.get("linksByPlatform", {})
     tid = str(meta.get("trackId") or meta.get("trackViewUrl") or "0")
@@ -105,34 +94,22 @@ def separate_buttons(data, meta):
 
     return tid
 
-def delete_file(path: str):
-    if os.path.exists(path):
-        os.remove(path)
-
-async def download_audio_yt_dlp_async(url, chat_id):
+def download_audio_yt_dlp(url):
     filename = f"{uuid4()}.mp3"
-    message = await bot.send_message(chat_id, "⏳ شروع دانلود...")
-
-    def progress_hook(d):
-        if d['status'] == 'downloading':
-            percent = d.get('_percent_str', '').strip()
-            speed = d.get('_speed_str', '').strip()
-            eta = d.get('_eta_str', '').strip()
-            progress_text = f"⬇️ در حال دانلود...\nدرصد: {percent}\nسرعت: {speed}\nزمان باقی‌مانده: {eta}"
-            asyncio.create_task(bot.edit_message_text(chat_id=chat_id, message_id=message.id, text=progress_text))
-
     ydl_opts = {
         'cookiefile': 'cookies.txt',
         'format': 'bestaudio/best',
         'outtmpl': filename,
         'quiet': True,
-        'progress_hooks': [progress_hook],
     }
-
     with YoutubeDL(ydl_opts) as ydl:
+        print(ydl)
         ydl.download([url])
-
     return filename
+
+def delete_file(path: str):
+    if os.path.exists(path):
+        os.remove(path)
 
 async def send_song_info(chat_id, meta, data):
     caption = format_meta(meta)
@@ -173,26 +150,15 @@ async def on_message(message):
 
         return await send_song_info(chat_id, meta, data)
 
-    # Search both
-    itunes_results = search_itunes(text)
-    soundcloud_results = search_soundcloud(text)
-
-    if not itunes_results and not soundcloud_results:
+    results = search_itunes(text)
+    if not results:
         return await bot.send_message(chat_id, "نتیجه‌ای یافت نشد.")
 
     keyboard = []
-
-    for r in itunes_results:
+    for r in results:
         tid = str(r["trackId"])
         itunes_cache[tid] = r
-        keyboard.append([{"text": f"🎵 {r['trackName']} – {r['artistName']}", "callback_data": f"t_{tid}"}])
-
-    for sc in soundcloud_results:
-        scid = f"sc_{sc['id']}"
-        itunes_cache[scid] = sc
-        title = sc.get("title", "بی‌نام")
-        uploader = sc.get("uploader", "")
-        keyboard.append([{"text": f"🎧 {title} – {uploader}", "callback_data": scid}])
+        keyboard.append([{"text": f"{r['trackName']} – {r['artistName']}", "callback_data": f"t_{tid}"}])
 
     await bot.send_message(chat_id, "🎶 نتایج جستجو:", reply_markup={"inline_keyboard": keyboard})
 
@@ -204,8 +170,6 @@ async def answer_callback_query(callback_query):
     if data.startswith("t_"):
         tid = data[2:]
         meta = itunes_cache.get(tid)
-        print(tid)
-        print(meta)
         if not meta:
             return await callback_query.answer("❌ اطلاعات یافت نشد.")
 
@@ -213,32 +177,6 @@ async def answer_callback_query(callback_query):
         songlink_data = fetch_songlink(track_url) if track_url else None
         if not songlink_data:
             return await bot.send_message(chat_id, "⛔ خطا در ارتباط با song.link")
-
-        await send_song_info(chat_id, meta, songlink_data)
-
-    elif data.startswith("sc_"):
-        sc_meta = itunes_cache.get(data)
-        if not sc_meta:
-            return await callback_query.answer("❌ اطلاعات SoundCloud یافت نشد.")
-
-        url = sc_meta.get("webpage_url")
-        if not url:
-            return await bot.send_message(chat_id, "⛔ لینک SoundCloud یافت نشد.")
-
-        songlink_data = fetch_songlink(url)
-        if not songlink_data:
-            return await bot.send_message(chat_id, "⛔ خطا در ارتباط با song.link")
-
-        meta = {
-            "trackName": sc_meta.get("title", "بدون عنوان"),
-            "artistName": sc_meta.get("uploader", "نامشخص"),
-            "collectionName": sc_meta.get("uploader", "SoundCloud"),
-            "releaseDate": sc_meta.get("upload_date", ""),
-            "primaryGenreName": sc_meta.get("genre", "SoundCloud"),
-            "artworkUrl100": sc_meta.get("thumbnail"),
-            "previewUrl": sc_meta.get("url"),
-            "trackId": data
-        }
 
         await send_song_info(chat_id, meta, songlink_data)
 
@@ -262,7 +200,7 @@ async def answer_callback_query(callback_query):
 
         await callback_query.answer("⬇️ در حال دریافت فایل...")
 
-        path = await download_audio_yt_dlp_async(url, chat_id)
+        path = download_audio_yt_dlp(url)
         if not path:
             return await bot.send_message(chat_id, "⛔ خطا در دانلود فایل.")
 
