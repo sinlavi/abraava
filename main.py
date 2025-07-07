@@ -204,6 +204,8 @@ async def answer_callback_query(callback_query):
     if data.startswith("t_"):
         tid = data[2:]
         meta = itunes_cache.get(tid)
+        print(tid)
+        print(meta)
         if not meta:
             return await callback_query.answer("❌ اطلاعات یافت نشد.")
 
