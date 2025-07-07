@@ -46,6 +46,7 @@ def contains_url(text):
 
 def fetch_songlink(url):
     r = requests.get("https://api.song.link/v1-alpha.1/links", params={"url": url})
+    print(r)
     return r.json() if r.status_code == 200 else None
 
 def extract_itunes(data):
