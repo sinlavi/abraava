@@ -54,12 +54,17 @@ async def download_and_send(chat_id, url):
                 last_update_time = now
         elif d['status'] == 'finished':
             download_info['info'] = d.get('info_dict', {})
-
+    
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": filename,
         "quiet": True,
         "progress_hooks": [progress_hook],
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
     }
 
     try:
