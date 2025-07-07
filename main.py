@@ -136,7 +136,6 @@ async def download_audio_yt_dlp_async(url, chat_id):
 
 async def send_song_info(chat_id, meta, data):
     caption = format_meta(meta)
-    img = meta.get("artworkUrl100", "").replace("100x100", "600x600")
     tid = separate_buttons(data, meta)
 
     keyboard = []
@@ -150,10 +149,9 @@ async def send_song_info(chat_id, meta, data):
 
     keyboard.append([{"text": "🌐 شبکه‌های پخش", "callback_data": f"platforms_{tid}"}])
 
-    await bot.send_photo(
+    await bot.send_message(
         chat_id=chat_id,
-        photo=img,
-        caption=caption,
+        text=caption,
         reply_markup={"inline_keyboard": keyboard}
     )
 
@@ -202,7 +200,6 @@ async def answer_callback_query(callback_query):
     chat_id = callback_query.message.chat.id
 
     if data.startswith("t_"):
-        print(itunes_cache)
         tid = data[2:]
         meta = itunes_cache.get(tid)
         if not meta:
