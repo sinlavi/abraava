@@ -11,14 +11,12 @@ bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")
 search_cache = {}
 download_links = {}
 
-
 def search_soundcloud(query):
     with YoutubeDL({"quiet": True}) as ydl:
         try:
             return ydl.extract_info(f"scsearch5:{query}", download=False)["entries"]
         except:
             return []
-
 
 def search_itunes(query):
     try:
@@ -31,7 +29,6 @@ def search_itunes(query):
     except:
         return []
 
-
 def fetch_songlink(url):
     try:
         r = requests.get("https://api.song.link/v1-alpha.1/links", params={"url": url})
@@ -39,13 +36,11 @@ def fetch_songlink(url):
     except:
         return None
 
-
 def extract_itunes(data):
     platforms = data.get("linksByPlatform", {})
     itunes = platforms.get("itunes", {})
     eid = itunes.get("entityUniqueId")
     return data.get("entitiesByUniqueId", {}).get(eid)
-
 
 def fetch_songlink_priority_url(data):
     platforms = data.get("linksByPlatform", {})
@@ -53,7 +48,6 @@ def fetch_songlink_priority_url(data):
         platforms.get("soundcloud", {}).get("url") or
         platforms.get("youtube", {}).get("url")
     )
-
 
 def format_meta(meta):
     return (
@@ -64,11 +58,9 @@ def format_meta(meta):
         f"🎧 {meta.get('primaryGenreName', '-')}"
     )
 
-
 def delete_file(path):
     if os.path.exists(path):
         os.remove(path)
-
 
 async def download_and_send(chat_id, url):
     filename = f"{uuid4()}.mp3"
@@ -110,7 +102,6 @@ async def download_and_send(chat_id, url):
     finally:
         delete_file(filename)
 
-
 async def send_song_info(chat_id, meta, song_data):
     caption = format_meta(meta)
     img = meta.get("artworkUrl100", "").replace("100x100", "600x600")
@@ -118,7 +109,6 @@ async def send_song_info(chat_id, meta, song_data):
     download_links[tid] = song_data
 
     keyboard = []
-
     preview = meta.get("previewUrl")
     if preview:
         keyboard.append([{"text": "🎧 پخش پیش‌نمایش", "callback_data": f"preview_{preview}"}])
@@ -131,7 +121,6 @@ async def send_song_info(chat_id, meta, song_data):
         caption=caption,
         reply_markup={"inline_keyboard": keyboard}
     )
-
 
 @bot.on_message()
 async def handle_message(message):
@@ -165,7 +154,6 @@ async def handle_message(message):
         "🎶 نتایج جستجو:",
         reply_markup={"inline_keyboard": keyboard}
     )
-
 
 @bot.on_callback_query()
 async def handle_callback(callback_query):
@@ -210,6 +198,5 @@ async def handle_callback(callback_query):
             return await download_and_send(chat_id, fallback_url)
         else:
             return await bot.send_message(chat_id, "❌ هیچ لینکی برای دانلود یافت نشد.")
-
 
 bot.run()
