@@ -1,15 +1,16 @@
 import os
 import asyncio
 import time
+import requests
 from uuid import uuid4
 from balethon import Client
 from yt_dlp import YoutubeDL
-from mutagen.easyid3 import EasyID3
-from mutagen.mp3 import MP3
 
 bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")
 
 search_cache = {}
+download_links = {}
+meta_cache = {}
 
 def search_soundcloud(query):
     with YoutubeDL({"quiet": True}) as ydl:
@@ -18,31 +19,51 @@ def search_soundcloud(query):
         except:
             return []
 
+def search_itunes(query):
+    try:
+        res = requests.get("https://itunes.apple.com/search", params={
+            "term": query,
+            "media": "music",
+            "limit": 5
+        })
+        return res.json().get("results", [])
+    except:
+        return []
+
+def fetch_songlink(url):
+    try:
+        r = requests.get("https://api.song.link/v1-alpha.1/links", params={"url": url})
+        return r.json() if r.status_code == 200 else None
+    except:
+        return None
+
+def extract_itunes(data):
+    platforms = data.get("linksByPlatform", {})
+    itunes = platforms.get("itunes", {})
+    eid = itunes.get("entityUniqueId")
+    return data.get("entitiesByUniqueId", {}).get(eid)
+
+def format_meta(meta):
+    return (
+        f"🎵 *{meta.get('trackName')}*\n"
+        f"👤 {meta.get('artistName')}\n"
+        f"💿 {meta.get('collectionName')}\n"
+        f"📅 {meta.get('releaseDate', '')[:10]}\n"
+        f"🎧 {meta.get('primaryGenreName', '-')}"
+    )
+
 def delete_file(path):
     if os.path.exists(path):
         os.remove(path)
-
-def set_metadata(mp3_path, info):
-    try:
-        audio = MP3(mp3_path, ID3=EasyID3)
-        audio["title"] = info.get("title", "Unknown")
-        audio["artist"] = info.get("uploader", "Unknown")
-        audio["genre"] = info.get("genre", "Unknown")
-        if info.get("upload_date"):
-            audio["date"] = info["upload_date"]
-        audio.save()
-    except Exception as e:
-        print("Metadata Error:", e)
 
 async def download_and_send(chat_id, url):
     filename = f"{uuid4()}.mp3"
     msg = await bot.send_message(chat_id, "⏳ در حال دانلود فایل...")
 
     last_update_time = 0
-    download_info = {}
 
     def progress_hook(d):
-        nonlocal last_update_time, download_info
+        nonlocal last_update_time
         if d['status'] == 'downloading':
             now = time.time()
             if now - last_update_time >= 1:
@@ -52,8 +73,6 @@ async def download_and_send(chat_id, url):
                 text = f"⬇️ در حال دانلود...\nدرصد: {percent}\nسرعت: {speed}\nزمان: {eta}"
                 asyncio.create_task(bot.edit_message_text(chat_id, msg.id, text))
                 last_update_time = now
-        elif d['status'] == 'finished':
-            download_info['info'] = d.get('info_dict', {})
 
     ydl_opts = {
         "format": "bestaudio/best",
@@ -69,10 +88,6 @@ async def download_and_send(chat_id, url):
         await bot.edit_message_text(chat_id, msg.id, "⛔ خطا در دانلود فایل.")
         return
 
-    info = download_info.get("info", {})
-    set_metadata(filename, info)
-
-    # 🔧 تغییر این بخش:
     try:
         with open(filename, 'rb') as f:
             await bot.send_audio(chat_id, audio=f)
@@ -80,6 +95,25 @@ async def download_and_send(chat_id, url):
         await bot.send_message(chat_id, f"⛔ خطا در ارسال فایل: {e}")
     finally:
         delete_file(filename)
+
+async def send_song_info(chat_id, meta, tid):
+    caption = format_meta(meta)
+    img = meta.get("artworkUrl100", "").replace("100x100", "600x600")
+    keyboard = []
+
+    preview = meta.get("previewUrl")
+    if preview:
+        keyboard.append([{"text": "🎧 پخش پیش‌نمایش", "callback_data": f"preview_{preview}"}])
+
+    if tid in download_links:
+        keyboard.append([{"text": "⬇️ دریافت فایل", "callback_data": f"download_{tid}"}])
+
+    await bot.send_photo(
+        chat_id=chat_id,
+        photo=img,
+        caption=caption,
+        reply_markup={"inline_keyboard": keyboard}
+    )
 
 @bot.on_message()
 async def handle_message(message):
@@ -89,26 +123,37 @@ async def handle_message(message):
     if not text:
         return await bot.send_message(chat_id, "لطفاً نام آهنگ را بفرست.")
 
-    results = search_soundcloud(text)
-    if not results:
+    sc_results = search_soundcloud(text)
+    itunes_results = search_itunes(text)
+
+    if not sc_results and not itunes_results:
         return await bot.send_message(chat_id, "⚠️ هیچ نتیجه‌ای یافت نشد.")
 
     keyboard = []
     search_cache[chat_id] = {}
 
-    for i, item in enumerate(results[:5]):
-        title = item.get("title", "بدون عنوان")
+    for item in sc_results[:5]:
+        title = item.get("title", "بی‌نام")
         url = item.get("webpage_url")
         sid = str(uuid4())
         search_cache[chat_id][sid] = url
         keyboard.append([{
-            "text": f"🎵 {title[:40]}",
-            "callback_data": f"dl|{sid}"
+            "text": f"🎧 {title[:40]} (SoundCloud)",
+            "callback_data": f"meta|{sid}"
+        }])
+
+    for item in itunes_results[:5]:
+        track = item.get("trackName", "بی‌نام")
+        artist = item.get("artistName", "نامشخص")
+        view_url = item.get("trackViewUrl", "")
+        keyboard.append([{
+            "text": f"🎵 {track} – {artist} (iTunes)",
+            "url": view_url
         }])
 
     await bot.send_message(
         chat_id,
-        "🎶 نتایج جستجوی SoundCloud:",
+        "🎶 نتایج جستجو:",
         reply_markup={"inline_keyboard": keyboard}
     )
 
@@ -117,16 +162,36 @@ async def handle_callback(callback_query):
     chat_id = callback_query.message.chat.id
     data = callback_query.data
 
-    if not data.startswith("dl|"):
-        return await callback_query.answer("❌ دستور نامعتبر است.")
+    if data.startswith("meta|"):
+        sid = data.split("|", 1)[1]
+        if chat_id not in search_cache or sid not in search_cache[chat_id]:
+            return await callback_query.answer("⛔ لینک یافت نشد.")
+        url = search_cache[chat_id][sid]
 
-    sid = data.split("|", 1)[1]
+        await callback_query.answer("🔍 دریافت اطلاعات...")
 
-    if chat_id not in search_cache or sid not in search_cache[chat_id]:
-        return await callback_query.answer("⛔ مورد پیدا نشد.")
+        songlink_data = fetch_songlink(url)
+        if not songlink_data:
+            return await bot.send_message(chat_id, "⛔ خطا در ارتباط با song.link")
 
-    url = search_cache[chat_id][sid]
-    await callback_query.answer("⬇️ شروع دانلود...")
-    await download_and_send(chat_id, url)
+        meta = extract_itunes(songlink_data)
+        if not meta:
+            return await bot.send_message(chat_id, "⚠️ متادیتا یافت نشد")
+
+        download_links[sid] = url
+        meta_cache[sid] = meta
+        await send_song_info(chat_id, meta, sid)
+
+    elif data.startswith("preview_"):
+        url = data[8:]
+        await bot.send_voice(chat_id, voice=url)
+
+    elif data.startswith("download_"):
+        sid = data[9:]
+        url = download_links.get(sid)
+        if not url:
+            return await bot.send_message(chat_id, "❌ لینک دانلود موجود نیست.")
+        await callback_query.answer("⬇️ شروع دانلود...")
+        await download_and_send(chat_id, url)
 
 bot.run()
