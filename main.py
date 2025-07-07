@@ -54,17 +54,12 @@ async def download_and_send(chat_id, url):
                 last_update_time = now
         elif d['status'] == 'finished':
             download_info['info'] = d.get('info_dict', {})
-    
+
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": filename,
         "quiet": True,
         "progress_hooks": [progress_hook],
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
-        }],
     }
 
     try:
@@ -76,8 +71,15 @@ async def download_and_send(chat_id, url):
 
     info = download_info.get("info", {})
     set_metadata(filename, info)
-    await bot.send_audio(chat_id, audio=filename)
-    delete_file(filename)
+
+    # 🔧 تغییر این بخش:
+    try:
+        with open(filename, 'rb') as f:
+            await bot.send_audio(chat_id, audio=f)
+    except Exception as e:
+        await bot.send_message(chat_id, f"⛔ خطا در ارسال فایل: {e}")
+    finally:
+        delete_file(filename)
 
 @bot.on_message()
 async def handle_message(message):
