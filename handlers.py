@@ -50,8 +50,7 @@ class Searcher:
 # ------------------------
 # TELEGRAM HANDLERS
 # ------------------------
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update, context):
     chat_id = update.effective_chat.id
     text = update.message.text.strip()
 
@@ -74,14 +73,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             continue
 
         SEARCH_CACHE[chat_id][title] = url
-        keyboard.append([InlineKeyboardButton(title[:30], callback_data=f"resolve|{title}")])
+        tid = str(uuid4())
+        DOWNLOAD_CACHE[tid] = {"url": url}  # minimal entry
+        keyboard.append([InlineKeyboardButton(title[:30], callback_data=f"resolve|{tid}")])
 
     await context.bot.send_message(
         chat_id,
         "🎶 نتایج جستجو (روی نام آهنگ کلیک کنید):",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
