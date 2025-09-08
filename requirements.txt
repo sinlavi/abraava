@@ -1,7 +1,6 @@
 requests>=2.25.0
 python-telegram-bot>=0.5.0
 yt-dlp
-caches
+cachetools
 mutagen
-dsnparse
 browser-cookie3
