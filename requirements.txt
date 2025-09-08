@@ -3,4 +3,5 @@ python-telegram-bot>=0.5.0
 yt-dlp
 caches
 mutagen
+dsnparse
 browser-cookie3
