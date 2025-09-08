@@ -29,6 +29,6 @@ jobs:
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Create .env arquive
       run: |
-          echo "TOKEN=${{ secrets.MY_TOKEN }}" >> ./.env
+          echo "TOKEN=${{ secrets.TOKEN }}" >> ./.env
     - name: Run main.py
       run: python main.py
