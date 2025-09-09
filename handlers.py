@@ -8,7 +8,6 @@ from telegram.ext import ContextTypes
 from config import SEARCH_CACHE, DOWNLOAD_LINKS_CACHE
 from utils import is_valid_url, cb_make, cb_parse
 from crawler import Crawler
-from tagscanner import TagScanner
 from downloader import download_audio, embed_id3_tags, edit_cover_exif
 from i18 import translate
 
@@ -30,7 +29,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # URL case
     if is_valid_url(query_text):
-        metadata = await TagScanner.get_metadata(query_text)
+        metadata = Crawler.extract_metadata(query_text)
         if not metadata:
             await update.message.reply_text(translate("error", user_lang))
             return
@@ -78,8 +77,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text(translate("error", user_lang))
             return
 
-        links = await TagScanner.get_links(payload)
-        metadata = await TagScanner.extract_metadata(links)
+        links = await Crawler.get_links_by_platform(payload)
+        metadata = await Crawler.extract_metadata(links)
         buttons = [
             [InlineKeyboardButton("▶️ Preview", callback_data=cb_make("preview", metadata['previewUrl']))],
             [InlineKeyboardButton("⬇️ Download", callback_data=cb_make("download", metadata['downloadUrl']))]
@@ -116,7 +115,7 @@ async def worker_download_and_send(context: ContextTypes.DEFAULT_TYPE, chat_id: 
         mp3_path = await download_audio(url)
 
         # Fetch metadata
-        metadata = await TagScanner.get_metadata(url)
+        metadata = await Crawler.extract_metadata(url)
 
         cover_bytes = None
         if metadata and metadata.get("artworkUrl100"):
