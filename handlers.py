@@ -1,16 +1,14 @@
-# ----------------------
-# handler.py
-# ----------------------
 import logging
 import os
 from uuid import uuid4
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
 
+import httpx
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram.ext import ContextTypes
 from config import SEARCH_CACHE, DOWNLOAD_LINKS_CACHE
 from utils import is_valid_url, cb_make, cb_parse
-from searcher import Searcher
-from metadata import MetadataFetcher
+from crawler import Crawler
+from tagscanner import TagScanner
 from downloader import download_audio, embed_id3_tags, edit_cover_exif
 from i18 import translate
 
@@ -32,7 +30,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # URL case
     if is_valid_url(query_text):
-        metadata = await MetadataFetcher.get_metadata(query_text)
+        metadata = await TagScanner.get_metadata(query_text)
         if not metadata:
             await update.message.reply_text(translate("error", user_lang))
             return
@@ -52,7 +50,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # Search case
-    results = await Searcher.search(query_text, limit=5)
+    results = await Crawler.search(query_text, limit=5)
     if not results:
         await update.message.reply_text(translate("no_results", user_lang))
         return
@@ -124,41 +122,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.edit_message_text(translate("error", user_lang))
 
 
-async def handle_set_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not context.args:
-        await update.message.reply_text("Usage: /setlang <language_code>")
-        return
-
-    lang_code = context.args[0].lower()
-    supported_languages = ["en", "fa"]
-    if lang_code not in supported_languages:
-        await update.message.reply_text(f"Unsupported language. Supported: {', '.join(supported_languages)}")
-        return
-
-    context.user_data["lang"] = lang_code
-    await update.message.reply_text(translate("start", lang_code))
-
-
 async def worker_download_and_send(context: ContextTypes.DEFAULT_TYPE, chat_id: int, url: str):
     status_msg = await context.bot.send_message(chat_id, "⏳ Downloading...")
 
     try:
+        # Download the audio file
         mp3_path = await download_audio(url)
-        metadata = await MetadataFetcher.get_metadata(url)
+
+        # Fetch metadata
+        metadata = await TagScanner.get_metadata(url)
 
         cover_bytes = None
         if metadata and metadata.get("artworkUrl100"):
-            # Resize or enhance artwork
             cover_url = metadata.get("artworkUrl100").replace("100x100", "600x600")
-            import aiohttp
-            async with aiohttp.ClientSession() as session:
-                cover_bytes_raw = await download_bytes(session, cover_url)
-                if cover_bytes_raw:
-                    cover_bytes = edit_cover_exif(cover_bytes_raw, metadata)
 
+            async with httpx.AsyncClient() as client:
+                response = await client.get(cover_url)
+                if response.status_code == 200:
+                    cover_bytes = edit_cover_exif(response.content, metadata)
+
+        # Embed ID3 tags
         embed_id3_tags(mp3_path, metadata or {}, cover_bytes)
 
-        from telegram import InputFile
+        # Send the audio file
         with open(mp3_path, "rb") as fh:
             filename = f"{metadata.get('artistName', 'Unknown')} - {metadata.get('title', 'Unknown')}.mp3"
             await context.bot.send_audio(
@@ -167,6 +153,7 @@ async def worker_download_and_send(context: ContextTypes.DEFAULT_TYPE, chat_id: 
                 caption="✅ Download completed!"
             )
 
+        # Delete the "Downloading..." message
         await context.bot.delete_message(chat_id, status_msg.message_id)
 
     except Exception as e:
@@ -193,7 +180,7 @@ async def handle_setlang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     lang_code = context.args[0].lower()
-    supported_languages = ["en", "fa"]  # Add more supported languages as needed
+    supported_languages = ["en", "fa"]
 
     if lang_code not in supported_languages:
         await update.message.reply_text(f"Unsupported language. Supported languages: {', '.join(supported_languages)}")

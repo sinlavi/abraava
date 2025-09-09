@@ -1,10 +1,8 @@
-pyTelegramBotAPI
-yt-dlp~=2025.9.5
+yt-dlp
 mutagen
 piexif
 Pillow
-aiohttp
-cachetools~=5.5.2
-python-telegram-bot~=22.3
-httpx~=0.28.1
+cachetools
+python-telegram-bot
+httpx
 python-i18n

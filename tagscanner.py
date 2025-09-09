@@ -2,9 +2,10 @@ import httpx
 import logging
 from typing import Optional, Dict
 
-logger = logging.getLogger("abraava.metadata")
+logger = logging.getLogger("abraava.TagScanner")
 
-class MetadataFetcher:
+
+class TagScanner:
     @staticmethod
     async def _fetch_songlink_data(url: str, timeout: float = 10.0) -> Optional[Dict]:
         try:

@@ -5,10 +5,10 @@ from typing import List, Dict, Any
 from yt_dlp import YoutubeDL
 from config import YTDL_EXTRACT_OPTS
 
-logger = logging.getLogger("abraava.searcher")
+logger = logging.getLogger("abraava.Crawler")
 
 
-class Searcher:
+class Crawler:
     @staticmethod
     def _search_soundcloud_sync(query: str, limit: int) -> List[Dict[str, Any]]:
         try:
@@ -22,7 +22,7 @@ class Searcher:
     @staticmethod
     async def search_soundcloud(query: str, limit: int = 5) -> List[Dict[str, Any]]:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, Searcher._search_soundcloud_sync, query, limit)
+        return await loop.run_in_executor(None, Crawler._search_soundcloud_sync, query, limit)
 
     @staticmethod
     async def search_itunes(query: str, limit: int = 5, page: int = 1) -> List[Dict[str, Any]]:
@@ -40,7 +40,7 @@ class Searcher:
 
     @staticmethod
     async def search(query: str, limit: int = 5, page: int = 1) -> List[Dict[str, Any]]:
-        sc_task = Searcher.search_soundcloud(query, limit)
-        it_task = Searcher.search_itunes(query, limit, page)
+        sc_task = Crawler.search_soundcloud(query, limit)
+        it_task = Crawler.search_itunes(query, limit, page)
         sc, it = await asyncio.gather(sc_task, it_task, return_exceptions=True)
         return ([] if isinstance(sc, Exception) else sc) + ([] if isinstance(it, Exception) else it)
