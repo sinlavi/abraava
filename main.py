@@ -86,15 +86,21 @@ YTDL_DOWNLOAD_OPTS = {
 # Utilities
 # ----------------------
 def cb_make(prefix: str, payload: str) -> str:
-    """Create compact callback_data: prefix|urlsafe(payload)"""
-    return f"{prefix}|{urllib.parse.quote_plus(payload)}"
+    """Create compact callback_data: prefix|payload"""
+    # Ensure the total length doesn't exceed Telegram's 64-byte limit
+    full_data = f"{prefix}|{payload}"
+    if len(full_data) > 64:
+        # If it's too long, truncate the payload
+        max_payload_length = 64 - len(prefix) - 1  # -1 for the separator
+        payload = payload[:max_payload_length]
+    return f"{prefix}|{payload}"
 
 def cb_parse(data: str) -> Tuple[str, str]:
     """Parse callback_data produced by cb_make"""
     if "|" not in data:
         return data, ""
-    prefix, raw = data.split("|", 1)
-    return prefix, urllib.parse.unquote_plus(raw)
+    prefix, payload = data.split("|", 1)
+    return prefix, payload
 
 def safe_json_loads_text(content: str) -> Any:
     """Load JSON from text even if MIME type was nonstandard."""
@@ -322,6 +328,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         title = item.get("title") or item.get("trackName") or "Unknown Title"
         artist = item.get("uploader") or item.get("artistName") or "Unknown Artist"
         label = f"{idx}. {title[:30]} - {artist[:20]}"
+        # Use index only in callback data to avoid exceeding Telegram's 64-byte limit
         payload = f"{search_id}:{idx-1}"
         buttons.append([InlineKeyboardButton(label, callback_data=cb_make("select", payload))])
     buttons.append([InlineKeyboardButton("🔍 New Search", callback_data="new_search")])
@@ -423,8 +430,10 @@ async def send_song_details(context: ContextTypes.DEFAULT_TYPE, chat_id: int, me
 
     buttons_row = []
     if preview:
+        # Use a short callback data for preview
         buttons_row.append(InlineKeyboardButton("🎧 Preview", callback_data=cb_make("preview", preview)))
     if download_url:
+        # Use a UUID for download callback to keep it short
         buttons_row.append(InlineKeyboardButton("⬇️ Download", callback_data=cb_make("download", download_id)))
     buttons_row.append(InlineKeyboardButton("🔍 Search Again", callback_data="search_again"))
     keyboard = InlineKeyboardMarkup([buttons_row])
