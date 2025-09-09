@@ -62,7 +62,7 @@ class Crawler:
             return {}
         links = songlink_data.get("linksByPlatform", {}) or {}
         itunes = links.get("itunes", {}) or {}
-        itunes = itunes["entityUniqueId"]
+        itunes = itunes["entityUniqueId"].split("::")[1]
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 metadata = await client.get("https://itunes.apple.com/search", params={
