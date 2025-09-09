@@ -80,8 +80,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         links = await Crawler.get_links(payload)
         metadata = await Crawler.extract_metadata(links)
+        download_link = await Crawler.get_download_link(links)
         buttons = [
-            [InlineKeyboardButton("⬇️ Download", callback_data=cb_make("download", metadata['downloadUrl']))]
+            [InlineKeyboardButton("⬇️ Download", callback_data=cb_make("download", download_link))]
         ]
         if metadata.get('previewUrl', False):
             buttons.append(
