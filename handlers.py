@@ -78,7 +78,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text(translate("error", user_lang))
             return
 
-        links = await Crawler.get_links_by_platform(payload)
+        links = await Crawler.get_links(payload)
         metadata = await Crawler.extract_metadata(links)
         buttons = [
             [InlineKeyboardButton("▶️ Preview", callback_data=cb_make("preview", metadata['previewUrl']))],
