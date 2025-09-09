@@ -3,3 +3,4 @@ pyTelegramBotAPI
 yt-dlp
 mutagen
 browser-cookie3
+cachetools
