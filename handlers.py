@@ -25,7 +25,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     query_text = (update.message.text or "").strip()
 
     if not query_text:
-        await update.message.reply_text(translate("send_query", user_lang),parse_mode="Markdown")
+        await update.message.reply_text(translate("send_query", user_lang), parse_mode="Markdown")
         return
 
     # URL case
@@ -55,19 +55,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(translate("no_results", user_lang))
         return
 
-    # Cache search results
-    track_ids = []
-    for result in results:
-        track_id = str(uuid4())
-        SEARCH_CACHE[track_id] = result
-        track_ids.append(track_id)
-
     buttons = []
-    for tid in track_ids:
-        result = SEARCH_CACHE[tid]
+    for result in results:
         title = result.get("title") or result.get("trackName") or "Unknown"
         artist = result.get("uploader") or result.get("artistName") or ""
-        buttons.append([InlineKeyboardButton(f"{title} - {artist}", callback_data=cb_make("select", tid))])
+        buttons.append([InlineKeyboardButton(f"{title} - {artist}", callback_data=cb_make("info", result['url']))])
 
     await update.message.reply_text("🔍 Results:", reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -81,34 +73,28 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_lang = context.user_data.get("lang", "en")
     action, payload = cb_parse(query.data)
 
-    if action == "select":
-        result = SEARCH_CACHE.get(payload)
-        if not result:
+    if action == "info":
+        if not payload:
             await query.edit_message_text(translate("error", user_lang))
             return
 
-        track_id = str(uuid4())
-        DOWNLOAD_LINKS_CACHE[track_id] = result.get("url")
-
+        links = await TagScanner.get_links(payload)
+        metadata = await TagScanner.extract_metadata(links)
         buttons = [
-            [InlineKeyboardButton("▶️ Preview", callback_data=cb_make("preview", track_id))],
-            [InlineKeyboardButton("⬇️ Download", callback_data=cb_make("download", track_id))]
+            [InlineKeyboardButton("▶️ Preview", callback_data=cb_make("preview", metadata['previewUrl']))],
+            [InlineKeyboardButton("⬇️ Download", callback_data=cb_make("download", metadata['downloadUrl']))]
         ]
-        title = result.get("title") or result.get("trackName") or "Unknown"
-        artist = result.get("uploader") or result.get("artistName") or ""
-        await query.edit_message_text(
-            f"🎶 {title} - {artist}",
-            reply_markup=InlineKeyboardMarkup(buttons)
+        title = metadata.get("title") or metadata.get("trackName") or "Unknown"
+        artist = metadata.get("uploader") or metadata.get("artistName") or ""
+        print(metadata)
+        await context.bot.send_message(
+            f"🎶 {title} - {artist}\n",
+            inline_keyboard=InlineKeyboardMarkup(buttons)
         )
 
     elif action == "download":
-        url = DOWNLOAD_LINKS_CACHE.get(payload)
-        if not url:
-            await query.edit_message_text(translate("error", user_lang))
-            return
-
         await query.edit_message_text(translate("downloading", user_lang))
-        await worker_download_and_send(context, query.message.chat_id, url)
+        await worker_download_and_send(context, query.message.chat_id, payload)
 
     elif action == "preview":
         url = DOWNLOAD_LINKS_CACHE.get(payload)

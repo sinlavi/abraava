@@ -1,7 +1,7 @@
 import asyncio
 import httpx
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from yt_dlp import YoutubeDL
 from config import YTDL_EXTRACT_OPTS
 
@@ -44,3 +44,32 @@ class Crawler:
         it_task = Crawler.search_itunes(query, limit, page)
         sc, it = await asyncio.gather(sc_task, it_task, return_exceptions=True)
         return ([] if isinstance(sc, Exception) else sc) + ([] if isinstance(it, Exception) else it)
+
+    @staticmethod
+    async def get_links_by_platform(url: str, timeout: float = 10.0) -> Optional[Dict]:
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get("https://api.song.link/v1-alpha.1/links", params={"url": url})
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            logger.error(f"Failed to fetch songlink data for {url}: {e}")
+            return None
+
+    @staticmethod
+    def extract_metadata(songlink_data: Optional[Dict]) -> Dict:
+        if not songlink_data:
+            return {}
+        links = songlink_data.get("linksByPlatform", {}) or {}
+        itunes = links.get("itunes", {}) or {}
+        print(itunes)
+        entity_id = itunes.get("entityUniqueId")
+        if not entity_id:
+            return {}
+        return songlink_data.get("entitiesByUniqueId", {}).get(entity_id, {}) or {}
+
+    @staticmethod
+    def get_download_link(songlink_data: Optional[Dict]):
+        links = songlink_data.get("linksByPlatform", {}) or {}
+        download_link = links.get("soundcloud", links.get("youtube", ""))
+        return download_link
