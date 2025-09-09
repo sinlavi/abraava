@@ -28,7 +28,7 @@ jobs:
           cache: "pip"
           cache-dependency-path: requirements.txt
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install --cache-dir ~/.cache/pip -r requirements.txt
       - name: Install ffmpeg (apt)
         uses: FedericoCarboni/setup-ffmpeg@v3
         id: setup-ffmpeg
