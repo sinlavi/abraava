@@ -1,202 +1,346 @@
 import os
-import asyncio
 import time
+import asyncio
 import requests
+import telebot
 from uuid import uuid4
-from balethon import Client
 from yt_dlp import YoutubeDL
+from cachetools import TTLCache
+from threading import Thread
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-bot = Client("1011430416:V6rCwbls3JUS38Zq9GZrGfMeRF2VDuPtVMaVxEWH")
+# Initialize bot
+bot = telebot.TeleBot("8233533503:AAGXFDukqI8taXzl7mtrpdsbVTzuog1QE0c")
 
-search_cache = {}
-download_links = {}
+# Initialize caches with TTL (Time To Live)
+search_cache = TTLCache(maxsize=1000, ttl=3600)  # 1 hour TTL
+download_links_cache = TTLCache(maxsize=1000, ttl=3600)  # 1 hour TTL
 
 def search_soundcloud(query):
-    with YoutubeDL({"quiet": True}) as ydl:
+    """Search for tracks on SoundCloud"""
+    with YoutubeDL({"quiet": True, "extract_flat": True}) as ydl:
         try:
-            return ydl.extract_info(f"scsearch5:{query}", download=False)["entries"]
-        except:
+            results = ydl.extract_info(f"scsearch5:{query}", download=False)
+            return results.get("entries", [])[:5]  # Limit to 5 results
+        except Exception as e:
+            print(f"SoundCloud search error: {e}")
             return []
 
 def search_itunes(query):
+    """Search for tracks on iTunes"""
     try:
-        res = requests.get("https://itunes.apple.com/search", params={
-            "term": query,
-            "media": "music",
-            "limit": 5
-        })
+        res = requests.get(
+            "https://itunes.apple.com/search",
+            params={"term": query, "media": "music", "limit": 5},
+            timeout=10
+        )
         return res.json().get("results", [])
-    except:
+    except Exception as e:
+        print(f"iTunes search error: {e}")
         return []
 
 def fetch_songlink(url):
+    """Fetch song links from song.link API"""
     try:
-        r = requests.get("https://api.song.link/v1-alpha.1/links", params={"url": url})
+        r = requests.get(
+            "https://api.song.link/v1-alpha.1/links",
+            params={"url": url},
+            timeout=15
+        )
         return r.json() if r.status_code == 200 else None
-    except:
+    except Exception as e:
+        print(f"Song.link API error: {e}")
         return None
 
-def extract_itunes(data):
-    platforms = data.get("linksByPlatform", {})
+def extract_itunes_data(songlink_data):
+    """Extract iTunes metadata from song.link response"""
+    platforms = songlink_data.get("linksByPlatform", {})
     itunes = platforms.get("itunes", {})
-    eid = itunes.get("entityUniqueId")
-    return data.get("entitiesByUniqueId", {}).get(eid)
+    entity_id = itunes.get("entityUniqueId")
+    return songlink_data.get("entitiesByUniqueId", {}).get(entity_id, {})
 
-def fetch_songlink_priority_url(data):
-    platforms = data.get("linksByPlatform", {})
+def get_priority_download_url(songlink_data):
+    """Get the best available download URL"""
+    platforms = songlink_data.get("linksByPlatform", {})
     return (
         platforms.get("soundcloud", {}).get("url") or
-        platforms.get("youtube", {}).get("url")
+        platforms.get("youtube", {}).get("url") or
+        platforms.get("youtubeMusic", {}).get("url")
     )
 
-def format_meta(meta):
+def format_song_info(metadata):
+    """Format song metadata for display"""
     return (
-        f"\U0001F3B5 *{meta.get('trackName')}*\n"
-        f"\U0001F464 {meta.get('artistName')}\n"
-        f"🖼 {meta.get('collectionName')}\n"
-        f"📅 {meta.get('releaseDate', '')[:10]}\n"
-        f"🎧 {meta.get('primaryGenreName', '-')}"
+        f"🎵 *{metadata.get('trackName', 'Unknown Title')}*\n"
+        f"👤 *Artist:* {metadata.get('artistName', 'Unknown Artist')}\n"
+        f"💿 *Album:* {metadata.get('collectionName', 'Unknown Album')}\n"
+        f"📅 *Released:* {metadata.get('releaseDate', 'Unknown')[:10]}\n"
+        f"🎶 *Genre:* {metadata.get('primaryGenreName', 'Unknown')}"
     )
 
-def delete_file(path):
-    if os.path.exists(path):
-        os.remove(path)
+def cleanup_file(file_path):
+    """Safely remove a file"""
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except Exception as e:
+        print(f"Error deleting file {file_path}: {e}")
 
-async def download_and_send(chat_id, url):
+def download_and_send_audio(chat_id, url, message_id=None):
+    """Download audio and send to Telegram"""
     filename = f"{uuid4()}.mp3"
-    msg = await bot.send_message(chat_id, "⏳ در حال دانلود فایل...")
+    status_message = bot.send_message(chat_id, "⏳ Downloading file...")
+    
+    last_update = time.time()
+    update_interval = 2  # Update every 2 seconds
 
-    last_update_time = 0
-
-    def progress_hook(d):
-        nonlocal last_update_time
+    def progress_callback(d):
+        nonlocal last_update
         if d['status'] == 'downloading':
-            now = time.time()
-            if now - last_update_time >= 1:
-                percent = d.get('_percent_str', '').strip()
-                speed = d.get('_speed_str', '').strip()
-                eta = d.get('_eta_str', '').strip()
-                text = f"⬇️ در حال دانلود...\nدرصد: {percent}\nسرعت: {speed}\nزمان: {eta}"
-                asyncio.create_task(bot.edit_message_text(chat_id, msg.id, text))
-                last_update_time = now
+            current_time = time.time()
+            if current_time - last_update >= update_interval:
+                percent = d.get('_percent_str', 'N/A').strip()
+                speed = d.get('_speed_str', 'N/A').strip()
+                eta = d.get('_eta_str', 'N/A').strip()
+                
+                progress_text = (
+                    f"⬇️ Downloading...\n"
+                    f"📊 Progress: {percent}\n"
+                    f"🚀 Speed: {speed}\n"
+                    f"⏱️ ETA: {eta}"
+                )
+                
+                try:
+                    bot.edit_message_text(
+                        progress_text, 
+                        chat_id, 
+                        status_message.message_id
+                    )
+                except:
+                    pass  # Ignore edit errors
+                
+                last_update = current_time
 
-    ydl_opts = {
+    ydl_options = {
         "format": "bestaudio/best",
         "outtmpl": filename,
         "quiet": True,
-        "progress_hooks": [progress_hook],
+        "noplaylist": True,
+        "progress_hooks": [progress_callback],
+        "postprocessors": [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
     }
 
     try:
-        with YoutubeDL(ydl_opts) as ydl:
+        with YoutubeDL(ydl_options) as ydl:
             ydl.download([url])
-    except Exception:
-        await bot.edit_message_text(chat_id, msg.id, "⛔ خطا در دانلود فایل.")
-        return
+        
+        # Check if file was created
+        if not os.path.exists(filename):
+            raise Exception("Downloaded file not found")
+
+        # Send audio file
+        with open(filename, 'rb') as audio_file:
+            bot.send_audio(
+                chat_id=chat_id,
+                audio=audio_file,
+                caption="✅ Download completed!",
+                reply_to_message_id=message_id
+            )
+        
+        bot.delete_message(chat_id, status_message.message_id)
+
+    except Exception as e:
+        error_msg = f"❌ Download error: {str(e)}"
+        bot.edit_message_text(
+            error_msg, 
+            chat_id, 
+            status_message.message_id
+        )
+        print(f"Download error: {e}")
+    
+    finally:
+        cleanup_file(filename)
+
+def send_song_details(chat_id, metadata, songlink_data, message_id=None):
+    """Send formatted song information with download options"""
+    caption = format_song_info(metadata)
+    artwork_url = metadata.get("artworkUrl100", "").replace("100x100", "600x600")
+    download_id = str(uuid4())
+    
+    # Store in cache
+    download_links_cache[download_id] = songlink_data
+
+    # Create inline keyboard
+    keyboard = InlineKeyboardMarkup()
+    
+    # Add preview button if available
+    preview_url = metadata.get("previewUrl")
+    if preview_url:
+        keyboard.add(InlineKeyboardButton("🎧 Preview", callback_data=f"preview_{preview_url}"))
+    
+    # Add download button
+    download_url = get_priority_download_url(songlink_data)
+    if download_url:
+        keyboard.add(InlineKeyboardButton("⬇️ Download", callback_data=f"download_{download_id}"))
+    
+    # Add search again button
+    keyboard.add(InlineKeyboardButton("🔍 Search Again", callback_data="search_again"))
 
     try:
-        with open(filename, 'rb') as f:
-            await bot.send_audio(chat_id, audio=f)
+        bot.send_photo(
+            chat_id=chat_id,
+            photo=artwork_url,
+            caption=caption,
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+            reply_to_message_id=message_id
+        )
     except Exception as e:
-        await bot.send_message(chat_id, f"⛔ خطا در ارسال فایل: {e}")
-    finally:
-        delete_file(filename)
+        # Fallback to text if photo fails
+        bot.send_message(
+            chat_id=chat_id,
+            text=caption,
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+            reply_to_message_id=message_id
+        )
 
-async def send_song_info(chat_id, meta, song_data):
-    caption = format_meta(meta)
-    img = meta.get("artworkUrl100", "").replace("100x100", "600x600")
-    tid = str(uuid4())
-    download_links[tid] = song_data
-
-    keyboard = []
-    preview = meta.get("previewUrl")
-    if preview:
-        keyboard.append([{"text": "🎧 پخش پیش‌نمایش", "callback_data": f"preview_{preview}"}])
-
-    keyboard.append([{"text": "⬇️ دریافت فایل", "callback_data": f"download_{tid}"}])
-
-    await bot.send_photo(
-        chat_id=chat_id,
-        photo=img,
-        caption=caption,
-        reply_markup={"inline_keyboard": keyboard}
-    )
-
-@bot.on_message()
-async def handle_message(message):
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    """Handle incoming messages"""
     chat_id = message.chat.id
     text = message.text.strip()
+    message_id = message.message_id
 
     if not text:
-        return await bot.send_message(chat_id, "لطفاً نام آهنگ را بفرست.")
+        bot.send_message(chat_id, "🎵 Please send me a song name to search!")
+        return
 
-    results = search_soundcloud(text) + search_itunes(text)
-    if not results:
-        return await bot.send_message(chat_id, "⚠️ هیچ نتیجه‌ای یافت نشد.")
+    # Show typing action
+    bot.send_chat_action(chat_id, "typing")
 
-    keyboard = []
-    search_cache[chat_id] = {}
+    # Search both platforms
+    soundcloud_results = search_soundcloud(text)
+    itunes_results = search_itunes(text)
+    all_results = soundcloud_results + itunes_results
 
-    for item in results[:10]:
-        title = item.get("title") or item.get("trackName") or "بی‌نام"
-        url = item.get("webpage_url") or item.get("trackViewUrl")
-        if not url:
-            continue
-        sid = str(uuid4())
-        search_cache[chat_id][sid] = url
-        keyboard.append([{
-            "text": f"🎵 {title[:40]}",
-            "callback_data": f"resolve|{sid}"
-        }])
+    if not all_results:
+        bot.send_message(chat_id, "❌ No results found. Try a different search term.")
+        return
 
-    await bot.send_message(
+    # Create search cache entry
+    search_id = str(uuid4())
+    search_cache[search_id] = {
+        "results": all_results[:8],  # Limit to 8 results
+        "timestamp": time.time(),
+        "query": text
+    }
+
+    # Create inline keyboard with results
+    keyboard = InlineKeyboardMarkup()
+    for idx, item in enumerate(all_results[:8], 1):
+        title = item.get("title") or item.get("trackName") or "Unknown Title"
+        artist = item.get("uploader") or item.get("artistName") or "Unknown Artist"
+        
+        keyboard.add(InlineKeyboardButton(
+            f"{idx}. {title[:30]} - {artist[:20]}", 
+            callback_data=f"select_{search_id}_{idx-1}"
+        ))
+
+    keyboard.add(InlineKeyboardButton("🔍 New Search", callback_data="new_search"))
+
+    bot.send_message(
         chat_id,
-        "🎶 نتایج جستجو:",
-        reply_markup={"inline_keyboard": keyboard}
+        f"🔍 Found {len(all_results)} results for: *{text}*",
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+        reply_to_message_id=message_id
     )
 
-@bot.on_callback_query()
-async def handle_callback(callback_query):
-    chat_id = callback_query.message.chat.id
-    data = callback_query.data
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback(callback):
+    """Handle inline button callbacks"""
+    chat_id = callback.message.chat.id
+    message_id = callback.message.message_id
+    data = callback.data
 
-    if data.startswith("preview_"):
-        url = data[8:]
-        return await bot.send_voice(chat_id, voice=url)
+    bot.answer_callback_query(callback.id)  # Acknowledge callback
+
+    if data == "new_search" or data == "search_again":
+        bot.send_message(chat_id, "🔍 Send me the name of the song you want to search:")
+        return
+
+    elif data.startswith("preview_"):
+        preview_url = data[8:]
+        bot.send_voice(chat_id, voice=preview_url, reply_to_message_id=message_id)
 
     elif data.startswith("download_"):
-        tid = data[9:]
-        song_data = download_links.get(tid)
+        download_id = data[9:]
+        song_data = download_links_cache.get(download_id)
+        
         if not song_data:
-            return await bot.send_message(chat_id, "❌ لینک دانلود موجود نیست.")
+            bot.send_message(chat_id, "❌ Download link expired. Please search again.")
+            return
 
-        url = fetch_songlink_priority_url(song_data)
-        if url:
-            await callback_query.answer("⬇️ در حال دانلود...")
-            return await download_and_send(chat_id, url)
+        download_url = get_priority_download_url(song_data)
+        if download_url:
+            # Run download in a separate thread to avoid blocking
+            thread = Thread(target=download_and_send_audio, args=(chat_id, download_url, message_id))
+            thread.start()
         else:
-            return await bot.send_message(chat_id, "❌ فایل قابل دانلود نیست.")
+            bot.send_message(chat_id, "❌ No download available for this track.")
 
-    elif data.startswith("resolve|"):
-        sid = data.split("|", 1)[1]
-        if chat_id not in search_cache or sid not in search_cache[chat_id]:
-            return await callback_query.answer("⛔ لینک پیدا نشد.")
+    elif data.startswith("select_"):
+        parts = data.split("_")
+        if len(parts) != 3:
+            return
 
-        url = search_cache[chat_id][sid]
-        await callback_query.answer("⏳ دریافت اطلاعات...")
+        search_id = parts[1]
+        result_index = int(parts[2])
+        
+        search_data = search_cache.get(search_id)
+        if not search_data or time.time() - search_data["timestamp"] > 3600:
+            bot.send_message(chat_id, "❌ Search results expired. Please search again.")
+            return
 
-        song_data = fetch_songlink(url)
-        if not song_data:
-            return await bot.send_message(chat_id, "⛔ خطا در ارتباط با Song.link")
+        results = search_data["results"]
+        if result_index >= len(results):
+            bot.send_message(chat_id, "❌ Invalid selection.")
+            return
 
-        meta = extract_itunes(song_data)
-        if meta:
-            return await send_song_info(chat_id, meta, song_data)
+        selected_item = results[result_index]
+        item_url = selected_item.get("webpage_url") or selected_item.get("trackViewUrl")
+        
+        if not item_url:
+            bot.send_message(chat_id, "❌ No URL available for this track.")
+            return
 
-        fallback_url = fetch_songlink_priority_url(song_data)
-        if fallback_url:
-            return await download_and_send(chat_id, fallback_url)
+        bot.send_chat_action(chat_id, "typing")
+        
+        # Fetch song.link data
+        songlink_data = fetch_songlink(item_url)
+        if not songlink_data:
+            bot.send_message(chat_id, "❌ Could not fetch track information.")
+            return
+
+        # Try to get iTunes metadata
+        itunes_meta = extract_itunes_data(songlink_data)
+        if itunes_meta:
+            send_song_details(chat_id, itunes_meta, songlink_data, message_id)
         else:
-            return await bot.send_message(chat_id, "❌ هیچ لینکی برای دانلود یافت نشد.")
+            # Fallback to direct download
+            download_url = get_priority_download_url(songlink_data)
+            if download_url:
+                # Run download in a separate thread to avoid blocking
+                thread = Thread(target=download_and_send_audio, args=(chat_id, download_url, message_id))
+                thread.start()
+            else:
+                bot.send_message(chat_id, "❌ No download available for this track.")
 
-bot.run()
+if __name__ == "__main__":
+    print("Bot is running...")
+    bot.infinity_polling()
