@@ -49,7 +49,7 @@ class Crawler:
     async def get_links_by_platform(url: str, timeout: float = 10.0) -> Optional[Dict]:
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get("https://api.song.link/v1-alpha.1/links?url="+url)
+                response = await client.get("https://api.song.link/v1-alpha.1/links?url=" + url.split('?')[0])
                 response.raise_for_status()
                 return response.json()
         except Exception as e:
@@ -69,6 +69,7 @@ class Crawler:
                 })
                 metadata.raise_for_status()
                 metadata = metadata.json().get("results", [])
+                return metadata
         except Exception as e:
             logger.error("iTunes search failed: %s", e)
             return {}
