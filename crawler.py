@@ -1,4 +1,6 @@
 import asyncio
+import urllib
+
 import httpx
 import logging
 from typing import List, Dict, Any, Optional
@@ -49,7 +51,7 @@ class Crawler:
     async def get_links(url: str, timeout: float = 10.0) -> Optional[Dict]:
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get("https://api.song.link/v1-alpha.1/links?url=" + url.split('?')[0])
+                response = await client.get("https://api.song.link/v1-alpha.1/links?url=" + urllib.urlencode(url))
                 response.raise_for_status()
                 return response.json()
         except Exception as e:
