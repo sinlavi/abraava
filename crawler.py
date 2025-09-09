@@ -62,7 +62,6 @@ class Crawler:
             return {}
         links = songlink_data.get("linksByPlatform", {}) or {}
         itunes = links.get("itunes", {}) or {}
-        print(itunes)
         entity_id = itunes.get("entityUniqueId")
         if not entity_id:
             return {}
