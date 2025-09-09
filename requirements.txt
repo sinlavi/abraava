@@ -7,3 +7,4 @@ aiohttp
 cachetools~=5.5.2
 python-telegram-bot~=22.3
 httpx~=0.28.1
+python-i18n
