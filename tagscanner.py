@@ -30,5 +30,5 @@ class TagScanner:
 
     @staticmethod
     async def get_metadata(url: str, timeout: float = 10.0) -> Dict:
-        data = await MetadataFetcher._fetch_songlink_data(url, timeout=timeout)
-        return MetadataFetcher._extract_itunes_data(data) if data else {}
+        data = await TagScanner._fetch_songlink_data(url, timeout=timeout)
+        return TagScanner._extract_itunes_data(data) if data else {}

@@ -25,7 +25,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     query_text = (update.message.text or "").strip()
 
     if not query_text:
-        await update.message.reply_text(translate("send_query", user_lang))
+        await update.message.reply_text(translate("send_query", user_lang),parse_mode="Markdown")
         return
 
     # URL case

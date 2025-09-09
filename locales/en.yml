@@ -1,5 +1,5 @@
 start: "Hello — send a song name to search, or a link to download."
 no_results: "No results found."
-send_query: "Send a song name or a valid URL."
+send_query: "<b>Invalid input!</b><br>Please send a song name, album, singer, band or a valid link."
 downloading: "⏳ Downloading..."
 error: "❌ Error: Could not process the request."
