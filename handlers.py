@@ -81,9 +81,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         links = await Crawler.get_links(payload)
         metadata = await Crawler.extract_metadata(links)
         buttons = [
-            [InlineKeyboardButton("▶️ Preview", callback_data=cb_make("preview", metadata['previewUrl']))],
             [InlineKeyboardButton("⬇️ Download", callback_data=cb_make("download", metadata['downloadUrl']))]
         ]
+        if metadata.get('previewUrl', False):
+            buttons.append(
+                [InlineKeyboardButton("▶️ Preview", callback_data=cb_make("preview", metadata['previewUrl']))])
         title = metadata.get("title") or metadata.get("trackName") or "Unknown"
         artist = metadata.get("uploader") or metadata.get("artistName") or ""
         print(metadata)
@@ -97,12 +99,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await worker_download_and_send(context, query.message.chat_id, payload)
 
     elif action == "preview":
-        url = DOWNLOAD_LINKS_CACHE.get(payload)
-        if not url:
-            await query.edit_message_text(translate("error", user_lang))
-            return
-
-        await context.bot.send_message(query.message.chat_id, f"🎧 Preview: {url}")
+        await context.bot.send_audio(query.message.chat_id,audio=payload)
 
     else:
         await query.edit_message_text(translate("error", user_lang))

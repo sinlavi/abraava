@@ -49,14 +49,16 @@ class Crawler:
         return ([] if isinstance(sc, Exception) else sc) + ([] if isinstance(it, Exception) else it)
 
     @staticmethod
-    async def get_links(url: str, timeout: float = 10.0) -> Optional[Dict]:
+    async def get_links(unique_id: str, timeout: float = 10.0) -> Optional[Dict]:
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get("https://api.song.link/v1-alpha.1/links?url=" + quote(url, safe='~()*!\'.'))
+                response = await client.get(
+                    "https://api.song.link/v1-alpha.1/links?id=" + unique_id.split(':')[0] + "&type=song&platform=" +
+                    unique_id.split(':')[1])
                 response.raise_for_status()
                 return response.json()
         except Exception as e:
-            logger.error(f"Failed to fetch songlink data for {url}: {e}")
+            logger.error(f"Failed to fetch songlink data for: {e}")
             return None
 
     @staticmethod
