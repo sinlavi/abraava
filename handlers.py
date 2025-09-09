@@ -58,6 +58,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     for result in results:
         title = result.get("title") or result.get("trackName") or "Unknown"
         artist = result.get("uploader") or result.get("artistName") or ""
+        print(result)
         buttons.append([InlineKeyboardButton(f"{title} - {artist}", callback_data=cb_make("info", result['url']))])
 
     await update.message.reply_text("🔍 Results:", reply_markup=InlineKeyboardMarkup(buttons))
