@@ -36,5 +36,5 @@ def convert_results_to_buttons(results):
     buttons = []
     for result in results:
         buttons.append([InlineKeyboardButton("🎵 " + result['title'] + " - " + result["artist"],
-                                            callback_data=cb_make("preview", result['url']))])
-    return InlineKeyboardMarkup(buttons)
+                                             callback_data=cb_make("info", result['url']))])
+    return buttons
