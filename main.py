@@ -1,13 +1,13 @@
 import os
 
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-from config import BOT_TOKEN, logger
+from config import TG_BOT_TOKEN, logger
 from handlers import handle_start, handle_message, handle_callback, handle_setting, handle_setlang, handle_scloud, \
     handle_deezer, handle_ytmusic, handle_itunes, handle_spotify
 
 
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(TG_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler("scloud", handle_scloud))
     app.add_handler(CommandHandler("spotify", handle_spotify))
