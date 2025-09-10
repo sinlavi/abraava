@@ -7,3 +7,4 @@ python-telegram-bot
 httpx
 python-i18n
 spotipy
+deezer-python
