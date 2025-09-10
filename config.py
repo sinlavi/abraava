@@ -3,6 +3,7 @@ import sys
 import logging
 from cachetools import TTLCache
 
+os.environ['BOT_TOKEN'] = '8309094506:AAHxEnibkg67qNtACqBU__YRxC6c0EHNAGA'
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     print("BOT_TOKEN environment variable not set", file=sys.stderr)

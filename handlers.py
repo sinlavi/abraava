@@ -3,40 +3,84 @@ import os
 from uuid import uuid4
 
 import httpx
+from pyrogram.filters import inline_keyboard
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import ContextTypes
-from config import SEARCH_CACHE, DOWNLOAD_LINKS_CACHE
 from utils import is_valid_url, cb_make, cb_parse
 from crawler import Crawler
 from downloader import download_audio, embed_id3_tags, edit_cover_exif
 from i18 import translate
 
-logger = logging.getLogger("musicbot.handlers")
+logger = logging.getLogger("abraava.handlers")
+
+import spotipy
+from spotipy.oauth2 import SpotifyOAuth
+
+os.environ['SPOTIPY_CLIENT_ID'] = '7c8cce55a7654445a5357aabf580835a'
+os.environ['SPOTIPY_CLIENT_SECRET'] = '0369e3d79918441c9916c6dcc55f6a2a'
+os.environ['SPOTIPY_REDIRECT_URI'] = 'http://localhost:8888/callback'
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_lang = context.user_data.get("lang", "en")
-    await update.message.reply_text(translate("start", user_lang))
+    lang = context.user_data.get("lang", "fa")
+    message = update.message
+    print(translate("start", "fa"))
+    await message.reply_text(translate("start", "fa"))
+
+
+async def handle_scloud(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = context.user_data.get("lang", "en")
+    message = update.message
+    await message.reply_text(translate("start", lang))
+
+
+async def handle_itunes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = context.user_data.get("lang", "en")
+    message = update.message
+    results = await Crawler.Itunes.search(message.text.split(maxsplit=1)[1])
+    buttons = []
+    for result in results:
+        buttons.append(
+            [InlineKeyboardButton(result['title'] + " " + result["artist"],
+                                  callback_data=cb_make("preview", result['url']))])
+    await message.reply_text(translate("start", lang), reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def handle_ytmusic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = context.user_data.get("lang", "en")
+    message = update.message
+    await message.reply_text(translate("start", lang))
+
+
+async def handle_deezer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = context.user_data.get("lang", "en")
+    message = update.message
+    await message.reply_text(translate("start", lang))
+
+
+async def handle_setting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    lang = context.user_data.get("lang", "en")
+    message = update.message
+    await message.reply_text(translate("start", lang))
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_lang = context.user_data.get("lang", "en")
-    query_text = (update.message.text or "").strip()
+    lang = context.user_data.get("lang", "en")
+    message = update.message
+    text = (message.text or "").strip()
 
-    if not query_text:
-        await update.message.reply_text(translate("send_query", user_lang), parse_mode="Markdown")
+    if len(text) == 0:
+        await update.message.reply_text(translate("send_query", lang), parse_mode="Markdown")
         return
 
     # URL case
-    if is_valid_url(query_text):
-        metadata = Crawler.extract_metadata(query_text)
+    if is_valid_url(text):
+        metadata = Crawler.extract_metadata(text)
         if not metadata:
-            await update.message.reply_text(translate("error", user_lang))
+            await update.message.reply_text(translate("error", lang))
             return
 
         track_id = str(uuid4())
-        DOWNLOAD_LINKS_CACHE[track_id] = query_text
-
         buttons = [
             [InlineKeyboardButton("▶️ Preview", callback_data=cb_make("preview", track_id))],
             [InlineKeyboardButton("⬇️ Download", callback_data=cb_make("download", track_id))]
@@ -49,16 +93,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # Search case
-    results = await Crawler.search(query_text, limit=5)
+    results = await Crawler.search(text, limit=5)
     if not results:
-        await update.message.reply_text(translate("no_results", user_lang))
+        await update.message.reply_text(translate("no_results", lang))
         return
 
     buttons = []
     for result in results:
         title = result.get("title") or result.get("trackName") or "Unknown"
         artist = " - " + (result.get("uploader") or result.get("artistName") or "")
-        url = result.get("webpage_url") or (str(result.get("trackId")) + ":" + "itunes")
+        url = result.get("webpage_url") or ("ITUNES:" + str(result.get("trackId")))
         buttons.append([InlineKeyboardButton(f"{title}{artist}", callback_data=cb_make("info", url))])
 
     await update.message.reply_text("🔍 Results:", reply_markup=InlineKeyboardMarkup(buttons))
@@ -72,7 +116,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     user_lang = context.user_data.get("lang", "en")
     action, payload = cb_parse(query.data)
-    logger.log(payload)
     if action == "info":
         if not payload:
             await query.edit_message_text(translate("error", user_lang))
@@ -80,20 +123,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         links = await Crawler.get_links(payload)
         metadata = await Crawler.extract_metadata(links)
-        download_link = await Crawler.get_download_link(links)
+        download_link = Crawler.get_download_link(links)
         buttons = [
             [InlineKeyboardButton("⬇️ Download", callback_data=cb_make("download", download_link))]
         ]
-        if metadata.get('previewUrl', False):
-            buttons.append(
-                [InlineKeyboardButton("▶️ Preview", callback_data=cb_make("preview", metadata['previewUrl']))])
-        title = metadata.get("title") or metadata.get("trackName") or "Unknown"
-        artist = metadata.get("uploader") or metadata.get("artistName") or ""
-        print(metadata)
-        await context.bot.send_message(
-            f"🎶 {title} - {artist}\n",
-            inline_keyboard=InlineKeyboardMarkup(buttons)
+        await context.bot.send_photo(
+            chat_id=query.from_user.id,
+            photo=metadata["coverUrl"],
+            caption=f"""
+🎧 Title: <code>{metadata["title"]}</code>
+🎤 Artist: <code>{metadata["artist"]}</code>
+💽 Album: <code>{metadata["album"]}</code>
+🗓 Release Year: <code>{metadata["releaseDate"]}</code>
+🌐 ISRC: QZK6L2154468
+
+Track id:1D5Rgb6p3sg5E2OW8kBA9f
+""",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(buttons),
         )
+        """        if metadata[0].get('previewUrl', False):
+            buttons.append(
+               [InlineKeyboardButton("▶️ Preview", callback_data=cb_make("preview", metadata['previewUrl']))])
+"""
 
     elif action == "download":
         await query.edit_message_text(translate("downloading", user_lang))
