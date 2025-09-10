@@ -3,16 +3,16 @@ import sys
 import logging
 from cachetools import TTLCache
 
-TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
-SPOTIPY_CLIENT_ID = os.environ.get('SPOTIPY_CLIENT_ID')
-SPOTIFY_CLIENT_SECRET = os.environ.get('SPOTIPY_CLIENT_SECRET')
+TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
+SPOTIPY_CLIENT_ID = os.getenv('SPOTIPY_CLIENT_ID')
+SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIPY_CLIENT_SECRET')
 
 if not TG_BOT_TOKEN:
     print("TG_BOT_TOKEN environment variable not set", file=sys.stderr)
     sys.exit(1)
 
 logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 

@@ -33,4 +33,6 @@ jobs:
       - name: Run main.py
         env:
           BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          SPOTIPY_CLIENT_ID: ${{ secrets.SPOTIPY_CLIENT_ID }}
+          SPOTIPY_CLIENT_SECRET: ${{ secrets.SPOTIPY_CLIENT_SECRET }}
         run: python main.py
