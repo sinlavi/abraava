@@ -3,7 +3,7 @@ import os
 from uuid import uuid4
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import ContextTypes
-from utils import is_valid_url, cb_make, cb_parse, convert_results_to_buttons
+from utils import extract_url, cb_make, cb_parse, convert_results_to_buttons
 from crawler import Crawler
 from downloader import download_audio, embed_id3_tags, edit_cover_exif
 from i18n import translate
@@ -152,9 +152,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(translate("send_query", context=context), parse_mode="Markdown")
         return
 
-    if is_valid_url(text):
-        track_id = str(uuid4())
-        await send_song_info(context, message.chat_id, text)
+    url = extract_url(text)
+    if url:
+        await send_song_info(context, message.chat_id, url)
         return
 
     results = await Crawler.search_all(text)

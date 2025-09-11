@@ -1,16 +1,23 @@
 import json
+import re
 import urllib.parse
-from typing import Any, Tuple
+from typing import Any, Tuple, Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
-def is_valid_url(url_string: str) -> bool:
-    try:
-        result = urllib.parse.urlparse(url_string)
-        return all([result.scheme, result.netloc])
-    except ValueError:
-        return False
+def extract_url(text: str) -> Optional[str]:
+    url_pattern = re.compile(r'(https?://[^\s]+)')
+    match = url_pattern.search(text)
+    if match:
+        url = match.group(0)
+        try:
+            result = urllib.parse.urlparse(url)
+            if all([result.scheme, result.netloc]):
+                return url
+        except ValueError:
+            return False
+    return False
 
 
 def cb_make(prefix: str, payload: str) -> str:
