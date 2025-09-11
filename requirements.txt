@@ -8,3 +8,4 @@ httpx
 python-i18n
 spotipy
 deezer-python
+python-dotenv
