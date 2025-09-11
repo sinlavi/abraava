@@ -47,7 +47,7 @@ async def send_song_info(context: ContextTypes.DEFAULT_TYPE, chat_id: int, track
         ]
         if "previewUrl" in metadata:
             buttons.append(
-                [InlineKeyboardButton("▶️ Preview", callback_data=cb_make("preview", track_id_or_url))]
+                [InlineKeyboardButton("▶️ Preview", callback_data=cb_make("preview", metadata["previewUrl"]))]
             )
         if metadata.get("coverUrl"):
             await context.bot.send_photo(
