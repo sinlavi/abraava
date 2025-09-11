@@ -58,7 +58,7 @@ async def send_song_info(context: ContextTypes.DEFAULT_TYPE, chat_id: int, track
 🎤 Artist: <code>{metadata.get("artist", "Unknown")}</code>
 💽 Album: <code>{metadata.get("album", "Unknown")}</code>
 🗓 Release Year: <code>{metadata.get("releaseDate", "Unknown")}</code>
-🌐 ISRC: {metadata.get("isrc", "Unknown")}
+🌐 ISRC: <code>{metadata.get("isrc", "Unknown")}</code>
 
 🔗 Link: {track_id_or_url}
 """,
