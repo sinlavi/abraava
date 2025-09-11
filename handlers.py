@@ -1,7 +1,8 @@
 import logging
 import os
+import re
 from uuid import uuid4
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageEntity
 from telegram.ext import ContextTypes
 from utils import extract_url, cb_make, cb_parse, convert_results_to_buttons
 from crawler import Crawler
@@ -151,8 +152,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         await message.reply_text(translate("send_query", context=context), parse_mode="Markdown")
         return
-
-    url = extract_url(text)
+    url = False
+    if message.entities:
+        for entity in message.entities:
+            if entity.type == MessageEntity.URL:
+                url = message.text[entity.offset: entity.offset + entity.length]
+            elif entity.type == MessageEntity.TEXT_LINK:
+                url = entity.url
+    match = re.search(r"(https?://[^\s]+)", message.text or False)
+    if match:
+        url = match.group(0)
     if url:
         await send_song_info(context, message.chat_id, url)
         return
