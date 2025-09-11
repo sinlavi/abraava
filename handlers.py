@@ -37,7 +37,7 @@ def build_pagination_buttons(results, query, page, platform):
 async def send_song_info(context: ContextTypes.DEFAULT_TYPE, chat_id: int, track_id_or_url: str):
     try:
         metadata = await Crawler.extract_metadata(track_id_or_url)
-        download_link = Crawler.get_download_link(track_id_or_url)
+        download_link = await Crawler.get_download_link(track_id_or_url)
 
         if not metadata:
             await context.bot.send_message(chat_id, translate("error", context=context))
