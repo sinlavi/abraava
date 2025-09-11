@@ -37,15 +37,18 @@ def build_pagination_buttons(results, query, page, platform):
 async def send_song_info(context: ContextTypes.DEFAULT_TYPE, chat_id: int, track_id_or_url: str):
     try:
         metadata = await Crawler.extract_metadata(track_id_or_url)
-        download_link = await Crawler.get_download_link(track_id_or_url)
 
         if not metadata:
             await context.bot.send_message(chat_id, translate("error", context=context))
             return
 
         buttons = [
-            [InlineKeyboardButton("⬇️ Download", callback_data=cb_make("download", download_link))]
+            [InlineKeyboardButton("⬇️ Download", callback_data=cb_make("download", track_id_or_url))]
         ]
+        if "previewUrl" in metadata:
+            buttons.append(
+                [InlineKeyboardButton("▶️ Preview", callback_data=cb_make("preview", track_id_or_url))]
+            )
         if metadata.get("coverUrl"):
             await context.bot.send_photo(
                 chat_id=chat_id,

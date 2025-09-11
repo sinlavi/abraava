@@ -214,6 +214,7 @@ class Crawler:
                     sp = Crawler.Spotify.client
                     track = sp.track(track_id)
                     return {
+                        "url": url,
                         "title": track["name"],
                         "artist": ", ".join([a["name"] for a in track["artists"]]),
                         "album": track["album"]["name"],
@@ -232,6 +233,7 @@ class Crawler:
                     track_id = int(match.group(1))
                     track = dz.get_track(track_id)
                     return {
+                        "url": url,
                         "title": track.title,
                         "artist": track.artist.name,
                         "album": track.album.title if track.album else "",
@@ -242,7 +244,6 @@ class Crawler:
 
             # --------- iTunes ---------
             elif "itunes.apple.com" in hostname or "music.apple.com" in hostname:
-                # Extract track ID from the URL (last segment)
                 path_parts = parsed.path.strip("/").split("/")
                 track_id = path_parts[-1] if path_parts[-1].isdigit() else None
 
@@ -254,6 +255,8 @@ class Crawler:
                         if results:
                             r = results[0]
                             return {
+                                "url": url,
+                                "previewUrl": r.get("previewUrl"),
                                 "title": r.get("trackName"),
                                 "artist": r.get("artistName"),
                                 "album": r.get("collectionName"),
@@ -267,6 +270,7 @@ class Crawler:
                 with YoutubeDL(YTDL_EXTRACT_OPTS) as ydl:
                     info = ydl.extract_info(url, download=False)
                 return {
+                    "url": url,
                     "title": info.get("title"),
                     "artist": info.get("uploader") or info.get("artist") or "Unknown",
                     "album": info.get("album") or "",
