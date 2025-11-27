@@ -13,5 +13,4 @@ def translate(key: str, lang: str = None, context=None) -> str:
         trans.install()
         return trans.gettext(key)
     except FileNotFoundError:
-        # fallback to English if missing
         return key
