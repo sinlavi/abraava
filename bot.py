@@ -284,17 +284,23 @@ async def handle_callback(client, callback_query: CallbackQuery):
 
         status = await client.send_message(chat_id, "⏳ دانلود...")
 
-        dl_opts = {
+        dl_opts ={
             'format': 'bestaudio/best',
             'outtmpl': '%(id)s.%(ext)s',
-            'cookiefile': 'cookies.txt',
-            'quiet': True,
-            'postprocessors': [
-                {
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192'
-                },
+            'noplaylist': True,
+            'quiet': False,
+            'concurrent_fragment_downloads': 1,
+            'retries': 10,
+            'fragment_retries': 10,
+            'socket_timeout': 20,
+            'sleep_interval': 5,
+            'max_sleep_interval': 12,
+            'sleep_interval_requests': 3,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192'
+            },
                 {
                     'key': 'FFmpegMetadata'
                 }
