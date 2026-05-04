@@ -68,6 +68,14 @@ def cleanup_files(yt_id):
         except OSError:
             pass
 
+def extract_video_id(url):
+    """استخراج شناسه ویدیو از لینک یوتیوب"""
+    pattern = r'(?:v=|\/)([0-9A-Za-z_-]{11}).*'
+    match = re.search(pattern, url)
+    if match:
+        return match.group(1)
+    return url
+
 # ================= توابع کمکی =================
 
 def get_pagination_keyboard(search_id, page):
@@ -139,31 +147,53 @@ async def send_track_info(client: Client, message_or_query, query_or_id):
     if isinstance(message_or_query, CallbackQuery):
         msg_to_edit = message_or_query.message
     else:
-        msg_to_edit = await message_or_query.reply("⏳ در حال استخراج اطلاعات...")
+        msg_to_edit = await message_or_query.reply("⏳ در حال بررسی اطلاعات...")
 
-    try:
-        info = extract_info(query_or_id)
-        yt_id = info['id']
-        title = info.get('title', 'Unknown Title')
-        artist = info.get('uploader', info.get('artist', 'Unknown Artist'))
-        thumb = info.get('thumbnail', '')
-        
-        caption = f"🎵 **عنوان:** {title}\n👤 **آرتیست:** {artist}\n\nبرای دانلود روی دکمه زیر کلیک کنید:"
-        keyboard = InlineKeyboard([InlineKeyboardButton("⬇️ دانلود (MP3)", f"dl|{yt_id}")])
-
-        if isinstance(message_or_query, Message):
-            await msg_to_edit.delete()
-
-        if thumb:
-            await client.send_photo(chat_id, photo=thumb, caption=caption, reply_markup=keyboard)
-        else:
-            await client.send_message(chat_id, text=caption, reply_markup=keyboard)
+    yt_id = extract_video_id(query_or_id)
+    
+    # 1. بررسی وجود در دیتابیس
+    db_result = get_track_from_db(yt_id)
+    
+    if db_result:
+        message_id, title, artist = db_result
+        thumb = None
+        is_cached = True
+    else:
+        # 2. استخراج اطلاعات از یوتیوب در صورت عدم وجود در دیتابیس
+        try:
+            if isinstance(message_or_query, CallbackQuery):
+                await msg_to_edit.edit_text("⏳ در حال دریافت متادیتا از یوتیوب...")
             
-    except Exception as e:
-        if isinstance(message_or_query, Message):
-            await msg_to_edit.edit_text(f"❌ خطا در دریافت اطلاعات: {str(e)}")
-        else:
-            await client.send_message(chat_id, f"❌ خطا: {str(e)}")
+            info = extract_info(yt_id)
+            yt_id = info['id']
+            title = info.get('title', 'Unknown Title')
+            artist = info.get('uploader', info.get('artist', 'Unknown Artist'))
+            thumb = info.get('thumbnail', '')
+            is_cached = False
+        except Exception as e:
+            if isinstance(message_or_query, Message):
+                await msg_to_edit.edit_text(f"❌ خطا در دریافت اطلاعات: {str(e)}")
+            else:
+                await client.send_message(chat_id, f"❌ خطا: {str(e)}")
+            return
+
+    caption = f"🎵 **عنوان:** {title}\n👤 **آرتیست:** {artist}\n"
+    if is_cached:
+        caption += "💾 *(موجود در دیتابیس)*\n\nبرای دریافت فایل روی دکمه زیر کلیک کنید:"
+    else:
+        caption += "\nبرای دانلود روی دکمه زیر کلیک کنید:"
+        
+    keyboard = InlineKeyboard([InlineKeyboardButton("⬇️ دانلود (MP3)", f"dl|{yt_id}")])
+
+    if isinstance(message_or_query, Message):
+        await msg_to_edit.delete()
+
+    if thumb and not is_cached:
+        await client.send_photo(chat_id, photo=thumb, caption=caption, reply_markup=keyboard)
+    else:
+        # اگر عکس در دسترس نبود یا در حالت کش بودیم (برای جلوگیری از دانلود مجدد عکس)
+        await client.send_message(chat_id, text=caption, reply_markup=keyboard)
+
 
 @app.on_callback_query()
 async def handle_callback(client, callback_query):
@@ -184,16 +214,17 @@ async def handle_callback(client, callback_query):
         await callback_query.answer()
 
     elif action == "info":
-        await callback_query.answer("در حال دریافت اطلاعات...")
+        await callback_query.answer()
         await send_track_info(client, callback_query, args[0])
         
     elif action == "dl":
         yt_id = args[0]
         await callback_query.answer("بررسی درخواست...")
         
+        # بررسی وجود فایل در دیتابیس و کانال آرشیو
         db_result = get_track_from_db(yt_id)
         if db_result and db_result[0]:
-            msg = await client.send_message(chat_id, "✅ این آهنگ در آرشیو موجود است! در حال ارسال...")
+            msg = await client.send_message(chat_id, "✅ این آهنگ در آرشیو موجود است! در حال ارسال سریع...")
             await client.copy_message(chat_id=chat_id, from_chat_id=ARCHIVE_CHANNEL_ID, message_id=db_result[0])
             await msg.delete()
             return
@@ -221,15 +252,19 @@ async def handle_callback(client, callback_query):
                 filename = f"{yt_id}.mp3"
                 
                 if os.path.exists(filename):
-                    await status_msg.edit_text("✅ دانلود کامل شد. در حال آپلود...")
+                    await status_msg.edit_text("✅ دانلود کامل شد. در حال آپلود و ذخیره در آرشیو...")
                     
+                    # ارسال به کانال آرشیو
                     archive_msg = await client.send_document(
                         chat_id=ARCHIVE_CHANNEL_ID,
                         document=filename,
                         caption=f"🎵 Title: {title}\n👤 Artist: {artist}\n🆔 ID: {yt_id}"
                     )
                     
+                    # ذخیره اطلاعات و آیدی پیام در دیتابیس
                     save_track_to_db(yt_id, title, artist, archive_msg.id)
+                    
+                    # ارسال برای کاربر
                     await client.send_document(chat_id=chat_id, document=filename, caption=title)
                     await status_msg.delete()
                 else:
