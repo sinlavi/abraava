@@ -166,9 +166,9 @@ async def send_track_info(client: Client, message_or_query, query_or_id):
             await client.send_message(chat_id, f"❌ خطا: {str(e)}")
 
 @app.on_callback_query()
-async def handle_callback(client: Client, query):
-    data = query.data
-    chat_id = query.message.chat.id
+async def handle_callback(client, callback_query):
+    data = callback_query.data
+    chat_id = callback_query.message.chat.id
     
     try:
         action, *args = data.split('|')
@@ -180,16 +180,16 @@ async def handle_callback(client: Client, query):
         page = int(page_str)
         if search_id in SEARCH_CACHE:
             keyboard = get_pagination_keyboard(search_id, page)
-            await query.message.edit_reply_markup(keyboard)
-        await query.answer()
+            await callback_query.message.edit_reply_markup(keyboard)
+        await callback_query.answer()
 
     elif action == "info":
-        await query.answer("در حال دریافت اطلاعات...")
-        await send_track_info(client, query, args[0])
+        await callback_query.answer("در حال دریافت اطلاعات...")
+        await send_track_info(client, callback_query, args[0])
         
     elif action == "dl":
         yt_id = args[0]
-        await query.answer("بررسی درخواست...")
+        await callback_query.answer("بررسی درخواست...")
         
         db_result = get_track_from_db(yt_id)
         if db_result and db_result[0]:
