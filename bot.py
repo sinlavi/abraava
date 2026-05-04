@@ -285,7 +285,7 @@ async def handle_callback(client, callback_query: CallbackQuery):
         status = await client.send_message(chat_id, "⏳ دانلود...")
 
         dl_opts = {
-            'format': 'bestaudio',
+            'format': 'bestaudio/best',
             'outtmpl': '%(id)s.%(ext)s',
             'cookiefile': 'cookies.txt',
             'quiet': True,
