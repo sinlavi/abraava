@@ -256,11 +256,11 @@ async def handle_callback(client, callback_query: CallbackQuery):
 
         await callback_query.message.edit_reply_markup(keyboard)
 
-        await callback_query.answer()
+        await callback_query.answer('')
 
     elif action == "info":
 
-        await callback_query.answer()
+        await callback_query.answer('')
 
         await send_track_info(client, callback_query, args[0])
 
