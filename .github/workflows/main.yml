@@ -2,11 +2,9 @@ name: Run YouTube Downloader Bot
 
 on:
   schedule:
-    # اجرا هر ۶ ساعت یک‌بار برای جلوگیری از خاموش شدن
     - cron: '0 */6 * * *'
-  workflow_dispatch: # امکان اجرای دستی از تب Actions
+  workflow_dispatch:
 
-# دادن دسترسی نوشتن برای کامیت کردن دیتابیس
 permissions:
   contents: write
 
@@ -18,15 +16,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Setup FFmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v3
+        id: setup-ffmpeg
+        with:
+          ffmpeg-version: release
+          architecture: ''
+          linking-type: static
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
-      - name: Install System Dependencies (FFmpeg)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
 
       - name: Install Python Dependencies
         run: |
@@ -37,7 +38,6 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
-        # ربات ۵.۵ ساعت اجرا می‌شود تا قبل از لیمیت ۶ ساعته اکشنز، بسته شود
         run: |
           timeout 5.5h python bot.py || true
 
@@ -46,6 +46,5 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add archive.db
-          # فقط اگر تغییری در دیتابیس بود کامیت کن
           git diff-index --quiet HEAD || git commit -m "Auto-update SQLite database"
           git push
