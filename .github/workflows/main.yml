@@ -1,43 +1,51 @@
-name: Telegram/Bale Bot and DB Backup
+name: Run YouTube Downloader Bot
 
 on:
   schedule:
-    # اجرای خودکار ربات هر 6 ساعت (برای اینکه همیشه آنلاین بماند)
+    # اجرا هر ۶ ساعت یک‌بار برای جلوگیری از خاموش شدن
     - cron: '0 */6 * * *'
-  workflow_dispatch: # امکان اجرای دستی اکشن
+  workflow_dispatch: # امکان اجرای دستی از تب Actions
+
+# دادن دسترسی نوشتن برای کامیت کردن دیتابیس
+permissions:
+  contents: write
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install System Dependencies (FFmpeg)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install balethon yt-dlp
 
-      - name: Run Bot (Timeout after 5.5 hours)
+      - name: Run Bot (with timeout)
         env:
-          # فراخوانی سکرت‌هایی که در تنظیمات گیت‌هاب ذخیره کرده‌اید
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
+        # ربات ۵.۵ ساعت اجرا می‌شود تا قبل از لیمیت ۶ ساعته اکشنز، بسته شود
         run: |
-          # متوقف کردن ربات بعد از 5.5 ساعت برای جلوگیری از تایم‌اوت شدن خود اکشن 
-          # تا مرحله بعد (کامیت دیتابیس) با موفقیت اجرا شود.
           timeout 5.5h python bot.py || true
 
-      - name: Commit and Push DB Changes
+      - name: Commit and Push Database
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add archive.db
-          # اگر تغییری در دیتابیس وجود داشت، آن را کامیت کن
-          git diff --quiet && git diff --staged --quiet || git commit -m "Auto-backup: Update SQLite DB"
+          # فقط اگر تغییری در دیتابیس بود کامیت کن
+          git diff-index --quiet HEAD || git commit -m "Auto-update SQLite database"
           git push
