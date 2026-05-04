@@ -207,7 +207,7 @@ async def handle_callback(client, callback_query):
             'quiet': True,
             'writethumbnail': True,
             'postprocessors': [
-                {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'},
+                {'key': 'FFmpegExtractAudio'},
                 {'key': 'EmbedThumbnail'},
                 {'key': 'FFmpegMetadata'},
             ],
