@@ -166,7 +166,7 @@ async def send_track_info(client: Client, message_or_query, query_or_id):
             await client.send_message(chat_id, f"❌ خطا: {str(e)}")
 
 @app.on_callback_query()
-async def handle_callback(client, query):
+async def handle_callback(client: Client, query):
     data = query.data
     chat_id = query.message.chat.id
     
