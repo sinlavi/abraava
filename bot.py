@@ -211,10 +211,10 @@ async def handle_callback(client, callback_query):
         if search_id in SEARCH_CACHE:
             keyboard = get_pagination_keyboard(search_id, page)
             await callback_query.message.edit_reply_markup(keyboard)
-        await callback_query.answer()
+        await callback_query.answer('')
 
     elif action == "info":
-        await callback_query.answer()
+        await callback_query.answer('')
         await send_track_info(client, callback_query, args[0])
         
     elif action == "dl":
