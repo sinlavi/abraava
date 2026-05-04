@@ -240,10 +240,10 @@ async def send_track_info(client, message_or_query, query_or_id):
 
 
 @app.on_callback_query()
-async def handle_callback(client, query: CallbackQuery):
+async def handle_callback(client, callback_query: CallbackQuery):
 
-    data = query.data
-    chat_id = query.message.chat.id
+    data = callback_query.data
+    chat_id = callback_query.message.chat.id
 
     action, *args = data.split("|")
 
@@ -254,21 +254,21 @@ async def handle_callback(client, query: CallbackQuery):
 
         keyboard = get_pagination_keyboard(search_id, page)
 
-        await query.message.edit_reply_markup(keyboard)
+        await callback_query.message.edit_reply_markup(keyboard)
 
-        await query.answer()
+        await callback_query.answer()
 
     elif action == "info":
 
-        await query.answer()
+        await callback_query.answer()
 
-        await send_track_info(client, query, args[0])
+        await send_track_info(client, callback_query, args[0])
 
     elif action == "dl":
 
         yt_id = args[0]
 
-        await query.answer("در حال بررسی")
+        await callback_query.answer("در حال بررسی")
 
         db = get_track_from_db(yt_id)
 
