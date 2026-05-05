@@ -64,12 +64,12 @@ db = DatabaseManager(DB_PATH)
 
 def build_caption(track):
     caption = (
-        f"🎧 *{track.get("title","نامشخص")}*\n"
-        f"🎤 هنرمند: *{track.get("uploader","نامشخص")}*\n"
-        f"📅 سال: {track.get('year',"نامشخص")}\n"
-        f"🎸 ژانر: {track.get('genre',"نامشخص")}\n"
-        f"⏱ مدت: {track.get('duration',"نامشخص")}\n"
-        f"🔗 [لینک اصلی]({track.get('webpage_url',"نامشخص")})\n\n"
+        f"🎧 *{track.get('title','نامشخص')}*\n"
+        f"🎤 هنرمند: *{track.get('uploader','نامشخص')}*\n"
+        f"📅 سال: {track.get('year','نامشخص')}\n"
+        f"🎸 ژانر: {track.get('genre','نامشخص')}\n"
+        f"⏱ مدت: {track.get('duration','نامشخص')}\n"
+        f"🔗 [لینک اصلی]({track.get('webpage_url','نامشخص')})\n\n"
         "🤖 @abraava_bot"
     )
     return caption
@@ -178,7 +178,7 @@ async def handle_text(client, message):
         if len(results) > 5:
             buttons.append([("➡️ بعدی", f"page:{content}:1")])
 
-        await message.reply(f"🎯 نتایج برای **{content}**", InlineKeyboard(*buttons))
+        await message.reply(f"🎯 نتایج برای *{content}*", InlineKeyboard(*buttons))
 
 
 # =================== توابع جستجو و صفحه‌بندی ==================
@@ -213,7 +213,7 @@ async def handle_callback(client, callback_query):
             buttons.append([("➡️ بعدی", f"page:{keyword}:{page_index + 1}")])
         if start > 0:
             buttons.append([("⬅️ قبلی", f"page:{keyword}:{page_index - 1}")])
-        await callback_query.message.edit_text(f"🎯 نتایج برای **{keyword}** (صفحه {page_index + 1})",
+        await callback_query.message.edit_text(f"🎯 نتایج برای *{keyword}* (صفحه {page_index + 1})",
                                                InlineKeyboard(*buttons))
 
     elif data.startswith("show:"):
