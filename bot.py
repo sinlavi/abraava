@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 import yt_dlp
 from balethon import Client
-from balethon.conditions import command, text, private
+from balethon.conditions import command, text, private, chat
 from balethon.objects import InlineKeyboard, InlineKeyboardButton
 
 # ===================== تنظیمات لاگر =====================
@@ -43,18 +43,23 @@ class DatabaseManager:
         ]
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
-            # جدول موزیک‌ها
+            
+            # بررسی ساختار جدول فعلی (در صورت وجود)
+            c.execute("PRAGMA table_info(tracks)")
+            existing_cols = [r[1] for r in c.fetchall()]
+            needed_cols = [f.split()[0] for f in fields]
+            
+            # اگر جدول وجود داشت اما ستون‌ها مغایرت داشتند، دیتابیس کلا پاک شود
+            if existing_cols and set(existing_cols) != set(needed_cols):
+                logger.warning("Database schema mismatch detected. Dropping all tables...")
+                c.execute("DROP TABLE IF EXISTS tracks")
+                c.execute("DROP TABLE IF EXISTS users")
+            
+            # ساخت مجدد جداول
             c.execute(f"CREATE TABLE IF NOT EXISTS tracks ({', '.join(fields)})")
             
             # جدول کاربران برای ارسال پیام همگانی
             c.execute("CREATE TABLE IF NOT EXISTS users (chat_id INTEGER PRIMARY KEY)")
-            
-            c.execute("PRAGMA table_info(tracks)")
-            cols = [r[1] for r in c.fetchall()]
-            needed_cols = [f.split()[0] for f in fields]
-            if set(cols) != set(needed_cols):
-                c.execute("DROP TABLE IF EXISTS tracks")
-                c.execute(f"CREATE TABLE tracks ({', '.join(fields)})")
             conn.commit()
 
     def run_query(self, query, params=(), fetch=False, fetchone=False):
@@ -146,25 +151,23 @@ def get_search_text(results):
     return text
 
 # =================== هندلر Broadcast (کانال به بات) ==================
-@bot.on_message()
+@bot.on_message(chat(BROADCAST_CHANNEL_ID))
 async def channel_broadcast_handler(client, message):
-    if message.chat.id == BROADCAST_CHANNEL_ID:
-        logger.info(f"New message in broadcast channel {BROADCAST_CHANNEL_ID}, forwarding to users...")
-        users = db.run_query("SELECT chat_id FROM users", fetch=True)
-        success_count = 0
-        for u in users:
-            try:
-                await client.forward_message(
-                    chat_id=u['chat_id'],
-                    from_chat_id=message.chat.id,
-                    message_id=message.id
-                )
-                success_count += 1
-                await asyncio.sleep(0.05) # جلوگیری از فلود شدن ریکوئست‌ها
-            except Exception as e:
-                logger.error(f"Failed to forward message to {u['chat_id']}: {e}")
-        logger.info(f"Broadcast finished. Sent to {success_count} users.")
-        return # پایان پردازش این پیام
+    logger.info(f"New message in broadcast channel {BROADCAST_CHANNEL_ID}, forwarding to users...")
+    users = db.run_query("SELECT chat_id FROM users", fetch=True)
+    success_count = 0
+    for u in users:
+        try:
+            await client.forward_message(
+                chat_id=u['chat_id'],
+                from_chat_id=message.chat.id,
+                message_id=message.id
+            )
+            success_count += 1
+            await asyncio.sleep(0.05) # جلوگیری از فلود شدن ریکوئست‌ها
+        except Exception as e:
+            logger.error(f"Failed to forward message to {u['chat_id']}: {e}")
+    logger.info(f"Broadcast finished. Sent to {success_count} users.")
 
 # =================== هندلر start ==================
 @bot.on_message(command("start"))
