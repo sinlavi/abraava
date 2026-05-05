@@ -153,7 +153,7 @@ async def handle_text(client, message):
         caption = build_caption(meta)
         photo_url = meta["thumbnail"]
         sent_msg = await client.send_audio(CACHE_CHANNEL_ID, filepath, caption=caption)
-        meta["cache_msg_id"] = sent_msg.document.id
+        meta["cache_msg_id"] = sent_msg.audio.id
 
         db.run_query(
             f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?'] * len(meta))})",
