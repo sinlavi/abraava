@@ -185,20 +185,6 @@ async def handle_message(client: Client, message: Message):
 
 
 async def send_track_info(client, message_or_query, query_or_id):
-        
-    yt_id = 'YVFGrZ2S8pg'  # شناسه نمونه که در خطا هست
-    
-    with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-        info = ydl.extract_info(yt_id, download=False)
-        print(f'Title: {info.get("title")}\n')
-        print('Available formats:')
-        for f in info.get('formats', []):
-            format_id = f.get('format_id')
-            ext = f.get('ext')
-            acodec = f.get('acodec')
-            vcodec = f.get('vcodec')
-            filesize = f.get('filesize') or 'unknown'
-            print(f' - {format_id} | ext: {ext} | acodec: {acodec} | vcodec: {vcodec} | size: {filesize}')
     chat_id = message_or_query.message.chat.id if isinstance(message_or_query, CallbackQuery) else message_or_query.chat.id
 
     if isinstance(message_or_query, CallbackQuery):
@@ -298,7 +284,8 @@ async def handle_callback(client, callback_query: CallbackQuery):
         status = await client.send_message(chat_id, "⏳ دانلود...")
 
         dl_opts ={
-            'format': 'bestaudio/best',
+            'cookiefile': 'cookies.txt', # <--- این خط اضافه شود
+            'format': 'ba/b',           
             'outtmpl': '%(id)s.%(ext)s',
             'noplaylist': True,
             'quiet': False,
