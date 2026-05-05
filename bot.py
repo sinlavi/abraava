@@ -174,7 +174,7 @@ async def handle_text(client, message):
         # صفحه اول
         buttons = []
         for item in results[:5]:
-            buttons.append([(f"🎧 {item['title']} - {item['artist'][:15]}", f"show:{item['webpage_url']}")])
+            buttons.append([(f"🎧 {item['title']} - {item['uploader'][:15]}", f"show:{item['webpage_url']}")])
         if len(results) > 5:
             buttons.append([("➡️ بعدی", f"page:{content}:1")])
 
@@ -208,7 +208,7 @@ async def handle_callback(client, callback_query):
         end = start + 5
         buttons = []
         for item in results[start:end]:
-            buttons.append([(f"🎧 {item['title']} - {item['artist'][:15]}", f"show:{item['webpage_url']}")])
+            buttons.append([(f"🎧 {item['title']} - {item['uploader'][:15]}", f"show:{item['webpage_url']}")])
         if end < len(results):
             buttons.append([("➡️ بعدی", f"page:{keyword}:{page_index + 1}")])
         if start > 0:
