@@ -176,7 +176,7 @@ async def handle_text(client, message):
         db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?'] * len(meta))})", tuple(meta.values()))
         
         caption = build_caption(meta, BOT_USERNAME)
-        keyboard = InlineKeyboard([("⬇️ دانلود فایل صوتی", f"getaudio:{info['id']}:1")])
+        keyboard = InlineKeyboard([("⬇️ دریافت فایل صوتی", f"getaudio:{info['id']}:1")])
         
         await msg.delete()
         
@@ -264,8 +264,7 @@ async def handle_callback(client, callback_query):
         await callback_query.message.edit_text(text_res, reply_markup=InlineKeyboard(nav_buttons) if nav_buttons else None)
 
     # دانلود و ارسال فایل صوتی
-    elif data.startswith("getaudio:"):
-        _, track_id, is_from_search = data.split(":")
+    elif data.startswith("getaudio:"):        
         url = f"https://soundcloud.com/tracks/{track_id}"
         
         # ویرایش پیام قبلی برای نشان دادن وضعیت
@@ -277,7 +276,9 @@ async def handle_callback(client, callback_query):
         # حذف پیام اطلاعات آهنگ (حاوی کاور) در صورتی که نیاز داشتید حذف شود:
         # اینجا می‌توانیم پیام را پاک کنیم یا به جای آن فایل را ارسال کنیم.
         msg_to_delete = callback_query.message
-
+        print(row.get("cache_msg_id"))
+        url = row.get("webpage_url")
+        print(row.get("webpage_url"))
         if row and row.get("cache_msg_id"):
             try:
                 await client.send_document(callback_query.message.chat.id, row["cache_msg_id"], caption=caption)
