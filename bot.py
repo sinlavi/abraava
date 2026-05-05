@@ -110,7 +110,7 @@ async def search_soundcloud(query, max_results=30):
                 "id": e.get("id"),
                 "title": e.get("title", "بدون نام"),
                 "uploader": e.get("uploader", "نامشخص"),
-                "webpage_url": e.get("url", ""),
+                "webpage_url": e.get("webpage_url", ""),
                 "thumbnail": e.get("thumbnail", ""),
                 "duration": e.get("duration", 0)
             })
@@ -123,7 +123,7 @@ def get_search_text(results, page, total_pages):
         text += f"🎵 {item['title']}\n"
         text += f"⏱️ {format_duration(item.get('duration'))}\n"
         # استفاده از کامند برای دانلود
-        text += f"📥 [📥 دریافت](send:{item['url']})\n\n"
+        text += f"[📥 دریافت](send:{item['webpage_url']})\n\n"
     text += f"📄 صفحه {page} از {total_pages}"
     return text
 
