@@ -61,12 +61,6 @@ class DatabaseManager:
 db = DatabaseManager(DB_PATH)
 
 
-# ===================== کمکی =====================
-def get_uploader_name(author):
-    if getattr(author, "username", None):
-        return f"@{author.username}"
-    return getattr(author, "first_name", "") or "کاربر ناشناس"
-
 
 def build_caption(track):
     title = track.get("title") or "نامشخص"
@@ -199,7 +193,7 @@ async def search_soundcloud(query):
         for e in info.get("entries", []):
             results.append({
                 "title": e.get("title", ""),
-                "artist": e.get("uploader", ""),
+                "uploader": e.get("uploader", ""),
                 "webpage_url": e.get("url", ""),
             })
     return results
