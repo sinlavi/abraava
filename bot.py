@@ -227,7 +227,7 @@ async def handle_callback(client, callback_query):
 
     # دانلود و ارسال فایل صوتی
     elif data.startswith("getaudio:"):        
-        
+        track_id = data.split(":")[1]
         # ویرایش پیام قبلی برای نشان دادن وضعیت
         await callback_query.answer("⏳ در حال پردازش فایل، لطفا صبور باشید...")
         
