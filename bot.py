@@ -235,7 +235,7 @@ async def handle_text(client, message):
     if total_pages > 1:
         buttons.append([("➡️ بعدی", f"page:{content}:1")])
         
-    await msg.edit_text(text_res, components=InlineKeyboard(*buttons) if buttons else None)
+    await msg.edit_text(text_res, reply_markup=InlineKeyboard(*buttons) if buttons else None)
 
 
 # =================== هندلر دکمه‌های شیشه‌ای ==================
@@ -261,7 +261,7 @@ async def handle_callback(client, callback_query):
         if page_index > 0: nav_buttons.append(("⬅️ قبلی", f"page:{keyword}:{page_index - 1}"))
         if end < len(results): nav_buttons.append(("➡️ بعدی", f"page:{keyword}:{page_index + 1}"))
         
-        await callback_query.message.edit_text(text_res, components=InlineKeyboard(nav_buttons) if nav_buttons else None)
+        await callback_query.message.edit_text(text_res, reply_markup=InlineKeyboard(nav_buttons) if nav_buttons else None)
 
     # دانلود و ارسال فایل صوتی
     elif data.startswith("getaudio:"):
