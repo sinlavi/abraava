@@ -228,7 +228,7 @@ async def handle_callback(client, callback_query):
             caption = build_caption(row)
             if row.get("cover_url"):
                 await client.send_photo(callback_query.message.chat.id, row["cover_url"], caption=caption,
-                                        buttons=InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
+                                        reply_markup=InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
             else:
                 await callback_query.message.reply(caption, InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
             return
@@ -258,8 +258,8 @@ async def handle_callback(client, callback_query):
             tuple(meta.values())
         )
         caption = build_caption(meta)
-        await callback_query.message.reply_photo(meta["cover_url"], caption=caption,
-                                           buttons=InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
+        await bot.send_photo(callback_query.message.chat.id,meta["cover_url"], caption=caption,
+                                           reply_markup=InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
 
     elif data.startswith("dl:"):
         url = data.split(":", 1)[1]
