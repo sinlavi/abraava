@@ -280,7 +280,7 @@ async def handle_callback(client, callback_query):
             "webpage_url": url
         })
         sent_msg = await client.send_audio(DB_CHANNEL_ID, filepath, caption=caption)
-        db.run_query("UPDATE tracks SET channel_msg_id=? WHERE webpage_url=?", (sent_msg.document.id, url))
+        db.run_query("UPDATE tracks SET channel_msg_id=? WHERE webpage_url=?", (sent_msg.audio.id, url))
         await client.send_audio(callback_query.message.chat.id, filepath, caption=caption)
         if os.path.exists(filepath):
             os.remove(filepath)
