@@ -1,54 +1,47 @@
-import os
-import sqlite3
 import asyncio
+import os
 import re
-import aiohttp
+import sqlite3
 from pathlib import Path
-
-from balethon import Client
-from balethon.conditions import document, private, command, text, audio
-from balethon.objects import InlineKeyboard, ReplyKeyboard
-
+import aiohttp
 from mutagen import File
 import yt_dlp
+from balethon import Client
+from balethon.conditions import private, command, text, callback_query
+from balethon.objects import InlineKeyboard
 
-# ================= تنظیمات اصلی ربات =================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_TOKEN_HERE")
-DB_CHANNEL_ID = int(os.getenv("DB_CHANNEL_ID", "-1000000000000"))  # آیدی عددی کانال آرشیو
-
-AUDIO_EXTENSIONS = {'mp3', 'm4a', 'wav', 'ogg', 'flac', 'amr', 'wma'}
-TEMP_DIR = Path(os.path.abspath("temp_uploads"))
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = "audio_metadata.db"
+# ===================== تنظیمات =====================
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BALE_BOT_TOKEN")
+DB_CHANNEL_ID = int(os.getenv("DB_CHANNEL_ID", "-1000000000000"))
+TEMP_DIR = Path("temp_soundcloud")
+TEMP_DIR.mkdir(exist_ok=True)
+DB_PATH = "soundcloud_tracks.db"
 
 bot = Client(BOT_TOKEN)
-BOT_USERNAME = ""  # در تابع استارت مقداردهی می‌شود
+BOT_USERNAME = ""  # مقدار در start هندلر گرفته می‌شود
 
-
-# ================= مدیریت دیتابیس =================
+# ===================== دیتابیس =====================
 class DatabaseManager:
     def __init__(self, db_path):
         self.db_path = db_path
         self.init_db()
 
     def init_db(self):
+        fields = [
+            "uuid TEXT PRIMARY KEY", "title TEXT", "artist TEXT", "genre TEXT",
+            "year TEXT", "webpage_url TEXT", "cover_url TEXT", "channel_msg_id TEXT",
+            "uploader TEXT", "duration TEXT", "album TEXT", "created_at TEXT"
+        ]
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS audio_metadata (
-                    uuid TEXT PRIMARY KEY, track_number TEXT, title TEXT,
-                    artist TEXT, album TEXT, genre TEXT, comment TEXT,
-                    url TEXT, album_artist TEXT, disk_number TEXT, year TEXT,
-                    copyright TEXT, publisher TEXT, composer TEXT, conductor TEXT,
-                    encoded_by TEXT, mood TEXT, catalog TEXT, user_rating INTEGER,
-                    track_gain REAL, album_gain REAL, part_of_compilation TEXT,
-                    isrc TEXT, channel_message_id TEXT, uploader_name TEXT
-                )
-            ''')
-            try:
-                c.execute("ALTER TABLE audio_metadata ADD COLUMN uploader_name TEXT")
-            except sqlite3.OperationalError:
-                pass
+            c.execute(f"CREATE TABLE IF NOT EXISTS tracks ({', '.join(fields)})")
+            # بررسی اینکه ستون‌ها کامل هستند؛ اگر حذف یا متفاوت باشند جدول را بازسازی کن
+            c.execute("PRAGMA table_info(tracks)")
+            cols = [r[1] for r in c.fetchall()]
+            needed_cols = [f.split()[0] for f in fields]
+            if set(cols) != set(needed_cols):
+                c.execute("DROP TABLE IF EXISTS tracks")
+                c.execute(f"CREATE TABLE tracks ({', '.join(fields)})")
             conn.commit()
 
     def run_query(self, query, params=(), fetch=False, fetchone=False):
@@ -59,365 +52,239 @@ class DatabaseManager:
             if fetchone:
                 return dict(c.fetchone() or {})
             if fetch:
-                return [dict(row) for row in c.fetchall()]
+                return [dict(r) for r in c.fetchall()]
             conn.commit()
-
 
 db = DatabaseManager(DB_PATH)
 
 
-# ================= توابع کمکی =================
-def extract_file_metadata(filepath):
-    try:
-        audio_file = File(filepath)
-        if not audio_file or not audio_file.tags:
-            return {}
-
-        tags = audio_file.tags
-        result = {}
-
-        # تعریف کلیدهای استاندارد متادیتا که می‌خواهیم استخراج کنیم
-        tag_keys = {
-            "title": ["TIT2", "©nam", "title", "\xa9nam"],
-            "artist": ["TPE1", "©ART", "artist", "\xa9ART"],
-            "album": ["TALB", "©alb", "album", "\xa9alb"],
-            "genre": ["TCON", "©gen", "genre"],
-            "year": ["TDRC", "TYER", "date", "©day", "\xa9day"],
-            "comment": ["COMM::eng", "©cmt", "comment"],
-            "track_number": ["TRCK", "tracknumber", "track"]
-        }
-
-        def try_get(tag_name):
-            # جستجو در تگ‌ها از لیست کلیدها
-            for key in tag_name:
-                if key in tags:
-                    value = tags.get(key)
-                    if not value:
-                        continue
-                    # بعضی مقادیر ممکن است لیست باشند یا نمونه‌های مختلف کلاس‌ها
-                    if hasattr(value, "text"):
-                        # ID3 frame
-                        try:
-                            return str(value.text[0])
-                        except Exception:
-                            return str(value)
-                    elif isinstance(value, (list, tuple)):
-                        # لیست مقدار
-                        try:
-                            return str(value[0])
-                        except:
-                            return str(value)
-                    elif isinstance(value, bytes):
-                        # داده باینری با احتمال encoding خاص
-                        try:
-                            return value.decode('utf-8', errors='ignore').strip()
-                        except:
-                            return str(value)
-                    else:
-                        return str(value).strip()
-            return None
-
-        for key, keys_list in tag_keys.items():
-            val = try_get(keys_list)
-            if val:
-                result[key] = val
-
-        return result
-    except Exception as e:
-        print(f"extract_file_metadata error: {e}")
-        return {}
-
-
+# ===================== کمکی =====================
 def get_uploader_name(author):
-    if author.username:
+    if getattr(author, "username", None):
         return f"@{author.username}"
-    return author.first_name or "کاربر ناشناس"
+    return getattr(author, "first_name", "") or "کاربر ناشناس"
 
+def build_caption(track):
+    title = track.get("title") or "نامشخص"
+    artist = track.get("artist") or "نامشخص"
+    caption = (
+        f"🎧 *{title}*\n"
+        f"🎤 هنرمند: *{artist}*\n"
+        f"📅 سال: {track.get('year','-')}\n"
+        f"🎸 ژانر: {track.get('genre','-')}\n"
+        f"⏱ مدت: {track.get('duration','-')}\n"
+        f"🔗 [لینک اصلی]({track.get('webpage_url','')})\n\n"
+        f"👤 آپلود توسط: {track.get('uploader','سیستم')}\n"
+        "━━━━━━━━━━━━━━━\n"
+        "🤖 @sandcloud_archiver"
+    )
+    return caption
 
-def build_metadata_dict(base_meta, yt_dlp_meta=None):
-    result = {k: "" for k in [
-        "uuid", "title", "artist", "album", "genre", "year", "comment", "url",
-        "album_artist", "disk_number", "copyright", "publisher", "composer",
-        "conductor", "encoded_by", "mood", "catalog", "part_of_compilation",
-        "isrc", "channel_message_id", "uploader_name"
-    ]}
-    result.update({"user_rating": 0, "track_gain": 0.0, "album_gain": 0.0})
-
-    for k, v in base_meta.items():
-        if v: result[k] = str(v).strip()
-
-    if yt_dlp_meta:
-        result['title'] = result.get('title') or yt_dlp_meta.get('title', '')
-        result['artist'] = result.get('artist') or yt_dlp_meta.get('uploader', '')
-        result['genre'] = result.get('genre') or yt_dlp_meta.get('genre', '')
-        result['url'] = yt_dlp_meta.get('webpage_url', '')
-
-    return result
-
-
-async def save_to_db(metadata: dict):
-    loop = asyncio.get_event_loop()
-
-    def _save():
-        exists = db.run_query("SELECT 1 FROM audio_metadata WHERE uuid = ?", (metadata["uuid"],), fetchone=True)
-        if not exists:
-            db.run_query(f'''
-                INSERT INTO audio_metadata ({", ".join(metadata.keys())}) 
-                VALUES ({", ".join([f":{k}" for k in metadata.keys()])})
-            ''', metadata)
-        else:
-            db.run_query("UPDATE audio_metadata SET channel_message_id = ?, uploader_name = ? WHERE uuid = ?",
-                         (metadata.get("channel_message_id"), metadata.get("uploader_name"), metadata["uuid"]))
-
-    await loop.run_in_executor(None, _save)
-
-
-def build_metadata_text(metadata: dict):
-    """ساخت کپشن زیبا برای موزیک"""
-    title = metadata.get("title") or "نامشخص"
-    artist = metadata.get("artist") or "نامشخص"
-
-    lines = [
-        f"🎧 *{title}*",
-        f"🎤 هنرمند: *{artist}*",
-        "━━━━━━━━━━━━"
-    ]
-
-    if metadata.get("album"): lines.append(f"💿 آلبوم: {metadata['album']}")
-    if metadata.get("genre"): lines.append(f"🎸 ژانر: {metadata['genre']}")
-    if metadata.get("year"): lines.append(f"📅 سال انتشار: {metadata['year']}")
-    if metadata.get("url"): lines.append(f"🔗 لینک اصلی: [کلیک کنید]({metadata['url']})")
-
-    lines.append("━━━━━━━━━━━━")
-    uploader = metadata.get("uploader_name", "سیستم")
-    lines.append(f"👤 آرشیو شده توسط: {uploader}")
-    lines.append("🤖 @abraava_bot")  # یوزرنیم ربات خودتون رو جایگزین کنید
-
-    return "\n".join(lines)
-
-
-# ================= دانلودر ساندکلاود =================
 def download_soundcloud_track(url):
     ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': str(TEMP_DIR / '%(id)s.%(ext)s'),
-        'quiet': True,
-        'no_warnings': True
+        "format": "bestaudio/best",
+        "quiet": True,
+        "outtmpl": str(TEMP_DIR / "%(id)s.%(ext)s"),
+        "extract_flat": False,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filepath = ydl.prepare_filename(info)
         return filepath, info
 
-
-# ================= دانلود جزئی فایل از بله =================
-async def download_partial_file(client, file_id, save_path, chunk_size=1024 * 2047):
-    """دانلود 512 کیلوبایت اول فایل برای خواندن سریع متادیتا بدون مصرف حجم"""
-    try:
-        file_info = await client.get_file(file_id)
-        # آدرس دانلود فایل در بله
-        url = f"https://tapi.bale.ai/file/bot{BOT_TOKEN}/{file_info.id}"
-
-        async with aiohttp.ClientSession() as session:
-            headers = {"Range": f"bytes=0-{chunk_size}"}
-            async with session.get(url, headers=headers) as resp:
-                data = await resp.read()
-                with open(save_path, "wb") as f:
-                    f.write(data)
-                return True
-    except Exception as e:
-        print(f"Partial download failed: {e}")
-        return False
-
-
-# ================= هندلرهای ربات =================
-
+# =================== هندلر start ==================
 @bot.on_message(private & command("start"))
 async def start_handler(client, message):
     global BOT_USERNAME
     me = await client.get_me()
     BOT_USERNAME = me.username
-
-    keyboard = ReplyKeyboard(["🔍 جستجوی پیشرفته", "ℹ️ راهنما"])
-    welcome_text = (
-        "✨ **به ربات هوشمند آرشیو موزیک خوش آمدید!** ✨\n\n"
-        "🎧 من اینجا هستم تا بهترین آرشیو موزیک را برای شما بسازم.\n"
-        "شما می‌توانید **فایل‌های صوتی** خود را به صورت مستقیم ارسال کنید یا **لینک SoundCloud** بفرستید تا در کانال با اطلاعات کامل ذخیره شوند.\n\n"
-        "📌 *نکته:* من را می‌توانید به گروه‌های خود اضافه کنید تا آهنگ‌های ارسالی را به صورت خودکار شناسایی و آرشیو کنم!"
+    txt = (
+        "🎶 به ربات دانلودر ساندکلاود خوش آمدید!\n\n"
+        "ارسال کنید:\n"
+        "🔗 یک لینک SoundCloud — تا آهنگ را با کاور و جزئیات کامل دریافت کنید.\n"
+        "🕵️ متن جستجو — تا نتایج آلبوم‌ها و ترک‌ها را ببینید.\n\n"
+        "📌 نتیجه‌ها با دکمهٔ دانلود همراه‌اند و فایل‌ها در کانال آرشیو ذخیره می‌شوند."
     )
-    await message.reply(welcome_text, keyboard)
+    await message.reply(txt)
 
 
-@bot.on_message(text)
-async def text_handler(client, message):
-    text_content = message.text
-    is_group = message.chat.type in ["group", "supergroup"]
+# =================== هندلر لینک ساندکلاود ==================
+@bot.on_message(private & text)
+async def handle_text(client, message):
+    content = message.text.strip()
 
-    # در گروه‌ها، اگر ربات منشن نشده باشد و لینک ساندکلاود نباشد کاری نکن
-    if is_group:
-        if BOT_USERNAME and f"@{BOT_USERNAME}" not in text_content and "soundcloud.com" not in text_content:
-            return
-        text_content = text_content.replace(f"@{BOT_USERNAME}", "").strip()
+    # اگر لینک ساندکلاود است
+    if "soundcloud.com" in content:
+        await message.reply("⏳ بررسی لینک و دریافت اطلاعات...")
+        url = re.search(r"(https?://[^\s]+)", content)
+        if not url:
+            return await message.reply("❌ لینک نامعتبر!")
+        url = url.group(1)
 
-    if text_content.startswith("ℹ️ راهنما") or text_content == "/help":
-        help_text = (
-            "**📚 راهنمای استفاده از ربات:**\n\n"
-            "📤 **آپلود سریع:** کافیه فایل صوتی یا لینک SoundCloud رو برام بفرستی.\n"
-            "گروه‌ها: توی گروه‌ها اگه من رو ادد کنی، هر موزیکی فرستاده بشه رو خودکار آرشیو می‌کنم. برای لینک ساندکلاود باید من رو روی پیام ریپلای یا منشن کنی.\n"
-            "🔍 **جستجو:** نام خواننده، آهنگ یا آلبوم رو بفرست تا تو کسری از ثانیه پیداش کنم."
-        )
-        return await message.reply(help_text)
+        # بررسی در دیتابیس
+        existing = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
+        if existing and existing.get("channel_msg_id"):
+            # ارسال فایل موجود
+            caption = build_caption(existing)
+            return await client.send_document(message.chat.id, existing["channel_msg_id"], caption=caption)
 
-    # بررسی لینک ساندکلاود
-    if "soundcloud.com" in text_content:
-        msg = await message.reply("⏳ *در حال ارتباط با سرورهای SoundCloud...* لطفاً کمی منتظر بمانید 🎧")
-        url_match = re.search(r'(https?://[^\s]+)', text_content)
-        if not url_match: return
-        url = url_match.group(1)
-
+        # دانلود و ذخیره
         loop = asyncio.get_event_loop()
         try:
-            filepath, yt_info = await loop.run_in_executor(None, download_soundcloud_track, url)
-            file_meta = extract_file_metadata(filepath)
-
-            metadata = build_metadata_dict(file_meta, yt_info)
-            metadata["uuid"] = f"sc_{yt_info['id']}"
-            metadata["uploader_name"] = get_uploader_name(message.author)
-
-            caption_text = build_metadata_text(metadata)
-            sent_message = await client.send_audio(DB_CHANNEL_ID, filepath, caption=caption_text)
-            metadata["channel_message_id"] = sent_message.document.id
-
-            await save_to_db(metadata)
-            await msg.edit_text("✅ موزیک شما با موفقیت از ساندکلاود دریافت و در آرشیو ثبت شد! 🎉")
-
-            if os.path.exists(filepath):
-                os.remove(filepath)
+            filepath, info = await loop.run_in_executor(None, download_soundcloud_track, url)
         except Exception as e:
-            await msg.edit_text("❌ متأسفانه در دریافت لینک مشکلی پیش آمد. بررسی کنید لینک معتبر باشد.")
-        return
+            return await message.reply(f"❌ خطا در SoundCloud: {e}")
 
-    # جستجوی هوشمند
-    if text_content in ["🔍 جستجوی پیشرفته", "/search"]:
-        return await message.reply("لطفاً نام خواننده، آلبوم یا آهنگ مورد نظرتان را تایپ کنید 🔎:")
+        meta = {
+            "uuid": f"sc_{info['id']}",
+            "title": info.get("title", ""),
+            "artist": info.get("uploader", ""),
+            "genre": info.get("genre", ""),
+            "year": str(info.get("upload_date", ""))[:4],
+            "webpage_url": info.get("webpage_url", url),
+            "cover_url": info.get("thumbnail", ""),
+            "uploader": get_uploader_name(message.author),
+            "duration": str(info.get("duration", "")),
+            "album": "",
+            "created_at": "",
+        }
 
-    if not text_content.startswith("/") and not is_group:
-        keyword = text_content
-        buttons = InlineKeyboard(
-            [("🎵 جستجو در نام آهنگ‌ها", f"srch:track:{keyword}")],
-            [("🎤 جستجو در خواننده‌ها", f"srch:artist:{keyword}")],
-            [("💿 جستجو در آلبوم‌ها", f"srch:album:{keyword}")]
+        caption = build_caption(meta)
+        photo_url = meta["cover_url"]
+        sent_msg = await client.send_audio(DB_CHANNEL_ID, filepath, caption=caption)
+        meta["channel_msg_id"] = sent_msg.document.id
+
+        db.run_query(
+            f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?']*len(meta))})",
+            tuple(meta.values())
         )
-        await message.reply(f"🔎 می‌خواهید عبارت **{keyword}** را در کدام بخش جستجو کنم؟", buttons)
 
+        if photo_url:
+            await client.send_photo(message.chat.id, photo_url, caption=caption)
+        else:
+            await message.reply(caption)
 
-@bot.on_message(document | audio)
-async def handle_document(client, message):
-    # دریافت نوع فایل. بله فایل‌های صوتی را گاهی به عنوان document می‌فرستد
-    doc = getattr(message, 'document', None) or getattr(message, 'audio', None)
-    if not doc: return
+        await message.reply("✅ آهنگ ذخیره و آماده‌ی پخش شد!")
 
-    mime_type = getattr(doc, 'mime_type', '')
-    file_type = mime_type.split("/")[-1].split(";")[0] if mime_type else 'mp3'
-
-    if file_type not in AUDIO_EXTENSIONS and "audio" not in mime_type:
-        # در گروه پیام خطا ندهیم تا مزاحمت ایجاد نکند
-        if message.chat.type == "private":
-            await message.reply("❌ فرمت فایل مجاز نیست. لطفاً فقط فایل‌های صوتی ارسال کنید.")
+        # پاک کردن فایل دانلودی
+        if os.path.exists(filepath):
+            os.remove(filepath)
         return
 
-    msg = await message.reply("⚡ *در حال استخراج اطلاعات فایل...*")
-    filename = doc.id.replace(":", "_") + f".{file_type}"
-    tmp_path = TEMP_DIR / filename
+    # اگر متن جستجو است (Search)
+    if not content.startswith("/"):
+        await message.reply("🔍 در حال جستجو در SoundCloud...")
+        results = await search_soundcloud(content)
+        if not results:
+            return await message.reply("😔 موردی یافت نشد.")
 
-    try:
-        # دانلود جزئی (فقط 512 کیلوبایت اول برای متادیتا)
-        success = await download_partial_file(client, doc.id, str(tmp_path))
-        if not success:
-            # اگر دانلود جزئی کار نکرد، فایل کامل دانلود شود
-            response = await client.download(doc.id)
-            tmp_path.write_bytes(response)
+        # صفحه اول
+        buttons = []
+        for item in results[:5]:
+            buttons.append([(f"🎧 {item['title']} - {item['artist'][:15]}", f"show:{item['webpage_url']}")])
+        if len(results) > 5:
+            buttons.append([("➡️ بعدی", f"page:{content}:1")])
 
-        file_meta = extract_file_metadata(str(tmp_path))
-        metadata = build_metadata_dict(file_meta)
-        metadata["uuid"] = filename
-        metadata["uploader_name"] = get_uploader_name(message.author)
+        await message.reply(f"🎯 نتایج برای **{content}**", InlineKeyboard(*buttons))
 
-        # اگر متادیتا نام خواننده نداشت، از نام فایل در صورت امکان استفاده کن
-        if not metadata.get("title"):
-            metadata["title"] = getattr(doc, 'file_name', 'موزیک ناشناس').replace(f".{file_type}", "")
-
-        caption_text = build_metadata_text(metadata)
-
-        # فوروارد فایل اصلی به کانال (نیاز به آپلود مجدد نیست، آیدی فایل کافیست)
-        sent_message = await client.send_document(DB_CHANNEL_ID, doc.id, caption=caption_text)
-        metadata["channel_message_id"] = sent_message.document.id
-
-        await save_to_db(metadata)
-        await msg.edit_text("✅ موزیک شناسایی و با موفقیت در آرشیو ثبت شد! 🎶")
-
-    except Exception as e:
-        await msg.edit_text(f"❌ خطایی رخ داد: {e}")
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
-
+# =================== توابع جستجو و صفحه‌بندی ==================
+async def search_soundcloud(query):
+    """استفاده از yt_dlp برای جستجوی ساندکلاود"""
+    results = []
+    ydl_opts = {"quiet": True, "extract_flat": True, "default_search": f"scsearch5:{query}"}
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(f"scsearch5:{query}", download=False)
+        for e in info.get("entries", []):
+            results.append({
+                "title": e.get("title", ""),
+                "artist": e.get("uploader", ""),
+                "webpage_url": e.get("url", ""),
+            })
+    return results
 
 @bot.on_callback_query()
-async def handle_callback(client, callback_query):
-    data = callback_query.data
-    loop = asyncio.get_event_loop()
-
-    if data.startswith("srch:"):
-        _, search_type, keyword = data.split(":", 2)
-
-        def do_search():
-            if search_type == "track":
-                return db.run_query(
-                    "SELECT uuid, title, artist FROM audio_metadata WHERE title LIKE ? OR artist LIKE ? LIMIT 10",
-                    (f"%{keyword}%", f"%{keyword}%"), fetch=True)
-            elif search_type == "album":
-                return db.run_query(
-                    "SELECT DISTINCT album, artist FROM audio_metadata WHERE album LIKE ? AND album != '' LIMIT 10",
-                    (f"%{keyword}%",), fetch=True)
-            elif search_type == "artist":
-                return db.run_query(
-                    "SELECT DISTINCT artist FROM audio_metadata WHERE artist LIKE ? AND artist != '' LIMIT 10",
-                    (f"%{keyword}%",), fetch=True)
-
-        results = await loop.run_in_executor(None, do_search)
-
-        if not results:
-            return await callback_query.message.edit_text(
-                "😔 متأسفانه هیچ نتیجه‌ای پیدا نشد. عبارت دیگری را امتحان کنید.")
-
+async def handle_callback(client, callback):
+    data = callback.data
+    if data.startswith("page:"):
+        _, keyword, page_index = data.split(":")
+        page_index = int(page_index)
+        results = await search_soundcloud(keyword)
+        start = page_index * 5
+        end = start + 5
         buttons = []
-        if search_type == "track":
-            buttons = [
-                [(f"🎧 {row.get('title', 'نامشخص')} - {row.get('artist', 'نامشخص')[:15]}", f"track:{row['uuid']}")] for
-                row in results]
-        elif search_type == "album":
-            buttons = [[(f"💿 {row.get('album', '')} - {row.get('artist', 'نامشخص')[:15]}",
-                         f"album_tracks:{row['album']}:{row['artist']}")] for row in results]
-        elif search_type == "artist":
-            buttons = [[(f"🎤 {row['artist']}", f"artist:{row['artist']}")] for row in results]
+        for item in results[start:end]:
+            buttons.append([(f"🎧 {item['title']} - {item['artist'][:15]}", f"show:{item['webpage_url']}")])
+        if end < len(results):
+            buttons.append([("➡️ بعدی", f"page:{keyword}:{page_index+1}")])
+        if start > 0:
+            buttons.append([("⬅️ قبلی", f"page:{keyword}:{page_index-1}")])
+        await callback.message.edit_text(f"🎯 نتایج برای **{keyword}** (صفحه {page_index+1})", InlineKeyboard(*buttons))
 
-        await callback_query.message.edit_text(f"🎯 نتایج یافت شده برای **{keyword}**:", InlineKeyboard(*buttons))
+    elif data.startswith("show:"):
+        url = data.split(":", 1)[1]
+        # بررسی و ارسال جزئیات آهنگ
+        row = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
+        if row:
+            caption = build_caption(row)
+            if row.get("cover_url"):
+                await client.send_photo(callback.message.chat.id, row["cover_url"], caption=caption,
+                                        buttons=InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
+            else:
+                await callback.message.reply(caption, InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
+            return
 
-    # بقیه هندلرهای دکمه‌های شیشه‌ای مانند قبل ...
-    # (کد هندلرهای artist:, artist_albums: و track: به همین سبک می‌توانند بهبود یابند)
-    elif data.startswith("track:"):
-        uuid = data.split(":", 1)[1]
-        row = await loop.run_in_executor(None,
-                                         lambda: db.run_query("SELECT * FROM audio_metadata WHERE uuid = ?", (uuid,),
-                                                              fetchone=True))
+        await callback.message.reply("⏳ دریافت اطلاعات از SoundCloud...")
+        loop = asyncio.get_event_loop()
+        try:
+            _, info = await loop.run_in_executor(None, download_soundcloud_track, url)
+        except Exception as e:
+            return await callback.message.reply(f"خطا در دریافت اطلاعات: {e}")
 
-        if not row or not row.get("channel_message_id"):
-            return await callback_query.message.reply("❌ متأسفانه فایل در دیتابیس یافت نشد.")
+        meta = {
+            "uuid": f"sc_{info['id']}",
+            "title": info.get("title", ""),
+            "artist": info.get("uploader", ""),
+            "genre": info.get("genre", ""),
+            "year": str(info.get("upload_date", ""))[:4],
+            "webpage_url": info.get("webpage_url", url),
+            "cover_url": info.get("thumbnail", ""),
+            "uploader": "سیستم",
+            "duration": str(info.get("duration", "")),
+            "album": "",
+            "created_at": "",
+        }
+        db.run_query(
+            f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?']*len(meta))})",
+            tuple(meta.values())
+        )
+        caption = build_caption(meta)
+        await callback.message.reply_photo(meta["cover_url"], caption=caption,
+                                           buttons=InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
 
-        caption = build_metadata_text(row)
-        await client.send_document(callback_query.message.chat.id, row["channel_message_id"], caption=caption)
+    elif data.startswith("dl:"):
+        url = data.split(":", 1)[1]
+        row = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
+        if row and row.get("channel_msg_id"):
+            return await client.send_document(callback.message.chat.id, row["channel_msg_id"], caption=build_caption(row))
 
+        await callback.message.reply("⬇️ در حال دانلود از SoundCloud...")
+        loop = asyncio.get_event_loop()
+        try:
+            filepath, info = await loop.run_in_executor(None, download_soundcloud_track, url)
+        except Exception as e:
+            return await callback.message.reply(f"❌ خطا در دانلود: {e}")
 
+        caption = build_caption({
+            "title": info.get("title", ""),
+            "artist": info.get("uploader", ""),
+            "webpage_url": url
+        })
+        sent_msg = await client.send_audio(DB_CHANNEL_ID, filepath, caption=caption)
+        db.run_query("UPDATE tracks SET channel_msg_id=? WHERE webpage_url=?", (sent_msg.document.id, url))
+        await client.send_audio(callback.message.chat.id, filepath, caption=caption)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+
+# =================== اجرا =====================
 if __name__ == "__main__":
     bot.run()
