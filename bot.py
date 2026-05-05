@@ -185,7 +185,7 @@ async def handle_text(client, message):
 async def search_soundcloud(query):
     """استفاده از yt_dlp برای جستجوی ساندکلاود"""
     results = []
-    ydl_opts = {"quiet": True, "extract_flat": True, "default_search": f"scsearch5:{query}"}
+    ydl_opts = {"quiet": True, "extract_flat": True, "default_search": f"scsearch20:{query}"}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(f"scsearch5:{query}", download=False)
         for e in info.get("entries", []):
