@@ -163,7 +163,7 @@ async def handle_message(client: Client, message: Message):
     try:
 
         # سرچ در یوتیوب موزیک
-        info = extract_info(f"ytsearch20:{text} music", is_search=True)
+        info = extract_info(f"ytmsearch20:{text}", is_search=True)
 
         if not info or not info.get("entries"):
             await wait.edit_text("❌ نتیجه‌ای پیدا نشد")
