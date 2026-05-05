@@ -39,7 +39,7 @@ jobs:
 
       - name: Run Bot
         env:
-          BALE_TOKEN: ${{ secrets.BOT_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
         run: |
           timeout 5h python bot.py || true
