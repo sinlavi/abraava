@@ -273,12 +273,21 @@ async def handle_callback(client, callback_query):
             filepath, info = await loop.run_in_executor(None, download_soundcloud_track, url)
         except Exception as e:
             return await callback_query.message.reply(f"❌ خطا در دانلود: {e}")
-
-        caption = build_caption({
+        
+        meta = {
+            "uuid": f"sc_{info['id']}",
             "title": info.get("title", ""),
             "artist": info.get("uploader", ""),
-            "webpage_url": url
-        })
+            "genre": info.get("genre", ""),
+            "year": str(info.get("upload_date", ""))[:4],
+            "webpage_url": info.get("webpage_url", url),
+            "cover_url": info.get("thumbnail", ""),
+            "uploader": "سیستم",
+            "duration": str(info.get("duration", "")),
+            "album": "",
+            "created_at": "",
+        }
+        caption = build_caption(meta)
         sent_msg = await client.send_audio(DB_CHANNEL_ID, filepath, caption=caption)
         db.run_query("UPDATE tracks SET channel_msg_id=? WHERE webpage_url=?", (sent_msg.audio.id, url))
         await client.send_audio(callback_query.message.chat.id, filepath, caption=caption)
