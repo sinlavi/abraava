@@ -119,9 +119,10 @@ async def handle_message(client: Client, message: Message):
         await wait_msg.edit_text(f"✅ نتایج جستجو برای: {text}", reply_markup=InlineKeyboard(*keyboard[:10]))
     except Exception as e:
         await wait_msg.edit_text(f"❌ خطا در جستجو: {e}")
-
+        
 async def send_track_info(client, context, vid):
-    chat_id = context.message.chat.id if isinstance(context, CallbackQuery) else context.chat.id
+    is_callback = isinstance(context, CallbackQuery)
+    chat_id = context.message.chat.id if is_callback else context.chat.id
     
     cached = get_cached_track(vid)
     if cached:
@@ -135,32 +136,49 @@ async def send_track_info(client, context, vid):
             artist = vid_details.get('author', 'Unknown')
             thumb = get_high_res_thumbnail(vid_details.get('thumbnail', {}).get('thumbnails', []))
             
-            # دریافت فرمت‌ها با yt-dlp برای کش کردن
-            dl_opts = {'quiet': True, 'cookiefile': 'cookies.txt'}
-            with yt_dlp.YoutubeDL(dl_opts) as ydl:
-                info = ydl.extract_info(vid, download=False)
-                formats = []
-                for f in info.get('formats', []):
-                    if f.get('vcodec') == 'none' and f.get('acodec') != 'none': # فقط صوت
-                        formats.append({
-                            'format_id': f.get('format_id'),
-                            'ext': f.get('ext'),
-                            'abr': f.get('abr', 0), # Audio Bitrate
-                            'format_note': f.get('format_note', '')
-                        })
+            # دریافت فرمت‌ها با yt-dlp
+            dl_opts = {
+                'quiet': True, 
+                'cookiefile': 'cookies.txt',
+                'extract_flat': False
+            }
+            formats = []
+            try:
+                with yt_dlp.YoutubeDL(dl_opts) as ydl:
+                    info = ydl.extract_info(vid, download=False)
+                    for f in info.get('formats', []):
+                        if f.get('vcodec') == 'none' and f.get('acodec') != 'none':
+                            formats.append({
+                                'format_id': f.get('format_id'),
+                                'ext': f.get('ext'),
+                                'abr': f.get('abr', 0),
+                                'format_note': f.get('format_note', '')
+                            })
+            except Exception as e:
+                print(f"yt-dlp format extraction error: {e}")
+                # در صورت خطا، یک فرمت پیش‌فرض قرار می‌دهیم تا ربات از کار نیفتد
+                formats = [{'format_id': 'bestaudio', 'ext': 'mp3', 'abr': 128, 'format_note': 'Best'}]
+                
             save_track_meta(vid, title, artist, thumb, formats)
         except Exception as e:
-            await context.reply(f"❌ خطا در دریافت اطلاعات: {e}")
+            error_text = f"❌ خطا در دریافت اطلاعات: {e}"
+            if is_callback:
+                await context.message.reply(error_text)
+            else:
+                await context.reply(error_text)
             return
 
     caption = f"🎵 عنوان: {title}\n👤 آرتیست: {artist}"
     
     keyboard = []
-    # مرتب‌سازی کیفیت‌ها
-    for f in sorted(formats, key=lambda x: x['abr'] or 0, reverse=True)[:3]: # نمایش ۳ کیفیت برتر
-        bitrate = int(f['abr']) if f['abr'] else "?"
-        btn_text = f"⬇️ دانلود {f['ext'].upper()} (کیفیت {bitrate}kbps)"
-        keyboard.append([InlineKeyboardButton(btn_text, f"dl|{vid}|{f['format_id']}")])
+    if formats:
+        for f in sorted(formats, key=lambda x: x['abr'] or 0, reverse=True)[:3]:
+            bitrate = int(f['abr']) if f['abr'] else "?"
+            btn_text = f"⬇️ دانلود (کیفیت {bitrate}kbps)"
+            keyboard.append([InlineKeyboardButton(btn_text, f"dl|{vid}|{f['format_id']}")])
+    else:
+        # حالت فال‌بک اگر فرمتی پیدا نشد
+        keyboard.append([InlineKeyboardButton("⬇️ دانلود بهترین کیفیت", f"dl|{vid}|bestaudio")])
         
     keyboard.append([InlineKeyboardButton("🔙 بازگشت / بستن", "close")])
 
