@@ -182,9 +182,9 @@ async def handle_text(client, message):
         
         # نمایش کاور و اطلاعات
         if meta["thumbnail"]:
-            await client.send_photo(message.chat.id, meta["thumbnail"], caption=caption, components=keyboard)
+            await client.send_photo(message.chat.id, meta["thumbnail"], caption=caption, reply_markup=keyboard)
         else:
-            await client.send_message(message.chat.id, caption, components=keyboard)
+            await client.send_message(message.chat.id, caption, reply_markup=keyboard)
         return
 
     # هندل کردن لینک مستقیم
@@ -217,9 +217,9 @@ async def handle_text(client, message):
         
         await msg.delete()
         if meta["thumbnail"]:
-            await client.send_photo(message.chat.id, meta["thumbnail"], caption=caption, components=keyboard)
+            await client.send_photo(message.chat.id, meta["thumbnail"], caption=caption, reply_markup=keyboard)
         else:
-            await client.send_message(message.chat.id, caption, components=keyboard)
+            await client.send_message(message.chat.id, caption, reply_markup=keyboard)
         return
 
     # جستجوی متنی
