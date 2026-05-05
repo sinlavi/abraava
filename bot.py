@@ -123,7 +123,7 @@ def get_search_text(results, page, total_pages):
         text += f"🎵 {item['title']}\n"
         text += f"⏱️ {format_duration(item.get('duration'))}\n"
         # استفاده از کامند برای دانلود
-        text += f"📥 /dl_{item['id']}\n\n"
+        text += f"📥 [📥 دریافت](send:{item['url']})\n\n"
     text += f"📄 صفحه {page} از {total_pages}"
     return text
 
