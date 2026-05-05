@@ -4,18 +4,23 @@ import yt_dlp
 import re
 import glob
 import uuid
+from ytmusicapi import YTMusic
 from balethon import Client
 from balethon.conditions import private, command
 from balethon.objects import Message, CallbackQuery, InlineKeyboard, InlineKeyboardButton
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_TOKEN_HERE")
 archive_id_env = os.getenv("DB_CHANNEL_ID")
 ARCHIVE_CHANNEL_ID = int(archive_id_env) if archive_id_env else 0
 
 app = Client(BOT_TOKEN)
+ytmusic = YTMusic()
 
 SEARCH_CACHE = {}
 PAGE_SIZE = 5
+
+# دیکشنری برای ذخیره وضعیت کاربر
+user_steps = {}
 
 # ================= DATABASE =================
 
@@ -101,12 +106,9 @@ def get_artist(info):
 
 def get_pagination_keyboard(search_id, page):
     entries = SEARCH_CACHE.get(search_id, [])
-
     total_pages = (len(entries) + PAGE_SIZE - 1) // PAGE_SIZE
-
     start = page * PAGE_SIZE
     end = start + PAGE_SIZE
-
     current_entries = entries[start:end]
 
     keyboard = []
@@ -140,16 +142,24 @@ def get_pagination_keyboard(search_id, page):
 
 @app.on_message(private & command("start"))
 async def start_command(client: Client, message: Message):
+    keyboard = InlineKeyboard(
+        [InlineKeyboardButton("جستجوی آرتیست 🎤", "search|artist")],
+        [InlineKeyboardButton("جستجوی آلبوم 💿", "search|album")],
+        [InlineKeyboardButton("جستجوی ترک 🎵", "search|track")]
+    )
+    
     await message.reply(
-        "👋 سلام\n\n"
-        "نام آهنگ یا لینک YouTube Music بفرست."
+        "👋 سلام\nبه بات دانلودر یوتیوب موزیک خوش آمدید!\n\n"
+        "یکی از گزینه‌های زیر را انتخاب کنید یا لینک YouTube بفرستید:",
+        reply_markup=keyboard
     )
 
 
 @app.on_message(private)
 async def handle_message(client: Client, message: Message):
-
     text = message.text
+    chat_id = message.chat.id
+    
     if not text or text.startswith("/"):
         return
 
@@ -158,30 +168,65 @@ async def handle_message(client: Client, message: Message):
         await send_track_info(client, message, text)
         return
 
+    # بررسی وضعیت (State) کاربر
+    if chat_id not in user_steps:
+        await message.reply("لطفاً ابتدا از منوی /start یک گزینه را انتخاب کنید.")
+        return
+
+    step = user_steps[chat_id]
     wait = await message.reply("🔍 جستجو در YouTube Music ...")
 
     try:
+        if step == "artist":
+            results = ytmusic.search(text, filter="artists", limit=5)
+            if not results:
+                await wait.edit_text("❌ نتیجه‌ای پیدا نشد")
+                return
+                
+            res_text = "🎤 آرتیست‌های یافت شده:\n\n"
+            for r in results:
+                res_text += f"- {r.get('artist', 'Unknown')}\n"
+            await wait.edit_text(res_text)
 
-        # سرچ در یوتیوب موزیک
-        info = extract_info(f"ytmsearch20:{text}", is_search=True)
+        elif step == "album":
+            results = ytmusic.search(text, filter="albums", limit=5)
+            if not results:
+                await wait.edit_text("❌ نتیجه‌ای پیدا نشد")
+                return
+                
+            res_text = "💿 آلبوم‌های یافت شده:\n\n"
+            for r in results:
+                res_text += f"- {r.get('title', 'Unknown')} ({r.get('year', '?')})\n"
+            await wait.edit_text(res_text)
 
-        if not info or not info.get("entries"):
-            await wait.edit_text("❌ نتیجه‌ای پیدا نشد")
-            return
+        elif step == "track":
+            results = ytmusic.search(text, filter="songs", limit=20)
+            if not results:
+                await wait.edit_text("❌ نتیجه‌ای پیدا نشد")
+                return
 
-        search_id = str(uuid.uuid4())[:8]
+            search_id = str(uuid.uuid4())[:8]
+            
+            # تبدیل خروجی ytmusicapi به فرمت قبلی کش شما
+            mapped_entries = []
+            for r in results:
+                mapped_entries.append({
+                    "id": r["videoId"],
+                    "title": r["title"],
+                    "duration_string": r.get("duration", "?")
+                })
+                
+            SEARCH_CACHE[search_id] = mapped_entries
 
-        SEARCH_CACHE[search_id] = info["entries"]
-
-        keyboard = get_pagination_keyboard(search_id, 0)
-
-        await wait.edit_text(
-            "✅ نتایج:",
-            reply_markup=keyboard
-        )
+            keyboard = get_pagination_keyboard(search_id, 0)
+            await wait.edit_text("✅ نتایج:", reply_markup=keyboard)
 
     except Exception as e:
         await wait.edit_text(f"❌ خطا\n{e}")
+        
+    # پاک کردن وضعیت کاربر پس از جستجو
+    if chat_id in user_steps:
+        del user_steps[chat_id]
 
 
 async def send_track_info(client, message_or_query, query_or_id):
@@ -193,7 +238,6 @@ async def send_track_info(client, message_or_query, query_or_id):
         msg = await message_or_query.reply("⏳ دریافت اطلاعات...")
 
     yt_id = extract_video_id(query_or_id)
-
     db = get_track_from_db(yt_id)
 
     if db:
@@ -201,21 +245,13 @@ async def send_track_info(client, message_or_query, query_or_id):
         thumb = None
         cached = True
     else:
-
         try:
-
             info = extract_info(yt_id)
-
             yt_id = info["id"]
-
             title = info.get("title", "Unknown")
-
             artist = get_artist(info)
-
             thumb = info.get("thumbnail")
-
             cached = False
-
         except Exception as e:
             await client.send_message(chat_id, f"❌ خطا\n{e}")
             return
@@ -226,10 +262,7 @@ async def send_track_info(client, message_or_query, query_or_id):
         caption += "\n💾 در آرشیو موجود است"
 
     keyboard = InlineKeyboard([
-        InlineKeyboardButton(
-            "⬇️ دانلود MP3",
-            f"dl|{yt_id}"
-        )
+        InlineKeyboardButton("⬇️ دانلود MP3", f"dl|{yt_id}")
     ])
 
     if thumb and not cached:
@@ -240,51 +273,44 @@ async def send_track_info(client, message_or_query, query_or_id):
 
 @app.on_callback_query()
 async def handle_callback(client, callback_query: CallbackQuery):
-
     data = callback_query.data
     chat_id = callback_query.message.chat.id
 
     action, *args = data.split("|")
 
-    if action == "page":
+    if action == "search":
+        search_type = args[0]
+        user_steps[chat_id] = search_type
+        
+        type_fa = {"artist": "آرتیست", "album": "آلبوم", "track": "آهنگ"}[search_type]
+        await callback_query.message.reply(f"نام {type_fa} مورد نظر را تایپ کنید:")
+        await callback_query.answer('')
 
+    elif action == "page":
         search_id = args[0]
         page = int(args[1])
-
         keyboard = get_pagination_keyboard(search_id, page)
-
         await callback_query.message.edit_reply_markup(keyboard)
-
         await callback_query.answer('')
 
     elif action == "info":
-
         await callback_query.answer('')
-
         await send_track_info(client, callback_query, args[0])
 
     elif action == "dl":
-
         yt_id = args[0]
-
         await callback_query.answer("در حال بررسی")
 
         db = get_track_from_db(yt_id)
 
         if db and db[0]:
-
-            await client.copy_message(
-                chat_id,
-                ARCHIVE_CHANNEL_ID,
-                db[0]
-            )
-
+            await client.copy_message(chat_id, ARCHIVE_CHANNEL_ID, db[0])
             return
 
         status = await client.send_message(chat_id, "⏳ دانلود...")
 
         dl_opts ={
-            'cookiefile': 'cookies.txt', # <--- این خط اضافه شود
+            'cookiefile': 'cookies.txt',
             'format': 'ba/b',           
             'outtmpl': '%(id)s.%(ext)s',
             'noplaylist': True,
@@ -296,11 +322,12 @@ async def handle_callback(client, callback_query: CallbackQuery):
             'sleep_interval': 5,
             'max_sleep_interval': 12,
             'sleep_interval_requests': 3,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192'
-            },
+            'postprocessors': [
+                {
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192'
+                },
                 {
                     'key': 'FFmpegMetadata'
                 }
@@ -308,37 +335,25 @@ async def handle_callback(client, callback_query: CallbackQuery):
         }
 
         try:
-
             with yt_dlp.YoutubeDL(dl_opts) as ydl:
-
                 info = ydl.extract_info(yt_id, download=True)
-
                 title = info.get("title")
-
                 artist = get_artist(info)
-
                 filename = f"{yt_id}.mp3"
 
                 if os.path.exists(filename):
-
                     archive_msg = await client.send_document(
                         ARCHIVE_CHANNEL_ID,
                         filename,
                         caption=f"{title}\n{artist}\n{yt_id}"
                     )
-
                     save_track_to_db(yt_id, title, artist, archive_msg.id)
-
                     await client.send_document(chat_id, filename, caption=title)
-
                     await status.delete()
 
         except Exception as e:
-
             await status.edit_text(f"❌ خطا\n{e}")
-
         finally:
-
             cleanup_files(yt_id)
 
 
