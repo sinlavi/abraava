@@ -12,13 +12,15 @@ from balethon.objects import InlineKeyboard
 
 # ===================== تنظیمات =====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BALE_BOT_TOKEN")
-DB_CHANNEL_ID = int(os.getenv("DB_CHANNEL_ID", "-1000000000000"))
+CACHE_CHANNEL_ID = int(os.getenv("CACHE_CHANNEL_ID", "-1000000000000"))
+
 TEMP_DIR = Path("temp_soundcloud")
 TEMP_DIR.mkdir(exist_ok=True)
-DB_PATH = "audio_metadata.db"
+DB_PATH = "cache.db"
 
 bot = Client(BOT_TOKEN)
 BOT_USERNAME = ""  # مقدار در start هندلر گرفته می‌شود
+
 
 # ===================== دیتابیس =====================
 class DatabaseManager:
@@ -28,9 +30,9 @@ class DatabaseManager:
 
     def init_db(self):
         fields = [
-            "uuid TEXT PRIMARY KEY", "title TEXT", "artist TEXT", "genre TEXT",
-            "year TEXT", "webpage_url TEXT", "cover_url TEXT", "channel_msg_id TEXT",
-            "uploader TEXT", "duration TEXT", "album TEXT", "created_at TEXT"
+            "uuid TEXT PRIMARY KEY", "title TEXT", "uploader TEXT", "genre TEXT",
+            "upload_date TEXT", "webpage_url TEXT", "thumbnail TEXT", "cache_msg_id TEXT",
+            "duration TEXT"
         ]
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
@@ -55,6 +57,7 @@ class DatabaseManager:
                 return [dict(r) for r in c.fetchall()]
             conn.commit()
 
+
 db = DatabaseManager(DB_PATH)
 
 
@@ -64,21 +67,21 @@ def get_uploader_name(author):
         return f"@{author.username}"
     return getattr(author, "first_name", "") or "کاربر ناشناس"
 
+
 def build_caption(track):
     title = track.get("title") or "نامشخص"
     artist = track.get("artist") or "نامشخص"
     caption = (
         f"🎧 *{title}*\n"
         f"🎤 هنرمند: *{artist}*\n"
-        f"📅 سال: {track.get('year','-')}\n"
-        f"🎸 ژانر: {track.get('genre','-')}\n"
-        f"⏱ مدت: {track.get('duration','-')}\n"
-        f"🔗 [لینک اصلی]({track.get('webpage_url','')})\n\n"
-        f"👤 آپلود توسط: {track.get('uploader','سیستم')}\n"
-        "━━━━━━━━━━━━━━━\n"
-        "🤖 @sandcloud_archiver"
+        f"📅 سال: {track.get('year', '-')}\n"
+        f"🎸 ژانر: {track.get('genre', '-')}\n"
+        f"⏱ مدت: {track.get('duration', '-')}\n"
+        f"🔗 [لینک اصلی]({track.get('webpage_url', '')})\n\n"
+        "🤖 @abraava_bot"
     )
     return caption
+
 
 def download_soundcloud_track(url):
     ydl_opts = {
@@ -92,6 +95,7 @@ def download_soundcloud_track(url):
         filepath = ydl.prepare_filename(info)
         return filepath, info
 
+
 # =================== هندلر start ==================
 @bot.on_message(private & command("start"))
 async def start_handler(client, message):
@@ -101,9 +105,9 @@ async def start_handler(client, message):
     txt = (
         "🎶 به ربات دانلودر ساندکلاود خوش آمدید!\n\n"
         "ارسال کنید:\n"
-        "🔗 یک لینک SoundCloud — تا آهنگ را با کاور و جزئیات کامل دریافت کنید.\n"
+        "🔗 یک لینک ساندکلاود — تا آهنگ را با کاور و جزئیات کامل دریافت کنید.\n"
         "🕵️ متن جستجو — تا نتایج آلبوم‌ها و ترک‌ها را ببینید.\n\n"
-        "📌 نتیجه‌ها با دکمهٔ دانلود همراه‌اند و فایل‌ها در کانال آرشیو ذخیره می‌شوند."
+        "📌 نتیجه‌ها با دکمهٔ دریافت همراه‌اند و فایل‌ها در کانال آرشیو ذخیره می‌شوند."
     )
     await message.reply(txt)
 
@@ -123,39 +127,36 @@ async def handle_text(client, message):
 
         # بررسی در دیتابیس
         existing = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
-        if existing and existing.get("channel_msg_id"):
+        if existing and existing.get("cache_msg_id"):
             # ارسال فایل موجود
             caption = build_caption(existing)
-            return await client.send_document(message.chat.id, existing["channel_msg_id"], caption=caption)
+            return await client.send_document(message.chat.id, existing["cache_msg_id"], caption=caption)
 
-        # دانلود و ذخیره
+        # دریافت و ذخیره
         loop = asyncio.get_event_loop()
         try:
             filepath, info = await loop.run_in_executor(None, download_soundcloud_track, url)
         except Exception as e:
-            return await message.reply(f"❌ خطا در SoundCloud: {e}")
+            return await message.reply(f"❌ خطا در ساندکلاود: {e}")
 
         meta = {
             "uuid": f"sc_{info['id']}",
             "title": info.get("title", ""),
-            "artist": info.get("uploader", ""),
+            "uploader": info.get("uploader", ""),
             "genre": info.get("genre", ""),
-            "year": str(info.get("upload_date", ""))[:4],
+            "upload_date": str(info.get("upload_date", ""))[:4],
             "webpage_url": info.get("webpage_url", url),
-            "cover_url": info.get("thumbnail", ""),
-            "uploader": get_uploader_name(message.author),
+            "thumbnail": info.get("thumbnail", ""),
             "duration": str(info.get("duration", "")),
-            "album": "",
-            "created_at": "",
         }
 
         caption = build_caption(meta)
-        photo_url = meta["cover_url"]
-        sent_msg = await client.send_audio(DB_CHANNEL_ID, filepath, caption=caption)
-        meta["channel_msg_id"] = sent_msg.document.id
+        photo_url = meta["thumbnail"]
+        sent_msg = await client.send_audio(CACHE_CHANNEL_ID, filepath, caption=caption)
+        meta["cache_msg_id"] = sent_msg.document.id
 
         db.run_query(
-            f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?']*len(meta))})",
+            f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?'] * len(meta))})",
             tuple(meta.values())
         )
 
@@ -173,7 +174,7 @@ async def handle_text(client, message):
 
     # اگر متن جستجو است (Search)
     if not content.startswith("/"):
-        await message.reply("🔍 در حال جستجو در SoundCloud...")
+        await message.reply("🔍 در حال جستجو در ساندکلاود...")
         results = await search_soundcloud(content)
         if not results:
             return await message.reply("😔 موردی یافت نشد.")
@@ -186,6 +187,7 @@ async def handle_text(client, message):
             buttons.append([("➡️ بعدی", f"page:{content}:1")])
 
         await message.reply(f"🎯 نتایج برای **{content}**", InlineKeyboard(*buttons))
+
 
 # =================== توابع جستجو و صفحه‌بندی ==================
 async def search_soundcloud(query):
@@ -202,6 +204,7 @@ async def search_soundcloud(query):
             })
     return results
 
+
 @bot.on_callback_query()
 async def handle_callback(client, callback_query):
     data = callback_query.data
@@ -215,10 +218,11 @@ async def handle_callback(client, callback_query):
         for item in results[start:end]:
             buttons.append([(f"🎧 {item['title']} - {item['artist'][:15]}", f"show:{item['webpage_url']}")])
         if end < len(results):
-            buttons.append([("➡️ بعدی", f"page:{keyword}:{page_index+1}")])
+            buttons.append([("➡️ بعدی", f"page:{keyword}:{page_index + 1}")])
         if start > 0:
-            buttons.append([("⬅️ قبلی", f"page:{keyword}:{page_index-1}")])
-        await callback_query.message.edit_text(f"🎯 نتایج برای **{keyword}** (صفحه {page_index+1})", InlineKeyboard(*buttons))
+            buttons.append([("⬅️ قبلی", f"page:{keyword}:{page_index - 1}")])
+        await callback_query.message.edit_text(f"🎯 نتایج برای **{keyword}** (صفحه {page_index + 1})",
+                                               InlineKeyboard(*buttons))
 
     elif data.startswith("show:"):
         url = data.split(":", 1)[1]
@@ -226,14 +230,14 @@ async def handle_callback(client, callback_query):
         row = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
         if row:
             caption = build_caption(row)
-            if row.get("cover_url"):
-                await client.send_photo(callback_query.message.chat.id, row["cover_url"], caption=caption,
-                                        reply_markup=InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
+            if row.get("thumbnail"):
+                await client.send_photo(callback_query.message.chat.id, row["thumbnail"], caption=caption,
+                                        reply_markup=InlineKeyboard([("⬇️ دریافت", f"dl:{url}")]))
             else:
-                await callback_query.message.reply(caption, InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
+                await callback_query.message.reply(caption, InlineKeyboard([("⬇️ دریافت", f"dl:{url}")]))
             return
 
-        await callback_query.message.reply("⏳ دریافت اطلاعات از SoundCloud...")
+        await callback_query.message.reply("⏳ دریافت اطلاعات از ساندکلاود...")
         loop = asyncio.get_event_loop()
         try:
             _, info = await loop.run_in_executor(None, download_soundcloud_track, url)
@@ -243,56 +247,52 @@ async def handle_callback(client, callback_query):
         meta = {
             "uuid": f"sc_{info['id']}",
             "title": info.get("title", ""),
-            "artist": info.get("uploader", ""),
+            "uploader": info.get("uploader", ""),
             "genre": info.get("genre", ""),
-            "year": str(info.get("upload_date", ""))[:4],
+            "upload_date": str(info.get("upload_date", ""))[:4],
             "webpage_url": info.get("webpage_url", url),
-            "cover_url": info.get("thumbnail", ""),
-            "uploader": "سیستم",
+            "thumbnail": info.get("thumbnail", ""),
             "duration": str(info.get("duration", "")),
-            "album": "",
-            "created_at": "",
         }
         db.run_query(
-            f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?']*len(meta))})",
+            f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?'] * len(meta))})",
             tuple(meta.values())
         )
         caption = build_caption(meta)
-        await bot.send_photo(callback_query.message.chat.id,meta["cover_url"], caption=caption,
-                                           reply_markup=InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
+        await bot.send_photo(callback_query.message.chat.id, meta["thumbnail"], caption=caption,
+                             reply_markup=InlineKeyboard([("⬇️ دریافت", f"dl:{url}")]))
 
     elif data.startswith("dl:"):
         url = data.split(":", 1)[1]
         row = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
-        if row and row.get("channel_msg_id"):
-            return await client.send_document(callback_query.message.chat.id, row["channel_msg_id"], caption=build_caption(row))
+        if row and row.get("cache_msg_id"):
+            return await client.send_document(callback_query.message.chat.id, row["cache_msg_id"],
+                                              caption=build_caption(row))
 
-        await callback_query.message.reply("⬇️ در حال دانلود از SoundCloud...")
+        await callback_query.message.reply("⬇️ در حال دریافت از ساندکلاود...")
         loop = asyncio.get_event_loop()
         try:
             filepath, info = await loop.run_in_executor(None, download_soundcloud_track, url)
         except Exception as e:
-            return await callback_query.message.reply(f"❌ خطا در دانلود: {e}")
-        
+            return await callback_query.message.reply(f"❌ خطا در دریافت: {e}")
+
         meta = {
             "uuid": f"sc_{info['id']}",
             "title": info.get("title", ""),
-            "artist": info.get("uploader", ""),
+            "uploader": info.get("uploader", ""),
             "genre": info.get("genre", ""),
-            "year": str(info.get("upload_date", ""))[:4],
+            "upload_date": str(info.get("upload_date", ""))[:4],
             "webpage_url": info.get("webpage_url", url),
-            "cover_url": info.get("thumbnail", ""),
-            "uploader": "سیستم",
+            "thumbnail": info.get("thumbnail", ""),
             "duration": str(info.get("duration", "")),
-            "album": "",
-            "created_at": "",
         }
         caption = build_caption(meta)
-        sent_msg = await client.send_audio(DB_CHANNEL_ID, filepath, caption=caption)
-        db.run_query("UPDATE tracks SET channel_msg_id=? WHERE webpage_url=?", (sent_msg.audio.id, url))
+        sent_msg = await client.send_audio(CACHE_CHANNEL_ID, filepath, caption=caption)
+        db.run_query("UPDATE tracks SET cache_msg_id=? WHERE webpage_url=?", (sent_msg.audio.id, url))
         await client.send_audio(callback_query.message.chat.id, filepath, caption=caption)
         if os.path.exists(filepath):
             os.remove(filepath)
+
 
 # =================== اجرا =====================
 if __name__ == "__main__":
