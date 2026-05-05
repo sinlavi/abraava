@@ -16,10 +16,7 @@ TEMP_DIR = Path("temp_soundcloud")
 TEMP_DIR.mkdir(exist_ok=True)
 DB_PATH = "cache.db"
 
-# افزایش تایم اوت برای جلوگیری از ارور ReadTimeout هنگام آپلود فایل‌های حجیم
 bot = Client(BOT_TOKEN)
-
-
 BOT_USERNAME = "" 
 
 # ===================== دیتابیس =====================
@@ -51,7 +48,8 @@ class DatabaseManager:
             c = conn.cursor()
             c.execute(query, params)
             if fetchone:
-                return dict(c.fetchone() or {})
+                row = c.fetchone()
+                return dict(row) if row else {}
             if fetch:
                 return [dict(r) for r in c.fetchall()]
             conn.commit()
@@ -122,7 +120,6 @@ def get_search_text(results, page, total_pages):
         text += f"👤 {item['uploader']}\n"
         text += f"🎵 {item['title']}\n"
         text += f"⏱️ {format_duration(item.get('duration'))}\n"
-        # استفاده از کامند برای دانلود
         text += f"[📥 دریافت](send:{item['webpage_url']})\n\n"
     text += f"📄 صفحه {page} از {total_pages}"
     return text
@@ -135,11 +132,12 @@ async def start_handler(client, message):
         BOT_USERNAME = (await client.get_me()).username
     await message.reply("🎶 به ربات دانلودر ساندکلاود خوش آمدید!\nلینک بفرستید یا متن جستجو کنید.")
 
-# =================== هندلر متنی (لینک، سرچ، دستور دانلود) ==================
+# =================== هندلر متنی ==================
 @bot.on_message(text)
 async def handle_text(client, message):
     global BOT_USERNAME
-    if not BOT_USERNAME: BOT_USERNAME = (await client.get_me()).username
+    if not BOT_USERNAME: 
+        BOT_USERNAME = (await client.get_me()).username
     
     content = message.text.strip()
     
@@ -155,15 +153,16 @@ async def handle_text(client, message):
         if not url_match: return await message.reply("❌ لینک نامعتبر!")
         url = url_match.group(1)
         
-        msg = await message.reply("⏳ دریافت اطلاعات...")
+        msg = await message.reply("⏳ در حال دریافت اطلاعات...")
         loop = asyncio.get_event_loop()
         try:
             info = await loop.run_in_executor(None, get_soundcloud_info, url)
         except Exception as e:
-            return await msg.edit_text(f"خطا: {e}")
+            return await msg.edit_text(f"❌ خطا در دریافت اطلاعات: {e}")
 
+        track_id = info.get('id', 'unknown')
         meta = {
-            "uuid": f"sc_{info.get('id', 'unknown')}",
+            "uuid": f"sc_{track_id}",
             "title": info.get("title", ""),
             "uploader": info.get("uploader", ""),
             "genre": info.get("genre", ""),
@@ -172,10 +171,13 @@ async def handle_text(client, message):
             "thumbnail": info.get("thumbnail", ""),
             "duration": format_duration(info.get("duration", 0)),
         }
-        db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?'] * len(meta))})", tuple(meta.values()))
+        
+        # ذخیره ایمن در دیتابیس
+        placeholders = ','.join(['?'] * len(meta))
+        db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({placeholders})", tuple(meta.values()))
         
         caption = build_caption(meta, BOT_USERNAME)
-        keyboard = InlineKeyboard([("⬇️ دانلود فایل صوتی", f"getaudio:{info.get('id', '')}:0")])
+        keyboard = InlineKeyboard([[("⬇️ دانلود فایل صوتی", f"getaudio:{track_id}")]])
         
         await msg.delete()
         if meta["thumbnail"]:
@@ -197,22 +199,26 @@ async def handle_text(client, message):
     if total_pages > 1:
         buttons.append([("➡️ بعدی", f"page:{content}:1")])
         
-    await msg.edit_text(text_res, reply_markup=InlineKeyboard(*buttons) if buttons else None)
+    await msg.edit_text(text_res, reply_markup=InlineKeyboard(buttons) if buttons else None)
 
 
 # =================== هندلر دکمه‌های شیشه‌ای ==================
 @bot.on_callback_query()
 async def handle_callback(client, callback_query):
     global BOT_USERNAME
-    if not BOT_USERNAME: BOT_USERNAME = (await client.get_me()).username
+    if not BOT_USERNAME: 
+        BOT_USERNAME = (await client.get_me()).username
+    
     data = callback_query.data
-    print(data)
+
     # دکمه‌های صفحه‌بندی
     if data.startswith("page:"):
-        _, keyword, page_index = data.split(":")
+        parts = data.split(":", 2)
+        if len(parts) != 3: return
+        _, keyword, page_index = parts
         page_index = int(page_index)
-        results = await search_soundcloud(keyword, 30)
         
+        results = await search_soundcloud(keyword, 30)
         total_pages = (len(results) - 1) // 10 + 1
         start = page_index * 10
         end = start + 10
@@ -220,33 +226,39 @@ async def handle_callback(client, callback_query):
         text_res = get_search_text(results[start:end], page_index + 1, total_pages)
         
         nav_buttons = []
-        if page_index > 0: nav_buttons.append(("⬅️ قبلی", f"page:{keyword}:{page_index - 1}"))
-        if end < len(results): nav_buttons.append(("➡️ بعدی", f"page:{keyword}:{page_index + 1}"))
+        if page_index > 0: 
+            nav_buttons.append(("⬅️ قبلی", f"page:{keyword}:{page_index - 1}"))
+        if end < len(results): 
+            nav_buttons.append(("➡️ بعدی", f"page:{keyword}:{page_index + 1}"))
         
-        await callback_query.message.edit_text(text_res, reply_markup=InlineKeyboard(nav_buttons) if nav_buttons else None)
+        keyboard = InlineKeyboard([nav_buttons]) if nav_buttons else None
+        await callback_query.message.edit_text(text_res, reply_markup=keyboard)
 
     # دانلود و ارسال فایل صوتی
     elif data.startswith("getaudio:"):       
-        track_id = str(data)
-        # ویرایش پیام قبلی برای نشان دادن وضعیت
+        parts = data.split(":")
+        if len(parts) < 2: return
+        track_id = parts[1]
+        
         await callback_query.answer("⏳ در حال پردازش فایل، لطفا صبور باشید...")
         
-        row = db.run_query("SELECT * FROM tracks WHERE uuid='"+f"sc_{track_id}"+"'", fetchone=True)
-        caption = build_caption(row, BOT_USERNAME) if row else "🎧 دانلود شده توسط ربات"
+        # جستجوی امن در دیتابیس
+        row = db.run_query("SELECT * FROM tracks WHERE uuid=?", (f"sc_{track_id}",), fetchone=True)
+        if not row:
+            return await callback_query.message.reply("❌ اطلاعات این آهنگ منقضی شده است. لطفا دوباره لینک را بفرستید.")
 
-        # حذف پیام اطلاعات آهنگ (حاوی کاور) در صورتی که نیاز داشتید حذف شود:
-        # اینجا می‌توانیم پیام را پاک کنیم یا به جای آن فایل را ارسال کنیم.
+        caption = build_caption(row, BOT_USERNAME)
         msg_to_delete = callback_query.message
-        print(row.get("cache_msg_id"))
         url = row.get("webpage_url")
-        print(row.get("webpage_url"))
-        if row and row.get("cache_msg_id"):
+
+        # اگر از قبل در کانال کش ذخیره شده باشد
+        if row.get("cache_msg_id"):
             try:
-                await client.send_document(callback_query.message.chat.id, row["cache_msg_id"], caption=caption)
+                await client.send_audio(callback_query.message.chat.id, row["cache_msg_id"], caption=caption)
                 await msg_to_delete.delete()
-            except Exception as e:
-                pass # خطا در صورت حذف شدن کش و غیره
-            return
+                return
+            except Exception:
+                pass # در صورت نامعتبر بودن کش، به دانلود ادامه می‌دهیم
 
         loop = asyncio.get_event_loop()
         try:
@@ -257,14 +269,22 @@ async def handle_callback(client, callback_query):
         try:
             with open(filepath, "rb") as f:
                 sent_msg = await client.send_audio(CACHE_CHANNEL_ID, f, caption=caption)
-                
-            if row:
-                row_dict = dict(row)
-                row_dict["cache_msg_id"] = str(sent_msg.audio.id)
-                db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(row_dict.keys())}) VALUES ({','.join(['?'] * len(row_dict))})", tuple(row_dict.values()))
             
-            await client.send_audio(callback_query.message.chat.id, sent_msg.audio.id, caption=caption)
+            # پیدا کردن ID فایل آپلود شده
+            file_id = None
+            if hasattr(sent_msg, 'audio') and sent_msg.audio:
+                file_id = sent_msg.audio.id
+            elif hasattr(sent_msg, 'document') and sent_msg.document:
+                file_id = sent_msg.document.id
+                
+            if file_id:
+                row["cache_msg_id"] = str(file_id)
+                placeholders = ','.join(['?'] * len(row))
+                db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(row.keys())}) VALUES ({placeholders})", tuple(row.values()))
+            
+            await client.send_audio(callback_query.message.chat.id, file_id if file_id else filepath, caption=caption)
             await msg_to_delete.delete()
+            
         except Exception as e:
             await callback_query.message.reply(f"❌ خطا در آپلود (ممکن است فایل خیلی بزرگ باشد): {e}")
         finally:
