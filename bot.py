@@ -156,7 +156,7 @@ async def handle_text(client, message):
     
     if message.chat.type != "private":
         mention = f"@{BOT_USERNAME}"
-        if mention not in content.lower() and "soundcloud.com" not in content.lower():: return
+        if mention not in content.lower() and "soundcloud.com" not in content.lower(): return
         content = content.replace(mention, "").strip()
         if not content: return
 
