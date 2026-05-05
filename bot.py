@@ -177,7 +177,7 @@ async def handle_text(client, message):
         db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({placeholders})", tuple(meta.values()))
         
         caption = build_caption(meta, BOT_USERNAME)
-        print(track_id)
+        caption += track_id
         keyboard = InlineKeyboard([[("⬇️ دانلود فایل صوتی", f"getaudio:{track_id}")]])
         
         await msg.delete()
