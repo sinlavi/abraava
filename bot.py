@@ -66,7 +66,7 @@ def build_caption(track):
     caption = (
         f"🎧 *{track.get('title','نامشخص')}*\n"
         f"🎤 هنرمند: *{track.get('uploader','نامشخص')}*\n"
-        f"📅 سال: {track.get('year','نامشخص')}\n"
+        f"📅 سال: {track.get('upload_date','نامشخص')}\n"
         f"🎸 ژانر: {track.get('genre','نامشخص')}\n"
         f"⏱ مدت: {track.get('duration','نامشخص')}\n"
         f"🔗 [لینک اصلی]({track.get('webpage_url','نامشخص')})\n\n"
