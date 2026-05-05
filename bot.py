@@ -285,7 +285,7 @@ async def text_handler(client, message):
             metadata["uploader_name"] = get_uploader_name(message.author)
 
             caption_text = build_metadata_text(metadata)
-            sent_message = await client.send_audio(CHANNEL_ID, filepath, caption=caption_text)
+            sent_message = await client.send_audio(DB_CHANNEL_ID, filepath, caption=caption_text)
             metadata["channel_message_id"] = sent_message.document.id
 
             await save_to_db(metadata)
@@ -350,7 +350,7 @@ async def handle_document(client, message):
         caption_text = build_metadata_text(metadata)
 
         # فوروارد فایل اصلی به کانال (نیاز به آپلود مجدد نیست، آیدی فایل کافیست)
-        sent_message = await client.send_document(CHANNEL_ID, doc.id, caption=caption_text)
+        sent_message = await client.send_document(DB_CHANNEL_ID, doc.id, caption=caption_text)
         metadata["channel_message_id"] = sent_message.document.id
 
         await save_to_db(metadata)
