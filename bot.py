@@ -111,7 +111,7 @@ def download_soundcloud_track(url):
         filepath = str(TEMP_DIR / f"{info['id']}.mp3") 
         return filepath, info
 
-async def search_soundcloud(query, max_results=30):
+async def search_soundcloud(query, max_results=10):
     results = []
     ydl_opts = {"quiet": True, "extract_flat": True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -121,20 +121,19 @@ async def search_soundcloud(query, max_results=30):
                 "id": e.get("id"),
                 "title": e.get("title", "بدون نام"),
                 "uploader": e.get("uploader", "نامشخص"),
-                "webpage_url": e.get("webpage_url", ""),
+                "webpage_url": e.get("webpage_url", "").split('?')[0],
                 "thumbnail": e.get("thumbnail", ""),
                 "duration": e.get("duration", 0)
             })
     return results
 
-def get_search_text(results, page, total_pages):
+def get_search_text(results):
     text = ""
     for item in results:
         text += f"👤 {item['uploader']}\n"
         text += f"🎵 {item['title']}\n"
         text += f"⏱️ {format_duration(item.get('duration'))}\n"
         text += f"[📥 دریافت](send:{item['webpage_url']})\n\n"
-    text += f"📄 صفحه {page} از {total_pages}"
     return text
 
 # =================== هندلر start ==================
@@ -164,38 +163,51 @@ async def handle_text(client, message):
     if "soundcloud.com" in content:
         url_match = re.search(r"(https?://[^\s]+)", content)
         if not url_match: return await message.reply("❌ لینک نامعتبر!")
-        url = url_match.group(1)
         
-        logger.info(f"Extracting info for URL: {url} by user {message.author.id}")
-        msg = await message.reply("⏳ در حال دریافت اطلاعات...")
-        loop = asyncio.get_event_loop()
-        try:
-            info = await loop.run_in_executor(None, get_soundcloud_info, url)
-        except Exception as e:
-            logger.error(f"Error extracting info for {url}: {e}")
-            return await msg.edit_text(f"❌ خطا در دریافت اطلاعات: {e}")
+        # پاکسازی لینک از پارامترهای اضافه برای جستجوی دقیق‌تر در دیتابیس
+        url = url_match.group(1).split('?')[0]
+        
+        logger.info(f"Processing URL: {url} by user {message.author.id}")
+        msg = await message.reply("⏳ در حال بررسی...")
+        
+        # بررسی وجود لینک در دیتابیس
+        cached_track = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
+        
+        if cached_track:
+            logger.info("Found URL in DB cache.")
+            meta = cached_track
+            track_id = meta["uuid"].replace("sc_", "")
+            await msg.delete()
+        else:
+            logger.info("URL not in DB, fetching from SoundCloud...")
+            loop = asyncio.get_event_loop()
+            try:
+                info = await loop.run_in_executor(None, get_soundcloud_info, url)
+            except Exception as e:
+                logger.error(f"Error extracting info for {url}: {e}")
+                return await msg.edit_text(f"❌ خطا در دریافت اطلاعات: {e}")
 
-        track_id = info.get('id', 'unknown')
-        meta = {
-            "uuid": f"sc_{track_id}",
-            "title": info.get("title", ""),
-            "uploader": info.get("uploader", ""),
-            "genre": info.get("genre", ""),
-            "upload_date": str(info.get("upload_date", ""))[:4],
-            "webpage_url": info.get("webpage_url", url),
-            "thumbnail": info.get("thumbnail", ""),
-            "duration": format_duration(info.get("duration", 0)),
-        }
-        
-        placeholders = ','.join(['?'] * len(meta))
-        db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({placeholders})", tuple(meta.values()))
-        
+            track_id = info.get('id', 'unknown')
+            clean_url = info.get("webpage_url", url).split('?')[0]
+            meta = {
+                "uuid": f"sc_{track_id}",
+                "title": info.get("title", ""),
+                "uploader": info.get("uploader", ""),
+                "genre": info.get("genre", ""),
+                "upload_date": str(info.get("upload_date", ""))[:4],
+                "webpage_url": clean_url,
+                "thumbnail": info.get("thumbnail", ""),
+                "duration": format_duration(info.get("duration", 0)),
+            }
+            
+            placeholders = ','.join(['?'] * len(meta))
+            db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({placeholders})", tuple(meta.values()))
+            await msg.delete()
+            
         caption = build_caption(meta, BOT_USERNAME)
-        buttons = []
-        buttons.append([("⬇️ دریافت فایل صوتی", f"getaudio:{track_id}")])
+        buttons = [[("⬇️ دریافت فایل صوتی", f"getaudio:{track_id}")]]
         
-        await msg.delete()
-        if meta["thumbnail"]:
+        if meta.get("thumbnail"):
             await client.send_photo(message.chat.id, meta["thumbnail"], caption=caption, reply_markup=InlineKeyboard(*buttons))
         else:
             await client.send_message(message.chat.id, caption, reply_markup=InlineKeyboard(*buttons))
@@ -204,7 +216,8 @@ async def handle_text(client, message):
     logger.info(f"Searching SoundCloud for: {content} by user {message.author.id}")
     msg = await message.reply("🔍 در حال جستجو...")
     try:
-        results = await search_soundcloud(content, 30)
+        # فقط 10 نتیجه اول را دریافت میکنیم
+        results = await search_soundcloud(content, 10)
     except Exception as e:
         logger.error(f"Search error for query '{content}': {e}")
         await msg.delete()
@@ -214,17 +227,10 @@ async def handle_text(client, message):
         await msg.delete()
         return await message.reply("😔 موردی یافت نشد.")
 
-    total_pages = (len(results) - 1) // 10 + 1
-    text_res = get_search_text(results[:10], 1, total_pages)
+    text_res = get_search_text(results)
     
-    buttons = []
-    if total_pages > 1:
-        buttons.append([("➡️ بعدی", f"page:{content}:1")])
-        
-    await msg.delete() # پیام قبلی پاک می‌شود
-    
-    # پیام جدید ارسال می‌شود (دقت کنید که از *buttons استفاده شده است)
-    await message.reply(text_res, reply_markup=InlineKeyboard(*buttons) if buttons else None)
+    await msg.delete()
+    await message.reply(text_res)
 
 
 # =================== هندلر دکمه‌های شیشه‌ای ==================
@@ -236,29 +242,7 @@ async def handle_callback(client, callback_query):
     
     data = callback_query.data
 
-    if data.startswith("page:"):
-        parts = data.split(":", 2)
-        if len(parts) != 3: return
-        _, keyword, page_index = parts
-        page_index = int(page_index)
-        
-        results = await search_soundcloud(keyword, 30)
-        total_pages = (len(results) - 1) // 10 + 1
-        start = page_index * 10
-        end = start + 10
-        
-        text_res = get_search_text(results[start:end], page_index + 1, total_pages)
-        
-        nav_buttons = []
-        if page_index > 0: 
-            nav_buttons.append(("⬅️ قبلی", f"page:{keyword}:{page_index - 1}"))
-        if end < len(results): 
-            nav_buttons.append(("➡️ بعدی", f"page:{keyword}:{page_index + 1}"))
-        
-        keyboard = InlineKeyboard([nav_buttons]) if nav_buttons else None
-        await callback_query.message.edit_text(text_res, reply_markup=keyboard)
-
-    elif data.startswith("getaudio:"):       
+    if data.startswith("getaudio:"):       
         parts = data.split(":")
         if len(parts) < 2: return
         track_id = parts[1]
@@ -275,7 +259,7 @@ async def handle_callback(client, callback_query):
         msg_to_delete = callback_query.message
         url = row.get("webpage_url")
 
-        # اگر پیام در کانال کش ذخیره شده باشد، آن را فوروارد می‌کنیم
+        # در صورت وجود در کانال کش، مستقیماً فوروارد می‌شود
         if row.get("cache_msg_id"):
             try:
                 logger.info(f"Forwarding cached message {row['cache_msg_id']} to user.")
@@ -304,6 +288,7 @@ async def handle_callback(client, callback_query):
             
             msg_id = sent_msg.id
             if msg_id:
+                # ذخیره آیدی پیام کش شده در دیتابیس
                 row["cache_msg_id"] = str(msg_id)
                 placeholders = ','.join(['?'] * len(row))
                 db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(row.keys())}) VALUES ({placeholders})", tuple(row.values()))
