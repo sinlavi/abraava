@@ -177,14 +177,14 @@ async def handle_text(client, message):
         db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({placeholders})", tuple(meta.values()))
         
         caption = build_caption(meta, BOT_USERNAME)
-        caption += track_id
-        keyboard = InlineKeyboard([[("⬇️ دانلود فایل صوتی", f"getaudio:{track_id}")]])
+        button = []
+        button.append([("⬇️ دریافت فایل صوتی", f"getaudio:{track_id}")])
         
         await msg.delete()
         if meta["thumbnail"]:
-            await client.send_photo(message.chat.id, meta["thumbnail"], caption=caption, reply_markup=keyboard)
+            await client.send_photo(message.chat.id, meta["thumbnail"], caption=caption, reply_markup=InlineKeyboard(*buttons))
         else:
-            await client.send_message(message.chat.id, caption, reply_markup=keyboard)
+            await client.send_message(message.chat.id, caption, reply_markup=InlineKeyboard(*buttons))
         return
 
     # جستجوی متنی
