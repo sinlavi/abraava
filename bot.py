@@ -173,9 +173,9 @@ async def handle_text(client, message):
 
         # صفحه اول
         buttons = []
-        for item in results[:5]:
+        for item in results[:10]:
             buttons.append([(f"🎧 {item['title']} - {item['uploader'][:15]}", f"show:{item['webpage_url']}")])
-        if len(results) > 5:
+        if len(results) > 10:
             buttons.append([("➡️ بعدی", f"page:{content}:1")])
 
         await message.reply(f"🎯 نتایج برای *{content}*", InlineKeyboard(*buttons))
@@ -185,7 +185,7 @@ async def handle_text(client, message):
 async def search_soundcloud(query):
     """استفاده از yt_dlp برای جستجوی ساندکلاود"""
     results = []
-    ydl_opts = {"quiet": True, "extract_flat": True, "default_search": f"scsearch20:{query}"}
+    ydl_opts = {"quiet": True, "extract_flat": True, "default_search": f"scsearch10:{query}"}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(f"scsearch5:{query}", download=False)
         for e in info.get("entries", []):
@@ -204,8 +204,8 @@ async def handle_callback(client, callback_query):
         _, keyword, page_index = data.split(":")
         page_index = int(page_index)
         results = await search_soundcloud(keyword)
-        start = page_index * 5
-        end = start + 5
+        start = page_index * 10
+        end = start + 10
         buttons = []
         for item in results[start:end]:
             buttons.append([(f"🎧 {item['title']} - {item['uploader'][:15]}", f"show:{item['webpage_url']}")])
