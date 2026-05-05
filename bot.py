@@ -234,6 +234,7 @@ async def handle_text(client, message):
 
 
 # =================== هندلر دکمه‌های شیشه‌ای ==================
+
 @bot.on_callback_query()
 async def handle_callback(client, callback_query):
     global BOT_USERNAME
@@ -250,16 +251,20 @@ async def handle_callback(client, callback_query):
         logger.info(f"User {callback_query.author.id} requested audio for track {track_id}")
         await callback_query.answer("⏳ در حال پردازش فایل، لطفا صبور باشید...")
 
-        # غیرفعال کردن دکمه‌ها بلافاصله پس از کلیک
+        # جایگزینی دکمه‌ها با یک دکمه غیرفعال "در حال دانلود..."
         try:
+            downloading_keyboard = InlineKeyboard(
+                [InlineKeyboardButton("⏳ در حال دانلود...", callback_data=None)]
+            )
             await client.edit_message_reply_markup(
                 chat_id=callback_query.message.chat.id,
                 message_id=callback_query.message.id,
-                reply_markup=None  # حذف همه دکمه‌ها
+                reply_markup=downloading_keyboard
             )
         except Exception as e:
-            logger.error(f"Failed to disable buttons: {e}")
+            logger.error(f"Failed to set 'downloading' button: {e}")
         
+        # ادامه کد فرآیند دانلود مثل قبل ...
         row = db.run_query("SELECT * FROM tracks WHERE uuid=?", (f"sc_{track_id}",), fetchone=True)
         if not row:
             logger.warning(f"Track {track_id} not found in DB.")
@@ -269,7 +274,6 @@ async def handle_callback(client, callback_query):
         msg_to_delete = callback_query.message
         url = row.get("webpage_url")
 
-        # در صورت وجود در کانال کش، مستقیماً فوروارد می‌شود
         if row.get("cache_msg_id"):
             try:
                 logger.info(f"Forwarding cached message {row['cache_msg_id']} to user.")
@@ -298,7 +302,6 @@ async def handle_callback(client, callback_query):
             
             msg_id = sent_msg.id
             if msg_id:
-                # ذخیره آیدی پیام کش شده در دیتابیس
                 row["cache_msg_id"] = str(msg_id)
                 placeholders = ','.join(['?'] * len(row))
                 db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(row.keys())}) VALUES ({placeholders})", tuple(row.values()))
@@ -318,7 +321,6 @@ async def handle_callback(client, callback_query):
             if os.path.exists(filepath):
                 os.remove(filepath)
                 logger.info(f"Deleted temp file: {filepath}")
-
 
 if __name__ == "__main__":
     logger.info("Starting bot...")
