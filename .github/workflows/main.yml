@@ -40,7 +40,7 @@ jobs:
       - name: Run Bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
+          CACHE_CHANNEL_ID: ${{ secrets.CACHE_CHANNEL_ID }}
         run: |
           timeout 5h python bot.py || true
 
