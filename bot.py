@@ -7,7 +7,7 @@ import aiohttp
 from mutagen import File
 import yt_dlp
 from balethon import Client
-from balethon.conditions import private, command, text, callback_query
+from balethon.conditions import private, command, text
 from balethon.objects import InlineKeyboard
 
 # ===================== تنظیمات =====================
@@ -203,8 +203,8 @@ async def search_soundcloud(query):
     return results
 
 @bot.on_callback_query()
-async def handle_callback(client, callback):
-    data = callback.data
+async def handle_callback(client, callback_query):
+    data = callback_query.data
     if data.startswith("page:"):
         _, keyword, page_index = data.split(":")
         page_index = int(page_index)
@@ -218,7 +218,7 @@ async def handle_callback(client, callback):
             buttons.append([("➡️ بعدی", f"page:{keyword}:{page_index+1}")])
         if start > 0:
             buttons.append([("⬅️ قبلی", f"page:{keyword}:{page_index-1}")])
-        await callback.message.edit_text(f"🎯 نتایج برای **{keyword}** (صفحه {page_index+1})", InlineKeyboard(*buttons))
+        await callback_query.message.edit_text(f"🎯 نتایج برای **{keyword}** (صفحه {page_index+1})", InlineKeyboard(*buttons))
 
     elif data.startswith("show:"):
         url = data.split(":", 1)[1]
@@ -227,18 +227,18 @@ async def handle_callback(client, callback):
         if row:
             caption = build_caption(row)
             if row.get("cover_url"):
-                await client.send_photo(callback.message.chat.id, row["cover_url"], caption=caption,
+                await client.send_photo(callback_query.message.chat.id, row["cover_url"], caption=caption,
                                         buttons=InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
             else:
-                await callback.message.reply(caption, InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
+                await callback_query.message.reply(caption, InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
             return
 
-        await callback.message.reply("⏳ دریافت اطلاعات از SoundCloud...")
+        await callback_query.message.reply("⏳ دریافت اطلاعات از SoundCloud...")
         loop = asyncio.get_event_loop()
         try:
             _, info = await loop.run_in_executor(None, download_soundcloud_track, url)
         except Exception as e:
-            return await callback.message.reply(f"خطا در دریافت اطلاعات: {e}")
+            return await callback_query.message.reply(f"خطا در دریافت اطلاعات: {e}")
 
         meta = {
             "uuid": f"sc_{info['id']}",
@@ -258,21 +258,21 @@ async def handle_callback(client, callback):
             tuple(meta.values())
         )
         caption = build_caption(meta)
-        await callback.message.reply_photo(meta["cover_url"], caption=caption,
+        await callback_query.message.reply_photo(meta["cover_url"], caption=caption,
                                            buttons=InlineKeyboard([("⬇️ دانلود", f"dl:{url}")]))
 
     elif data.startswith("dl:"):
         url = data.split(":", 1)[1]
         row = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
         if row and row.get("channel_msg_id"):
-            return await client.send_document(callback.message.chat.id, row["channel_msg_id"], caption=build_caption(row))
+            return await client.send_document(callback_query.message.chat.id, row["channel_msg_id"], caption=build_caption(row))
 
-        await callback.message.reply("⬇️ در حال دانلود از SoundCloud...")
+        await callback_query.message.reply("⬇️ در حال دانلود از SoundCloud...")
         loop = asyncio.get_event_loop()
         try:
             filepath, info = await loop.run_in_executor(None, download_soundcloud_track, url)
         except Exception as e:
-            return await callback.message.reply(f"❌ خطا در دانلود: {e}")
+            return await callback_query.message.reply(f"❌ خطا در دانلود: {e}")
 
         caption = build_caption({
             "title": info.get("title", ""),
@@ -281,7 +281,7 @@ async def handle_callback(client, callback):
         })
         sent_msg = await client.send_audio(DB_CHANNEL_ID, filepath, caption=caption)
         db.run_query("UPDATE tracks SET channel_msg_id=? WHERE webpage_url=?", (sent_msg.document.id, url))
-        await client.send_audio(callback.message.chat.id, filepath, caption=caption)
+        await client.send_audio(callback_query.message.chat.id, filepath, caption=caption)
         if os.path.exists(filepath):
             os.remove(filepath)
 
