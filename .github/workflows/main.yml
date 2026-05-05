@@ -13,7 +13,7 @@ concurrency:
 
 permissions:
   contents: write
-
+  
 jobs:
   run-bot:
     runs-on: ubuntu-latest
@@ -45,6 +45,7 @@ jobs:
           timeout 10m python bot.py || true
 
       - name: Commit & Push Updated Database
+        if: always()
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
