@@ -249,6 +249,16 @@ async def handle_callback(client, callback_query):
         
         logger.info(f"User {callback_query.author.id} requested audio for track {track_id}")
         await callback_query.answer("⏳ در حال پردازش فایل، لطفا صبور باشید...")
+
+        # غیرفعال کردن دکمه‌ها بلافاصله پس از کلیک
+        try:
+            await client.edit_message_reply_markup(
+                chat_id=callback_query.message.chat.id,
+                message_id=callback_query.message.id,
+                reply_markup=None  # حذف همه دکمه‌ها
+            )
+        except Exception as e:
+            logger.error(f"Failed to disable buttons: {e}")
         
         row = db.run_query("SELECT * FROM tracks WHERE uuid=?", (f"sc_{track_id}",), fetchone=True)
         if not row:
@@ -284,7 +294,7 @@ async def handle_callback(client, callback_query):
         try:
             logger.info(f"Uploading file {filepath} to cache channel {CACHE_CHANNEL_ID}")
             with open(filepath, "rb") as f:
-                sent_msg = await client.send_audio(CACHE_CHANNEL_ID, f,title=row['title'], caption=caption)
+                sent_msg = await client.send_audio(CACHE_CHANNEL_ID, f, title=row['title'], caption=caption)
             
             msg_id = sent_msg.id
             if msg_id:
@@ -308,6 +318,7 @@ async def handle_callback(client, callback_query):
             if os.path.exists(filepath):
                 os.remove(filepath)
                 logger.info(f"Deleted temp file: {filepath}")
+
 
 if __name__ == "__main__":
     logger.info("Starting bot...")
