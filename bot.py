@@ -7,7 +7,7 @@ from pathlib import Path
 import yt_dlp
 from balethon import Client
 from balethon.conditions import command, text, private
-from balethon.objects import InlineKeyboard
+from balethon.objects import InlineKeyboard, InlineKeyboardButton
 
 # ===================== تنظیمات لاگر =====================
 logging.basicConfig(
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # ===================== تنظیمات =====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BALE_BOT_TOKEN")
 CACHE_CHANNEL_ID = int(os.getenv("CACHE_CHANNEL_ID", "-1000000000000"))
-BROADCAST_CHANNEL_ID = 5524168471  # آیدی کانالی که پیام‌ها از آن فوروارد می‌شود
+BROADCAST_CHANNEL_ID = 5524168471  # آیدی کانالی که پیام‌ها از آن فوروارد می‌شوند
 
 TEMP_DIR = Path("temp_soundcloud")
 TEMP_DIR.mkdir(exist_ok=True)
@@ -43,11 +43,18 @@ class DatabaseManager:
         ]
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
-            # ساخت جدول آهنگ‌ها
+            # جدول موزیک‌ها
             c.execute(f"CREATE TABLE IF NOT EXISTS tracks ({', '.join(fields)})")
             
-            # ساخت جدول کاربران برای برودکست
-            c.execute("CREATE TABLE IF NOT EXISTS users (chat_id TEXT PRIMARY KEY)")
+            # جدول کاربران برای ارسال پیام همگانی
+            c.execute("CREATE TABLE IF NOT EXISTS users (chat_id INTEGER PRIMARY KEY)")
+            
+            c.execute("PRAGMA table_info(tracks)")
+            cols = [r[1] for r in c.fetchall()]
+            needed_cols = [f.split()[0] for f in fields]
+            if set(cols) != set(needed_cols):
+                c.execute("DROP TABLE IF EXISTS tracks")
+                c.execute(f"CREATE TABLE tracks ({', '.join(fields)})")
             conn.commit()
 
     def run_query(self, query, params=(), fetch=False, fetchone=False):
@@ -66,15 +73,11 @@ class DatabaseManager:
             logger.error(f"Database error: {e} | Query: {query}")
             return {} if fetchone else []
 
-    def add_user(self, chat_id):
-        self.run_query("INSERT OR IGNORE INTO users (chat_id) VALUES (?)", (str(chat_id),))
-
-    def get_all_users(self):
-        rows = self.run_query("SELECT chat_id FROM users", fetch=True)
-        return [row["chat_id"] for row in rows]
-
 db = DatabaseManager(DB_PATH)
 
+
+def track_user(chat_id):
+    db.run_query("INSERT OR IGNORE INTO users (chat_id) VALUES (?)", (chat_id,))
 
 def build_caption(track, bot_user):
     return (
@@ -142,21 +145,26 @@ def get_search_text(results):
         text += f"[📥 دریافت](send:{item['webpage_url']})\n\n"
     return text
 
-# =================== هندلر برودکست ==================
+# =================== هندلر Broadcast (کانال به بات) ==================
 @bot.on_message()
-async def broadcast_handler(client, message):
+async def channel_broadcast_handler(client, message):
     if message.chat.id == BROADCAST_CHANNEL_ID:
-        users = db.get_all_users()
-        logger.info(f"Broadcasting message to {len(users)} users...")
+        logger.info(f"New message in broadcast channel {BROADCAST_CHANNEL_ID}, forwarding to users...")
+        users = db.run_query("SELECT chat_id FROM users", fetch=True)
+        success_count = 0
         for u in users:
             try:
                 await client.forward_message(
-                    chat_id=int(u),
+                    chat_id=u['chat_id'],
                     from_chat_id=message.chat.id,
                     message_id=message.id
                 )
+                success_count += 1
+                await asyncio.sleep(0.05) # جلوگیری از فلود شدن ریکوئست‌ها
             except Exception as e:
-                logger.error(f"Failed to forward message to {u}: {e}")
+                logger.error(f"Failed to forward message to {u['chat_id']}: {e}")
+        logger.info(f"Broadcast finished. Sent to {success_count} users.")
+        return # پایان پردازش این پیام
 
 # =================== هندلر start ==================
 @bot.on_message(command("start"))
@@ -165,9 +173,8 @@ async def start_handler(client, message):
     if not BOT_USERNAME:
         BOT_USERNAME = (await client.get_me()).username
     
-    # ذخیره کاربر در دیتابیس
     if message.chat.type == "private":
-        db.add_user(message.chat.id)
+        track_user(message.chat.id)
 
     logger.info(f"User {message.author.id} started the bot.")
     await message.reply("🎶 به ربات دانلودر ساندکلاود خوش آمدید!\nلینک بفرستید یا متن جستجو کنید.")
@@ -175,18 +182,13 @@ async def start_handler(client, message):
 # =================== هندلر متنی ==================
 @bot.on_message(text)
 async def handle_text(client, message):
-    # جلوگیری از تداخل با پیام‌های کانال برودکست
-    if message.chat.id == BROADCAST_CHANNEL_ID:
-        return
-
     global BOT_USERNAME
     if not BOT_USERNAME: 
         BOT_USERNAME = (await client.get_me()).username
     
-    # ذخیره کاربر در دیتابیس در صورت خصوصی بودن چت
     if message.chat.type == "private":
-        db.add_user(message.chat.id)
-
+        track_user(message.chat.id)
+        
     content = message.text.strip()
     
     if message.chat.type != "private":
@@ -276,7 +278,7 @@ async def handle_callback(client, callback_query):
     data = callback_query.data
 
     if data == "ignore":
-        return await callback_query.answer("در حال پردازش درخواست...", show_alert=False)
+        return await callback_query.answer("در حال پردازش هستیم، لطفا منتظر بمانید...")
 
     if data.startswith("getaudio:"):       
         parts = data.split(":")
@@ -286,28 +288,30 @@ async def handle_callback(client, callback_query):
         logger.info(f"User {callback_query.author.id} requested audio for track {track_id}")
         await callback_query.answer("⏳ در حال پردازش فایل، لطفا صبور باشید...")
 
-        # جایگزینی دکمه با حالت غیرقابل کلیک و تغییر کپشن
+        # تغییر دکمه به غیرقابل کلیک و تغییر متن پست 
         try:
             downloading_keyboard = InlineKeyboard(
-                [("⏳ در حال دریافت...", "ignore")]
+                [InlineKeyboardButton("⏳ در حال دریافت فایل...", callback_data="ignore")]
             )
-            msg = callback_query.message
-            if msg.photo:
+            downloading_text = "⏳ *در حال دانلود و آماده‌سازی فایل از سرورهای ساندکلاود...*\nلطفا صبور باشید."
+            
+            # بررسی اینکه پیام اصلی حاوی عکس است یا خیر تا متد مناسب استفاده شود
+            if callback_query.message.photo:
                 await client.edit_message_caption(
-                    chat_id=msg.chat.id,
-                    message_id=msg.id,
-                    caption="⏳ در حال دریافت...",
+                    chat_id=callback_query.message.chat.id,
+                    message_id=callback_query.message.id,
+                    caption=downloading_text,
                     reply_markup=downloading_keyboard
                 )
             else:
                 await client.edit_message_text(
-                    chat_id=msg.chat.id,
-                    message_id=msg.id,
-                    text="⏳ در حال دریافت...",
+                    chat_id=callback_query.message.chat.id,
+                    message_id=callback_query.message.id,
+                    text=downloading_text,
                     reply_markup=downloading_keyboard
                 )
         except Exception as e:
-            logger.error(f"Failed to set 'downloading' state: {e}")
+            logger.error(f"Failed to update message UI to 'downloading': {e}")
         
         row = db.run_query("SELECT * FROM tracks WHERE uuid=?", (f"sc_{track_id}",), fetchone=True)
         if not row:
