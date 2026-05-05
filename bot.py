@@ -63,15 +63,13 @@ db = DatabaseManager(DB_PATH)
 
 
 def build_caption(track):
-    title = track.get("title") or "نامشخص"
-    artist = track.get("artist") or "نامشخص"
     caption = (
-        f"🎧 *{title}*\n"
-        f"🎤 هنرمند: *{artist}*\n"
-        f"📅 سال: {track.get('year', '-')}\n"
-        f"🎸 ژانر: {track.get('genre', '-')}\n"
-        f"⏱ مدت: {track.get('duration', '-')}\n"
-        f"🔗 [لینک اصلی]({track.get('webpage_url', '')})\n\n"
+        f"🎧 *{track.get("title","نامشخص")}*\n"
+        f"🎤 هنرمند: *{track.get("uploader","نامشخص")}*\n"
+        f"📅 سال: {track.get('year',"نامشخص")}\n"
+        f"🎸 ژانر: {track.get('genre',"نامشخص")}\n"
+        f"⏱ مدت: {track.get('duration',"نامشخص")}\n"
+        f"🔗 [لینک اصلی]({track.get('webpage_url',"نامشخص")})\n\n"
         "🤖 @abraava_bot"
     )
     return caption
