@@ -1,19 +1,14 @@
-name: Run YouTube Downloader Bot
+name: Run Bale Music Archive Bot
 
 on:
-#  schedule:
-#    - cron: '0 */6 * * *'
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
 
-# ✅ این بخش کلیدی است
 concurrency:
-  group: youtube-downloader-bot
+  group: bale-music-archive-bot
   cancel-in-progress: true
 
 permissions:
@@ -27,34 +22,32 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install ffmpeg (apt)
+      - name: Install ffmpeg
         uses: FedericoCarboni/setup-ffmpeg@v3
-        id: setup-ffmpeg
         with:
           ffmpeg-version: release
-          github-token: ${{ github.server_url == 'https://github.com' && github.token || '' }}
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install Python Dependencies
+      - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install balethon yt-dlp ytmusicapi
+          pip install -U pip
+          pip install balethon yt-dlp mutagen aiohttp
 
-      - name: Run Bot (with timeout)
+      - name: Run Bot
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
+          BALE_TOKEN: ${{ secrets.BALE_TOKEN }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
         run: |
-          timeout 5.5h python bot.py || true
+          timeout 5h python bot.py || true
 
-      - name: Commit and Push Database
+      - name: Commit & Push Updated Database
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add archive.db
-          git diff-index --quiet HEAD || git commit -m "Auto-update SQLite database"
+          git add audio_metadata.db
+          git diff-index --quiet HEAD || git commit -m "Auto-update audio database"
           git push
