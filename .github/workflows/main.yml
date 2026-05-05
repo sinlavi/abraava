@@ -42,7 +42,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CACHE_CHANNEL_ID: ${{ secrets.CACHE_CHANNEL_ID }}
         run: |
-          timeout 10m python bot.py || true
+          timeout 5h python bot.py || true
 
       - name: Commit & Push Updated Database
         if: always()
