@@ -206,7 +206,7 @@ async def handle_callback(client, callback_query):
     global BOT_USERNAME
     if not BOT_USERNAME: BOT_USERNAME = (await client.get_me()).username
     data = callback_query.data
-
+    print(data)
     # دکمه‌های صفحه‌بندی
     if data.startswith("page:"):
         _, keyword, page_index = data.split(":")
@@ -227,9 +227,7 @@ async def handle_callback(client, callback_query):
 
     # دانلود و ارسال فایل صوتی
     elif data.startswith("getaudio:"):       
-        _, track_id = data.split(":")
-        track_id = str(track_id)
-        print(track_id)
+        track_id = str(data)
         # ویرایش پیام قبلی برای نشان دادن وضعیت
         await callback_query.answer("⏳ در حال پردازش فایل، لطفا صبور باشید...")
         
