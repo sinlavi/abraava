@@ -232,7 +232,7 @@ async def handle_callback(client, callback_query):
         # ویرایش پیام قبلی برای نشان دادن وضعیت
         await callback_query.answer("⏳ در حال پردازش فایل، لطفا صبور باشید...")
         
-        row = db.run_query("SELECT * FROM tracks WHERE uuid=?", (f"sc_{track_id}"), fetchone=True)
+        row = db.run_query("SELECT * FROM tracks WHERE uuid='"+f"sc_{track_id}"+"'", fetchone=True)
         caption = build_caption(row, BOT_USERNAME) if row else "🎧 دانلود شده توسط ربات"
 
         # حذف پیام اطلاعات آهنگ (حاوی کاور) در صورتی که نیاز داشتید حذف شود:
