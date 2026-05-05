@@ -2,11 +2,20 @@ import asyncio
 import os
 import re
 import sqlite3
+import logging
 from pathlib import Path
 import yt_dlp
 from balethon import Client
 from balethon.conditions import command, text
 from balethon.objects import InlineKeyboard
+
+# ===================== تنظیمات لاگر =====================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # ===================== تنظیمات =====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BALE_BOT_TOKEN")
@@ -43,16 +52,20 @@ class DatabaseManager:
             conn.commit()
 
     def run_query(self, query, params=(), fetch=False, fetchone=False):
-        with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
-            c.execute(query, params)
-            if fetchone:
-                row = c.fetchone()
-                return dict(row) if row else {}
-            if fetch:
-                return [dict(r) for r in c.fetchall()]
-            conn.commit()
+        try:
+            with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
+                c.execute(query, params)
+                if fetchone:
+                    row = c.fetchone()
+                    return dict(row) if row else {}
+                if fetch:
+                    return [dict(r) for r in c.fetchall()]
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Database error: {e} | Query: {query}")
+            return {} if fetchone else []
 
 db = DatabaseManager(DB_PATH)
 
@@ -130,6 +143,7 @@ async def start_handler(client, message):
     global BOT_USERNAME
     if not BOT_USERNAME:
         BOT_USERNAME = (await client.get_me()).username
+    logger.info(f"User {message.author.id} started the bot.")
     await message.reply("🎶 به ربات دانلودر ساندکلاود خوش آمدید!\nلینک بفرستید یا متن جستجو کنید.")
 
 # =================== هندلر متنی ==================
@@ -147,17 +161,18 @@ async def handle_text(client, message):
         content = content.replace(mention, "").strip()
         if not content: return
 
-    # هندل کردن لینک مستقیم
     if "soundcloud.com" in content:
         url_match = re.search(r"(https?://[^\s]+)", content)
         if not url_match: return await message.reply("❌ لینک نامعتبر!")
         url = url_match.group(1)
         
+        logger.info(f"Extracting info for URL: {url} by user {message.author.id}")
         msg = await message.reply("⏳ در حال دریافت اطلاعات...")
         loop = asyncio.get_event_loop()
         try:
             info = await loop.run_in_executor(None, get_soundcloud_info, url)
         except Exception as e:
+            logger.error(f"Error extracting info for {url}: {e}")
             return await msg.edit_text(f"❌ خطا در دریافت اطلاعات: {e}")
 
         track_id = info.get('id', 'unknown')
@@ -172,7 +187,6 @@ async def handle_text(client, message):
             "duration": format_duration(info.get("duration", 0)),
         }
         
-        # ذخیره ایمن در دیتابیس
         placeholders = ','.join(['?'] * len(meta))
         db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({placeholders})", tuple(meta.values()))
         
@@ -187,9 +201,14 @@ async def handle_text(client, message):
             await client.send_message(message.chat.id, caption, reply_markup=InlineKeyboard(*buttons))
         return
 
-    # جستجوی متنی
+    logger.info(f"Searching SoundCloud for: {content} by user {message.author.id}")
     msg = await message.reply("🔍 در حال جستجو...")
-    results = await search_soundcloud(content, 30)
+    try:
+        results = await search_soundcloud(content, 30)
+    except Exception as e:
+        logger.error(f"Search error for query '{content}': {e}")
+        return await msg.edit_text("❌ خطا در جستجو.")
+
     if not results:
         return await msg.edit_text("😔 موردی یافت نشد.")
 
@@ -212,7 +231,6 @@ async def handle_callback(client, callback_query):
     
     data = callback_query.data
 
-    # دکمه‌های صفحه‌بندی
     if data.startswith("page:"):
         parts = data.split(":", 2)
         if len(parts) != 3: return
@@ -235,62 +253,72 @@ async def handle_callback(client, callback_query):
         keyboard = InlineKeyboard([nav_buttons]) if nav_buttons else None
         await callback_query.message.edit_text(text_res, reply_markup=keyboard)
 
-    # دانلود و ارسال فایل صوتی
     elif data.startswith("getaudio:"):       
         parts = data.split(":")
         if len(parts) < 2: return
         track_id = parts[1]
         
+        logger.info(f"User {callback_query.author.id} requested audio for track {track_id}")
         await callback_query.answer("⏳ در حال پردازش فایل، لطفا صبور باشید...")
         
-        # جستجوی امن در دیتابیس
         row = db.run_query("SELECT * FROM tracks WHERE uuid=?", (f"sc_{track_id}",), fetchone=True)
         if not row:
+            logger.warning(f"Track {track_id} not found in DB.")
             return await callback_query.message.reply("❌ اطلاعات این آهنگ منقضی شده است. لطفا دوباره لینک را بفرستید.")
 
         caption = build_caption(row, BOT_USERNAME)
         msg_to_delete = callback_query.message
         url = row.get("webpage_url")
 
-        # اگر از قبل در کانال کش ذخیره شده باشد
+        # اگر پیام در کانال کش ذخیره شده باشد، آن را فوروارد می‌کنیم
         if row.get("cache_msg_id"):
             try:
-                await client.send_audio(callback_query.message.chat.id, row["cache_msg_id"], caption=caption)
+                logger.info(f"Forwarding cached message {row['cache_msg_id']} to user.")
+                await client.forward_message(
+                    chat_id=callback_query.message.chat.id,
+                    from_chat_id=CACHE_CHANNEL_ID,
+                    message_id=int(row["cache_msg_id"])
+                )
                 await msg_to_delete.delete()
                 return
-            except Exception:
-                pass # در صورت نامعتبر بودن کش، به دانلود ادامه می‌دهیم
+            except Exception as e:
+                logger.error(f"Failed to forward cached message: {e}")
 
+        logger.info(f"Downloading track: {url}")
         loop = asyncio.get_event_loop()
         try:
             filepath, info = await loop.run_in_executor(None, download_soundcloud_track, url)
         except Exception as e:
+            logger.error(f"Download failed for {url}: {e}")
             return await callback_query.message.reply(f"❌ خطا در دانلود: {e}")
 
         try:
+            logger.info(f"Uploading file {filepath} to cache channel {CACHE_CHANNEL_ID}")
             with open(filepath, "rb") as f:
                 sent_msg = await client.send_audio(CACHE_CHANNEL_ID, f, caption=caption)
             
-            # پیدا کردن ID فایل آپلود شده
-            file_id = None
-            if hasattr(sent_msg, 'audio') and sent_msg.audio:
-                file_id = sent_msg.audio.id
-            elif hasattr(sent_msg, 'document') and sent_msg.document:
-                file_id = sent_msg.document.id
-                
-            if file_id:
-                row["cache_msg_id"] = str(file_id)
+            msg_id = sent_msg.id
+            if msg_id:
+                row["cache_msg_id"] = str(msg_id)
                 placeholders = ','.join(['?'] * len(row))
                 db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(row.keys())}) VALUES ({placeholders})", tuple(row.values()))
             
-            await client.send_audio(callback_query.message.chat.id, file_id if file_id else filepath, caption=caption)
+            logger.info(f"Forwarding newly uploaded message {msg_id} to user.")
+            await client.forward_message(
+                chat_id=callback_query.message.chat.id,
+                from_chat_id=CACHE_CHANNEL_ID,
+                message_id=msg_id
+            )
             await msg_to_delete.delete()
             
         except Exception as e:
-            await callback_query.message.reply(f"❌ خطا در آپلود (ممکن است فایل خیلی بزرگ باشد): {e}")
+            logger.error(f"Upload/Forward error: {e}")
+            await callback_query.message.reply(f"❌ خطا در آپلود یا ارسال فایل: {e}")
         finally:
             if os.path.exists(filepath):
                 os.remove(filepath)
+                logger.info(f"Deleted temp file: {filepath}")
 
 if __name__ == "__main__":
+    logger.info("Starting bot...")
     bot.run()
