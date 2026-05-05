@@ -207,10 +207,12 @@ async def handle_text(client, message):
         results = await search_soundcloud(content, 30)
     except Exception as e:
         logger.error(f"Search error for query '{content}': {e}")
-        return await msg.edit_text("❌ خطا در جستجو.")
+        await msg.delete()
+        return await message.reply("❌ خطا در جستجو.")
 
     if not results:
-        return await msg.edit_text("😔 موردی یافت نشد.")
+        await msg.delete()
+        return await message.reply("😔 موردی یافت نشد.")
 
     total_pages = (len(results) - 1) // 10 + 1
     text_res = get_search_text(results[:10], 1, total_pages)
@@ -219,7 +221,10 @@ async def handle_text(client, message):
     if total_pages > 1:
         buttons.append([("➡️ بعدی", f"page:{content}:1")])
         
-    await msg.edit_text(text_res, reply_markup=InlineKeyboard(buttons) if buttons else None)
+    await msg.delete() # پیام قبلی پاک می‌شود
+    
+    # پیام جدید ارسال می‌شود (دقت کنید که از *buttons استفاده شده است)
+    await message.reply(text_res, reply_markup=InlineKeyboard(*buttons) if buttons else None)
 
 
 # =================== هندلر دکمه‌های شیشه‌ای ==================
