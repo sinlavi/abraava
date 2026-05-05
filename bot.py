@@ -3,12 +3,10 @@ import os
 import re
 import sqlite3
 from pathlib import Path
-import aiohttp
-from mutagen import File
 import yt_dlp
 from balethon import Client
 from balethon.conditions import private, command, text
-from balethon.objects import InlineKeyboard
+from balethon.objects import InlineKeyboard, InlineQueryResultArticle, InputTextMessageContent
 
 # ===================== تنظیمات =====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BALE_BOT_TOKEN")
@@ -19,7 +17,7 @@ TEMP_DIR.mkdir(exist_ok=True)
 DB_PATH = "cache.db"
 
 bot = Client(BOT_TOKEN)
-BOT_USERNAME = ""  # مقدار در start هندلر گرفته می‌شود
+BOT_USERNAME = "" 
 
 
 # ===================== دیتابیس =====================
@@ -37,7 +35,6 @@ class DatabaseManager:
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
             c.execute(f"CREATE TABLE IF NOT EXISTS tracks ({', '.join(fields)})")
-            # بررسی اینکه ستون‌ها کامل هستند؛ اگر حذف یا متفاوت باشند جدول را بازسازی کن
             c.execute("PRAGMA table_info(tracks)")
             cols = [r[1] for r in c.fetchall()]
             needed_cols = [f.split()[0] for f in fields]
@@ -57,35 +54,61 @@ class DatabaseManager:
                 return [dict(r) for r in c.fetchall()]
             conn.commit()
 
-
 db = DatabaseManager(DB_PATH)
 
 
-
 def build_caption(track):
-    caption = (
+    return (
         f"🎧 *{track.get('title','نامشخص')}*\n"
         f"🎤 هنرمند: *{track.get('uploader','نامشخص')}*\n"
         f"📅 سال: {track.get('upload_date','نامشخص')}\n"
         f"🎸 ژانر: {track.get('genre','نامشخص')}\n"
         f"⏱ مدت: {track.get('duration','نامشخص')}\n"
         f"🔗 [لینک اصلی]({track.get('webpage_url','نامشخص')})\n\n"
-        "🤖 @abraava_bot"
+        f"🤖 @{BOT_USERNAME}"
     )
-    return caption
 
+
+# =================== توابع ساندکلاود ==================
+def get_soundcloud_info(url):
+    """فقط دریافت اطلاعات بدون دانلود"""
+    ydl_opts = {"quiet": True, "extract_flat": False}
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        return info
 
 def download_soundcloud_track(url):
+    """دانلود با تبدیل اجباری به MP3 برای جلوگیری از خطای 500 بله"""
     ydl_opts = {
         "format": "bestaudio/best",
         "quiet": True,
         "outtmpl": str(TEMP_DIR / "%(id)s.%(ext)s"),
-        "extract_flat": False,
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
-        filepath = ydl.prepare_filename(info)
+        # مسیر فایل نهایی mp3 را دریافت می‌کنیم
+        filepath = str(TEMP_DIR / f"{info['id']}.mp3") 
         return filepath, info
+
+async def search_soundcloud(query, max_results=10):
+    results = []
+    ydl_opts = {"quiet": True, "extract_flat": True}
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(f"scsearch{max_results}:{query}", download=False)
+        for e in info.get("entries", []):
+            results.append({
+                "id": e.get("id"),
+                "title": e.get("title", "بدون نام"),
+                "uploader": e.get("uploader", "نامشخص"),
+                "webpage_url": e.get("url", ""),
+                "thumbnail": e.get("thumbnail", "") # ممکن است خالی باشد
+            })
+    return results
 
 
 # =================== هندلر start ==================
@@ -96,40 +119,36 @@ async def start_handler(client, message):
     BOT_USERNAME = me.username
     txt = (
         "🎶 به ربات دانلودر ساندکلاود خوش آمدید!\n\n"
-        "ارسال کنید:\n"
-        "🔗 یک لینک ساندکلاود — تا آهنگ را با کاور و جزئیات کامل دریافت کنید.\n"
-        "🕵️ متن جستجو — تا نتایج آلبوم‌ها و ترک‌ها را ببینید.\n\n"
-        "📌 نتیجه‌ها با دکمهٔ دریافت همراه‌اند و فایل‌ها در کانال آرشیو ذخیره می‌شوند."
+        "🔗 ارسال لینک: آهنگ را با کاور و جزئیات دریافت کنید.\n"
+        "🕵️ ارسال متن: جستجوی آلبوم‌ها و ترک‌ها.\n"
+        f"✨ *جدید:* می‌توانید در هر گروهی از طریق `@ {BOT_USERNAME} نام‌اهنگ` جستجو کنید!"
     )
     await message.reply(txt)
 
 
-# =================== هندلر لینک ساندکلاود ==================
+# =================== هندلر لینک و جستجوی متنی ==================
 @bot.on_message(private & text)
 async def handle_text(client, message):
     content = message.text.strip()
 
     # اگر لینک ساندکلاود است
     if "soundcloud.com" in content:
-        await message.reply("⏳ بررسی لینک و دریافت اطلاعات...")
-        url = re.search(r"(https?://[^\s]+)", content)
-        if not url:
+        url_match = re.search(r"(https?://[^\s]+)", content)
+        if not url_match:
             return await message.reply("❌ لینک نامعتبر!")
-        url = url.group(1)
+        url = url_match.group(1)
 
-        # بررسی در دیتابیس
-        existing = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
-        if existing and existing.get("cache_msg_id"):
-            # ارسال فایل موجود
-            caption = build_caption(existing)
-            return await client.send_document(message.chat.id, existing["cache_msg_id"], caption=caption)
+        # 1. بررسی در کش
+        row = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
+        if row and row.get("cache_msg_id"):
+            return await client.send_document(message.chat.id, row["cache_msg_id"], caption=build_caption(row))
 
-        # دریافت و ذخیره
+        msg = await message.reply("⏳ در حال دانلود و آماده‌سازی...")
         loop = asyncio.get_event_loop()
         try:
             filepath, info = await loop.run_in_executor(None, download_soundcloud_track, url)
         except Exception as e:
-            return await message.reply(f"❌ خطا در ساندکلاود: {e}")
+            return await msg.edit_text(f"❌ خطا: {e}")
 
         meta = {
             "uuid": f"sc_{info['id']}",
@@ -141,100 +160,95 @@ async def handle_text(client, message):
             "thumbnail": info.get("thumbnail", ""),
             "duration": str(info.get("duration", "")),
         }
-
         caption = build_caption(meta)
-        photo_url = meta["thumbnail"]
-        sent_msg = await client.send_audio(CACHE_CHANNEL_ID, filepath, caption=caption)
-        meta["cache_msg_id"] = sent_msg.audio.id
 
-        db.run_query(
-            f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?'] * len(meta))})",
-            tuple(meta.values())
-        )
+        with open(filepath, "rb") as f:
+            sent_msg = await client.send_audio(CACHE_CHANNEL_ID, f, caption=caption)
+        
+        meta["cache_msg_id"] = str(sent_msg.audio.id)
+        db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?'] * len(meta))})", tuple(meta.values()))
 
-        if photo_url:
-            await client.send_photo(message.chat.id, photo_url, caption=caption)
-        else:
-            await message.reply(caption)
+        # ارسال به کاربر
+        await client.send_audio(message.chat.id, sent_msg.audio.id, caption=caption)
+        await msg.delete()
 
-        await message.reply("✅ آهنگ ذخیره و آماده‌ی پخش شد!")
-
-        # پاک کردن فایل دانلودی
         if os.path.exists(filepath):
             os.remove(filepath)
         return
 
-    # اگر متن جستجو است (Search)
+    # اگر جستجو است
     if not content.startswith("/"):
-        await message.reply("🔍 در حال جستجو در ساندکلاود...")
-        results = await search_soundcloud(content)
+        msg = await message.reply("🔍 در حال جستجو...")
+        results = await search_soundcloud(content, 15)
         if not results:
-            return await message.reply("😔 موردی یافت نشد.")
+            return await msg.edit_text("😔 موردی یافت نشد.")
 
-        # صفحه اول
-        buttons = []
-        for item in results[:10]:
-            buttons.append([(f"🎧 {item['title']} - {item['uploader'][:15]}", f"show:{item['webpage_url']}")])
+        buttons = [[(f"🎧 {item['title'][:20]}", f"show:{item['webpage_url']}")] for item in results[:10]]
         if len(results) > 10:
             buttons.append([("➡️ بعدی", f"page:{content}:1")])
-
-        await message.reply(f"🎯 نتایج برای *{content}*", InlineKeyboard(*buttons))
-
-
-# =================== توابع جستجو و صفحه‌بندی ==================
-async def search_soundcloud(query):
-    """استفاده از yt_dlp برای جستجوی ساندکلاود"""
-    results = []
-    ydl_opts = {"quiet": True, "extract_flat": True, "default_search": f"scsearch10:{query}"}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f"scsearch5:{query}", download=False)
-        for e in info.get("entries", []):
-            results.append({
-                "title": e.get("title", ""),
-                "uploader": e.get("uploader", ""),
-                "webpage_url": e.get("url", ""),
-            })
-    return results
+        await msg.edit_text(f"🎯 نتایج برای *{content}*", InlineKeyboard(*buttons))
 
 
+# =================== اینلاین کوئری (جستجو در گروه‌ها) ==================
+@bot.on_inline_query()
+async def inline_search(client, inline_query):
+    query = inline_query.query.strip()
+    if not query:
+        return
+
+    results = await search_soundcloud(query, max_results=10)
+    articles = []
+    
+    for item in results:
+        caption = f"🎵 *{item['title']}*\n🎤 {item['uploader']}"
+        articles.append(
+            InlineQueryResultArticle(
+                id=item["id"],
+                title=item["title"],
+                description=item["uploader"],
+                thumb_url=item["thumbnail"] if item.get("thumbnail") else None,
+                input_message_content=InputTextMessageContent(
+                    f"{caption}\n\n[لینک ساندکلاود]({item['webpage_url']})"
+                ),
+                reply_markup=InlineKeyboard(
+                    [("⬇️ دریافت این آهنگ در ربات", f"dl:{item['webpage_url']}")]
+                )
+            )
+        )
+    await inline_query.answer(articles, cache_time=300)
+
+
+# =================== هندلر دکمه‌های شیشه‌ای ==================
 @bot.on_callback_query()
 async def handle_callback(client, callback_query):
     data = callback_query.data
+
     if data.startswith("page:"):
         _, keyword, page_index = data.split(":")
         page_index = int(page_index)
-        results = await search_soundcloud(keyword)
+        results = await search_soundcloud(keyword, 30)
         start = page_index * 10
         end = start + 10
-        buttons = []
-        for item in results[start:end]:
-            buttons.append([(f"🎧 {item['title']} - {item['uploader'][:15]}", f"show:{item['webpage_url']}")])
-        if end < len(results):
-            buttons.append([("➡️ بعدی", f"page:{keyword}:{page_index + 1}")])
-        if start > 0:
-            buttons.append([("⬅️ قبلی", f"page:{keyword}:{page_index - 1}")])
-        await callback_query.message.edit_text(f"🎯 نتایج برای *{keyword}* (صفحه {page_index + 1})",
-                                               InlineKeyboard(*buttons))
+        buttons = [[(f"🎧 {item['title'][:20]}", f"show:{item['webpage_url']}")] for item in results[start:end]]
+        nav_buttons = []
+        if start > 0: nav_buttons.append(("⬅️ قبلی", f"page:{keyword}:{page_index - 1}"))
+        if end < len(results): nav_buttons.append(("➡️ بعدی", f"page:{keyword}:{page_index + 1}"))
+        if nav_buttons: buttons.append(nav_buttons)
+        await callback_query.message.edit_text(f"🎯 نتایج برای *{keyword}* (صفحه {page_index + 1})", InlineKeyboard(*buttons))
 
     elif data.startswith("show:"):
         url = data.split(":", 1)[1]
-        # بررسی و ارسال جزئیات آهنگ
+        
         row = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
         if row:
-            caption = build_caption(row)
-            if row.get("thumbnail"):
-                await client.send_photo(callback_query.message.chat.id, row["thumbnail"], caption=caption,
-                                        reply_markup=InlineKeyboard([("⬇️ دریافت", f"dl:{url}")]))
-            else:
-                await callback_query.message.reply(caption, InlineKeyboard([("⬇️ دریافت", f"dl:{url}")]))
-            return
+            return await callback_query.message.reply(build_caption(row), InlineKeyboard([("⬇️ دریافت", f"dl:{url}")]))
 
-        await callback_query.message.reply("⏳ دریافت اطلاعات از ساندکلاود...")
+        msg = await callback_query.message.reply("⏳ دریافت اطلاعات...")
         loop = asyncio.get_event_loop()
         try:
-            _, info = await loop.run_in_executor(None, download_soundcloud_track, url)
+            info = await loop.run_in_executor(None, get_soundcloud_info, url)
         except Exception as e:
-            return await callback_query.message.reply(f"خطا در دریافت اطلاعات: {e}")
+            return await msg.edit_text(f"خطا: {e}")
 
         meta = {
             "uuid": f"sc_{info['id']}",
@@ -246,27 +260,30 @@ async def handle_callback(client, callback_query):
             "thumbnail": info.get("thumbnail", ""),
             "duration": str(info.get("duration", "")),
         }
-        db.run_query(
-            f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?'] * len(meta))})",
-            tuple(meta.values())
-        )
-        caption = build_caption(meta)
-        await bot.send_photo(callback_query.message.chat.id, meta["thumbnail"], caption=caption,
-                             reply_markup=InlineKeyboard([("⬇️ دریافت", f"dl:{url}")]))
+        db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?'] * len(meta))})", tuple(meta.values()))
+        await msg.edit_text(build_caption(meta), InlineKeyboard([("⬇️ دریافت", f"dl:{url}")]))
 
     elif data.startswith("dl:"):
         url = data.split(":", 1)[1]
+        
+        # در صورتی که دکمه از طریق حالت اینلاین زده شده باشد و ربات پیامی نداشته باشد
+        try:
+            msg = await callback_query.message.reply("⬇️ در حال پردازش فایل...")
+        except:
+            msg = None # پیام‌های ویا ربات قابل ریپلای نیستند مستقیماً در گروه مگر اینکه ربات ادمین باشد
+
         row = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
         if row and row.get("cache_msg_id"):
-            return await client.send_document(callback_query.message.chat.id, row["cache_msg_id"],
-                                              caption=build_caption(row))
+            await client.send_document(callback_query.message.chat.id, row["cache_msg_id"], caption=build_caption(row))
+            if msg: await msg.delete()
+            return
 
-        await callback_query.message.reply("⬇️ در حال دریافت از ساندکلاود...")
         loop = asyncio.get_event_loop()
         try:
             filepath, info = await loop.run_in_executor(None, download_soundcloud_track, url)
         except Exception as e:
-            return await callback_query.message.reply(f"❌ خطا در دریافت: {e}")
+            if msg: await msg.edit_text(f"❌ خطا: {e}")
+            return
 
         meta = {
             "uuid": f"sc_{info['id']}",
@@ -279,12 +296,18 @@ async def handle_callback(client, callback_query):
             "duration": str(info.get("duration", "")),
         }
         caption = build_caption(meta)
-        sent_msg = await client.send_audio(CACHE_CHANNEL_ID, filepath, caption=caption)
-        db.run_query("UPDATE tracks SET cache_msg_id=? WHERE webpage_url=?", (sent_msg.audio.id, url))
-        await client.send_audio(callback_query.message.chat.id, filepath, caption=caption)
+
+        with open(filepath, "rb") as f:
+            sent_msg = await client.send_audio(CACHE_CHANNEL_ID, f, caption=caption)
+            
+        meta["cache_msg_id"] = str(sent_msg.audio.id)
+        db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({','.join(['?'] * len(meta))})", tuple(meta.values()))
+        
+        await client.send_audio(callback_query.message.chat.id, sent_msg.audio.id, caption=caption)
+        if msg: await msg.delete()
+        
         if os.path.exists(filepath):
             os.remove(filepath)
-
 
 # =================== اجرا =====================
 if __name__ == "__main__":
