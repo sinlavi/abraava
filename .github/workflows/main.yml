@@ -35,7 +35,7 @@ jobs:
       - name: Install Dependencies
         run: |
           pip install -U pip
-          pip install balethon mutagen aiohttp
+          pip install balethon mutagen aiohttp yt_dlp
 
       - name: Run Bot
         env:
