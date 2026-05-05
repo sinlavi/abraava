@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 import yt_dlp
 from balethon import Client
-from balethon.conditions import command, text
+from balethon.conditions import command, text, private
 from balethon.objects import InlineKeyboard
 
 # ===================== تنظیمات لاگر =====================
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # ===================== تنظیمات =====================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BALE_BOT_TOKEN")
 CACHE_CHANNEL_ID = int(os.getenv("CACHE_CHANNEL_ID", "-1000000000000"))
+BROADCAST_CHANNEL_ID = 5524168471  # آیدی کانالی که پیام‌ها از آن فوروارد می‌شود
 
 TEMP_DIR = Path("temp_soundcloud")
 TEMP_DIR.mkdir(exist_ok=True)
@@ -42,13 +43,11 @@ class DatabaseManager:
         ]
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
+            # ساخت جدول آهنگ‌ها
             c.execute(f"CREATE TABLE IF NOT EXISTS tracks ({', '.join(fields)})")
-            c.execute("PRAGMA table_info(tracks)")
-            cols = [r[1] for r in c.fetchall()]
-            needed_cols = [f.split()[0] for f in fields]
-            if set(cols) != set(needed_cols):
-                c.execute("DROP TABLE IF EXISTS tracks")
-                c.execute(f"CREATE TABLE tracks ({', '.join(fields)})")
+            
+            # ساخت جدول کاربران برای برودکست
+            c.execute("CREATE TABLE IF NOT EXISTS users (chat_id TEXT PRIMARY KEY)")
             conn.commit()
 
     def run_query(self, query, params=(), fetch=False, fetchone=False):
@@ -66,6 +65,13 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Database error: {e} | Query: {query}")
             return {} if fetchone else []
+
+    def add_user(self, chat_id):
+        self.run_query("INSERT OR IGNORE INTO users (chat_id) VALUES (?)", (str(chat_id),))
+
+    def get_all_users(self):
+        rows = self.run_query("SELECT chat_id FROM users", fetch=True)
+        return [row["chat_id"] for row in rows]
 
 db = DatabaseManager(DB_PATH)
 
@@ -136,22 +142,51 @@ def get_search_text(results):
         text += f"[📥 دریافت](send:{item['webpage_url']})\n\n"
     return text
 
+# =================== هندلر برودکست ==================
+@bot.on_message()
+async def broadcast_handler(client, message):
+    if message.chat.id == BROADCAST_CHANNEL_ID:
+        users = db.get_all_users()
+        logger.info(f"Broadcasting message to {len(users)} users...")
+        for u in users:
+            try:
+                await client.forward_message(
+                    chat_id=int(u),
+                    from_chat_id=message.chat.id,
+                    message_id=message.id
+                )
+            except Exception as e:
+                logger.error(f"Failed to forward message to {u}: {e}")
+
 # =================== هندلر start ==================
 @bot.on_message(command("start"))
 async def start_handler(client, message):
     global BOT_USERNAME
     if not BOT_USERNAME:
         BOT_USERNAME = (await client.get_me()).username
+    
+    # ذخیره کاربر در دیتابیس
+    if message.chat.type == "private":
+        db.add_user(message.chat.id)
+
     logger.info(f"User {message.author.id} started the bot.")
     await message.reply("🎶 به ربات دانلودر ساندکلاود خوش آمدید!\nلینک بفرستید یا متن جستجو کنید.")
 
 # =================== هندلر متنی ==================
 @bot.on_message(text)
 async def handle_text(client, message):
+    # جلوگیری از تداخل با پیام‌های کانال برودکست
+    if message.chat.id == BROADCAST_CHANNEL_ID:
+        return
+
     global BOT_USERNAME
     if not BOT_USERNAME: 
         BOT_USERNAME = (await client.get_me()).username
     
+    # ذخیره کاربر در دیتابیس در صورت خصوصی بودن چت
+    if message.chat.type == "private":
+        db.add_user(message.chat.id)
+
     content = message.text.strip()
     
     if message.chat.type != "private":
@@ -164,13 +199,11 @@ async def handle_text(client, message):
         url_match = re.search(r"(https?://[^\s]+)", content)
         if not url_match: return await message.reply("❌ لینک نامعتبر!")
         
-        # پاکسازی لینک از پارامترهای اضافه برای جستجوی دقیق‌تر در دیتابیس
         url = url_match.group(1).split('?')[0]
         
         logger.info(f"Processing URL: {url} by user {message.author.id}")
         msg = await message.reply("⏳ در حال بررسی...")
         
-        # بررسی وجود لینک در دیتابیس
         cached_track = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
         
         if cached_track:
@@ -216,7 +249,6 @@ async def handle_text(client, message):
     logger.info(f"Searching SoundCloud for: {content} by user {message.author.id}")
     msg = await message.reply("🔍 در حال جستجو...")
     try:
-        # فقط 10 نتیجه اول را دریافت میکنیم
         results = await search_soundcloud(content, 10)
     except Exception as e:
         logger.error(f"Search error for query '{content}': {e}")
@@ -243,6 +275,9 @@ async def handle_callback(client, callback_query):
     
     data = callback_query.data
 
+    if data == "ignore":
+        return await callback_query.answer("در حال پردازش درخواست...", show_alert=False)
+
     if data.startswith("getaudio:"):       
         parts = data.split(":")
         if len(parts) < 2: return
@@ -251,20 +286,29 @@ async def handle_callback(client, callback_query):
         logger.info(f"User {callback_query.author.id} requested audio for track {track_id}")
         await callback_query.answer("⏳ در حال پردازش فایل، لطفا صبور باشید...")
 
-        # جایگزینی دکمه‌ها با یک دکمه غیرفعال "در حال دانلود..."
+        # جایگزینی دکمه با حالت غیرقابل کلیک و تغییر کپشن
         try:
             downloading_keyboard = InlineKeyboard(
-                [InlineKeyboardButton("⏳ در حال دانلود...", callback_data=None)]
+                [("⏳ در حال دریافت...", "ignore")]
             )
-            await client.edit_message_reply_markup(
-                chat_id=callback_query.message.chat.id,
-                message_id=callback_query.message.id,
-                reply_markup=downloading_keyboard
-            )
+            msg = callback_query.message
+            if msg.photo:
+                await client.edit_message_caption(
+                    chat_id=msg.chat.id,
+                    message_id=msg.id,
+                    caption="⏳ در حال دریافت...",
+                    reply_markup=downloading_keyboard
+                )
+            else:
+                await client.edit_message_text(
+                    chat_id=msg.chat.id,
+                    message_id=msg.id,
+                    text="⏳ در حال دریافت...",
+                    reply_markup=downloading_keyboard
+                )
         except Exception as e:
-            logger.error(f"Failed to set 'downloading' button: {e}")
+            logger.error(f"Failed to set 'downloading' state: {e}")
         
-        # ادامه کد فرآیند دانلود مثل قبل ...
         row = db.run_query("SELECT * FROM tracks WHERE uuid=?", (f"sc_{track_id}",), fetchone=True)
         if not row:
             logger.warning(f"Track {track_id} not found in DB.")
