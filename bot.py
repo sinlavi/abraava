@@ -4,65 +4,69 @@ import re
 import sqlite3
 import logging
 from pathlib import Path
+from typing import Optional, Dict, Any, List
+
 import yt_dlp
 from balethon import Client
-from balethon.conditions import command, text, private, chat
-from balethon.objects import InlineKeyboard, InlineKeyboardButton
+from balethon.conditions import command, text, private, chat, callback_query
+from balethon.objects import InlineKeyboard, InlineKeyboardButton, Message
 
-# ===================== تنظیمات لاگر =====================
+# ------------------- Logging -------------------
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("MusicBot")
 
-# ===================== تنظیمات =====================
+# ------------------- Configuration -------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BALE_BOT_TOKEN")
 CACHE_CHANNEL_ID = int(os.getenv("CACHE_CHANNEL_ID", "-1000000000000"))
-BROADCAST_CHANNEL_ID = 5524168471  # آیدی کانالی که پیام‌ها از آن فوروارد می‌شوند
+BROADCAST_CHANNEL_ID = int(os.getenv("BROADCAST_CHANNEL_ID", "0"))  # 0 = disabled
 
-TEMP_DIR = Path("temp_soundcloud")
+TEMP_DIR = Path("temp_music")
 TEMP_DIR.mkdir(exist_ok=True)
-DB_PATH = "cache.db"
+DB_PATH = "music_cache.db"
 
 bot = Client(BOT_TOKEN)
-BOT_USERNAME = "" 
+BOT_USERNAME: str = ""
 
-# ===================== دیتابیس =====================
-class DatabaseManager:
-    def __init__(self, db_path):
+# ------------------- Database -------------------
+class Database:
+    def __init__(self, db_path: str):
         self.db_path = db_path
-        self.init_db()
+        self._init_db()
 
-    def init_db(self):
-        fields = [
-            "uuid TEXT PRIMARY KEY", "title TEXT", "uploader TEXT", "genre TEXT",
-            "upload_date TEXT", "webpage_url TEXT", "thumbnail TEXT", "cache_msg_id TEXT",
-            "duration TEXT"
-        ]
+    def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
             c = conn.cursor()
-            
-            # بررسی ساختار جدول فعلی (در صورت وجود)
+            # Drop old table if it doesn't have the 'source' column
             c.execute("PRAGMA table_info(tracks)")
-            existing_cols = [r[1] for r in c.fetchall()]
-            needed_cols = [f.split()[0] for f in fields]
-            
-            # اگر جدول وجود داشت اما ستون‌ها مغایرت داشتند، دیتابیس کلا پاک شود
-            if existing_cols and set(existing_cols) != set(needed_cols):
-                logger.warning("Database schema mismatch detected. Dropping all tables...")
+            cols = [row[1] for row in c.fetchall()] if c.fetchone() is not None else []
+            if "source" not in cols:
                 c.execute("DROP TABLE IF EXISTS tracks")
-                c.execute("DROP TABLE IF EXISTS users")
-            
-            # ساخت مجدد جداول
-            c.execute(f"CREATE TABLE IF NOT EXISTS tracks ({', '.join(fields)})")
-            
-            # جدول کاربران برای ارسال پیام همگانی
-            c.execute("CREATE TABLE IF NOT EXISTS users (chat_id INTEGER PRIMARY KEY)")
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS tracks (
+                    uuid TEXT PRIMARY KEY,
+                    title TEXT,
+                    uploader TEXT,
+                    genre TEXT,
+                    upload_date TEXT,
+                    webpage_url TEXT,
+                    thumbnail TEXT,
+                    cache_msg_id TEXT,
+                    duration TEXT,
+                    source TEXT NOT NULL DEFAULT 'soundcloud'
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    chat_id INTEGER PRIMARY KEY
+                )
+            """)
             conn.commit()
 
-    def run_query(self, query, params=(), fetch=False, fetchone=False):
+    def execute(self, query: str, params=(), fetch=False, fetchone=False):
         try:
             with sqlite3.connect(self.db_path, check_same_thread=False) as conn:
                 conn.row_factory = sqlite3.Row
@@ -75,44 +79,73 @@ class DatabaseManager:
                     return [dict(r) for r in c.fetchall()]
                 conn.commit()
         except Exception as e:
-            logger.error(f"Database error: {e} | Query: {query}")
+            logger.error(f"DB error: {e} | query: {query}")
             return {} if fetchone else []
 
-db = DatabaseManager(DB_PATH)
+    def save_track(self, track: Dict[str, Any]):
+        placeholders = ", ".join(["?"] * len(track))
+        columns = ", ".join(track.keys())
+        self.execute(
+            f"INSERT OR REPLACE INTO tracks ({columns}) VALUES ({placeholders})",
+            tuple(track.values()),
+        )
+
+    def get_track(self, uuid: str) -> Dict[str, Any]:
+        return self.execute("SELECT * FROM tracks WHERE uuid = ?", (uuid,), fetchone=True)
+
+    def add_user(self, chat_id: int):
+        self.execute("INSERT OR IGNORE INTO users (chat_id) VALUES (?)", (chat_id,))
+
+    def get_all_users(self) -> List[Dict[str, Any]]:
+        return self.execute("SELECT chat_id FROM users", fetch=True)
 
 
-def track_user(chat_id):
-    db.run_query("INSERT OR IGNORE INTO users (chat_id) VALUES (?)", (chat_id,))
+db = Database(DB_PATH)
 
-def build_caption(track, bot_user):
-    return (
-        f"🎧 *{track.get('title','نامشخص')}*\n"
-        f"🎤 هنرمند: *{track.get('uploader','نامشخص')}*\n"
-        f"📅 سال: {track.get('upload_date','نامشخص')}\n"
-        f"🎸 ژانر: {track.get('genre','نامشخص')}\n"
-        f"⏱ مدت: {track.get('duration','نامشخص')}\n"
-        f"🔗 [لینک اصلی]({track.get('webpage_url','نامشخص')})\n\n"
-        f"🤖 @{bot_user}"
-    )
-
-def format_duration(seconds):
-    if not seconds: return "نامشخص"
+# ------------------- Helpers -------------------
+def format_duration(seconds) -> str:
+    if not seconds:
+        return "نامشخص"
     try:
         s = int(float(seconds))
         return f"{s // 60}:{s % 60:02d}"
-    except:
+    except (ValueError, TypeError):
         return str(seconds)
 
-# =================== توابع ساندکلاود ==================
-def get_soundcloud_info(url):
-    ydl_opts = {"quiet": True, "extract_flat": False}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        return ydl.extract_info(url, download=False)
+def build_caption(track: Dict[str, Any], bot_username: str) -> str:
+    lines = [
+        f"🎧 *{track.get('title', 'نامشخص')}*",
+        f"🎤 هنرمند: *{track.get('uploader', 'نامشخص')}*",
+    ]
+    if track.get("source") == "soundcloud" and track.get("genre"):
+        lines.append(f"🎸 ژانر: {track['genre']}")
+    lines += [
+        f"📅 سال: {track.get('upload_date', 'نامشخص')}",
+        f"⏱ مدت: {track.get('duration', 'نامشخص')}",
+        f"🔗 [لینک اصلی]({track.get('webpage_url', 'نامشخص')})",
+        f"🤖 @{bot_username}",
+    ]
+    return "\n".join(lines)
 
-def download_soundcloud_track(url):
-    ydl_opts = {
+# ------------------- yt-dlp wrapper -------------------
+def _extract_info(url: str, download: bool = False, extra_opts: dict = None) -> dict:
+    """Synchronous extraction, to be run in executor."""
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": not download,
+    }
+    if extra_opts:
+        opts.update(extra_opts)
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        return ydl.extract_info(url, download=download)
+
+async def extract_audio(url: str) -> (Path, dict):
+    """Download best audio and convert to mp3. Returns (file_path, info_dict)."""
+    opts = {
         "format": "bestaudio/best",
         "quiet": True,
+        "no_warnings": True,
         "outtmpl": str(TEMP_DIR / "%(id)s.%(ext)s"),
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
@@ -120,259 +153,340 @@ def download_soundcloud_track(url):
             "preferredquality": "192",
         }],
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filepath = str(TEMP_DIR / f"{info['id']}.mp3") 
-        return filepath, info
+    loop = asyncio.get_running_loop()
+    info = await loop.run_in_executor(None, _extract_info, url, True, opts)
+    file_path = TEMP_DIR / f"{info['id']}.mp3"
+    return file_path, info
 
-async def search_soundcloud(query, max_results=10):
+async def fetch_track_info(url: str, source: str) -> Dict[str, Any]:
+    """Extract metadata for DB from a track URL."""
+    loop = asyncio.get_running_loop()
+    info = await loop.run_in_executor(None, _extract_info, url, False)
+    clean_url = info.get("webpage_url", url).split("?")[0]
+    track_id = info.get("id", "unknown")
+    uuid = f"{source}_{track_id}"
+    duration = format_duration(info.get("duration", 0))
+    genre = info.get("genre", "") if source == "soundcloud" else ""
+    upload_date = str(info.get("upload_date", ""))[:4] if info.get("upload_date") else "نامشخص"
+    return {
+        "uuid": uuid,
+        "title": info.get("title", "نامشخص"),
+        "uploader": info.get("uploader", "نامشخص"),
+        "genre": genre,
+        "upload_date": upload_date,
+        "webpage_url": clean_url,
+        "thumbnail": info.get("thumbnail", ""),
+        "duration": duration,
+        "source": source,
+        "cache_msg_id": None,
+    }
+
+async def search_soundcloud(query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    loop = asyncio.get_running_loop()
+    data = await loop.run_in_executor(None, _extract_info, f"scsearch{limit}:{query}", False)
     results = []
-    ydl_opts = {"quiet": True, "extract_flat": True}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(f"scsearch{max_results}:{query}", download=False)
-        for e in info.get("entries", []):
-            results.append({
-                "id": e.get("id"),
-                "title": e.get("title", "بدون نام"),
-                "uploader": e.get("uploader", "نامشخص"),
-                "webpage_url": e.get("webpage_url", "").split('?')[0],
-                "thumbnail": e.get("thumbnail", ""),
-                "duration": e.get("duration", 0)
-            })
+    for entry in data.get("entries", []):
+        results.append({
+            "id": entry.get("id"),
+            "title": entry.get("title", "بدون نام"),
+            "uploader": entry.get("uploader", "نامشخص"),
+            "webpage_url": entry.get("webpage_url", "").split("?")[0],
+            "thumbnail": entry.get("thumbnail", ""),
+            "duration": entry.get("duration", 0),
+            "source": "soundcloud",
+        })
     return results
 
-def get_search_text(results):
-    text = ""
-    for item in results:
-        text += f"👤 {item['uploader']}\n"
-        text += f"🎵 {item['title']}\n"
-        text += f"⏱️ {format_duration(item.get('duration'))}\n"
-        text += f"[📥 دریافت](send:{item['webpage_url']})\n\n"
-    return text
+async def search_youtube_music(query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    loop = asyncio.get_running_loop()
+    data = await loop.run_in_executor(None, _extract_info, f"ytmusic{limit}:{query}", False)
+    results = []
+    for entry in data.get("entries", []):
+        results.append({
+            "id": entry.get("id"),
+            "title": entry.get("title", "بدون نام"),
+            "uploader": entry.get("uploader", "نامشخص"),
+            "webpage_url": f"https://music.youtube.com/watch?v={entry.get('id')}",
+            "thumbnail": entry.get("thumbnail", ""),
+            "duration": entry.get("duration", 0),
+            "source": "youtube",
+        })
+    return results
 
-# =================== هندلر Broadcast (کانال به بات) ==================
-@bot.on_message(chat(BROADCAST_CHANNEL_ID))
-async def channel_broadcast_handler(client, message):
-    logger.info(f"New message in broadcast channel {BROADCAST_CHANNEL_ID}, forwarding to users...")
-    users = db.run_query("SELECT chat_id FROM users", fetch=True)
-    success_count = 0
-    for u in users:
-        try:
-            await client.forward_message(
-                chat_id=u['chat_id'],
-                from_chat_id=message.chat.id,
-                message_id=message.id
-            )
-            success_count += 1
-            await asyncio.sleep(0.05) # جلوگیری از فلود شدن ریکوئست‌ها
-        except Exception as e:
-            logger.error(f"Failed to forward message to {u['chat_id']}: {e}")
-    logger.info(f"Broadcast finished. Sent to {success_count} users.")
+# ------------------- Download locks -------------------
+_download_locks: Dict[str, asyncio.Lock] = {}
 
-# =================== هندلر start ==================
+async def get_or_create_lock(key: str) -> asyncio.Lock:
+    if key not in _download_locks:
+        _download_locks[key] = asyncio.Lock()
+    return _download_locks[key]
+
+# ------------------- Handlers -------------------
 @bot.on_message(command("start"))
-async def start_handler(client, message):
+async def start_handler(_, message: Message):
     global BOT_USERNAME
     if not BOT_USERNAME:
-        BOT_USERNAME = (await client.get_me()).username
-    
+        BOT_USERNAME = (await bot.get_me()).username
     if message.chat.type == "private":
-        track_user(message.chat.id)
+        db.add_user(message.chat.id)
+    await message.reply(
+        "🎶 به ربات موزیک خوش آمدید!\n"
+        "• لینک SoundCloud یا YouTube Music بفرستید.\n"
+        "• برای جستجو در SoundCloud یک متن ساده بفرستید.\n"
+        "• برای جستجو در YouTube Music از دستور /ytmusic استفاده کنید.\n"
+        "مثال: `/ytmusic relax`"
+    )
 
-    logger.info(f"User {message.author.id} started the bot.")
-    await message.reply("🎶 به ربات دانلودر ساندکلاود خوش آمدید!\nلینک بفرستید یا متن جستجو کنید.")
-
-# =================== هندلر متنی ==================
-@bot.on_message(text)
-async def handle_text(client, message):
+@bot.on_message(command("ytmusic"))
+async def ytmusic_search_handler(_, message: Message):
     global BOT_USERNAME
-    if not BOT_USERNAME: 
-        BOT_USERNAME = (await client.get_me()).username
-    
+    if not BOT_USERNAME:
+        BOT_USERNAME = (await bot.get_me()).username
     if message.chat.type == "private":
-        track_user(message.chat.id)
-        
-    content = message.text.strip()
-    
-    if message.chat.type != "private":
-        mention = f"@{BOT_USERNAME}"
-        if mention not in content.lower() and "soundcloud.com" not in content.lower(): return
-        content = content.replace(mention, "").strip()
-        if not content: return
+        db.add_user(message.chat.id)
 
-    if "soundcloud.com" in content:
-        url_match = re.search(r"(https?://[^\s]+)", content)
-        if not url_match: return await message.reply("❌ لینک نامعتبر!")
-        
-        url = url_match.group(1).split('?')[0]
-        
-        logger.info(f"Processing URL: {url} by user {message.author.id}")
-        msg = await message.reply("⏳ در حال بررسی...")
-        
-        cached_track = db.run_query("SELECT * FROM tracks WHERE webpage_url=?", (url,), fetchone=True)
-        
-        if cached_track:
-            logger.info("Found URL in DB cache.")
-            meta = cached_track
-            track_id = meta["uuid"].replace("sc_", "")
-            await msg.delete()
-        else:
-            logger.info("URL not in DB, fetching from SoundCloud...")
-            loop = asyncio.get_event_loop()
-            try:
-                info = await loop.run_in_executor(None, get_soundcloud_info, url)
-            except Exception as e:
-                logger.error(f"Error extracting info for {url}: {e}")
-                return await msg.edit_text(f"❌ خطا در دریافت اطلاعات: {e}")
+    query = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
+    if not query:
+        return await message.reply("❌ لطفاً متن جستجو را وارد کنید. مثال: `/ytmusic lofi`")
 
-            track_id = info.get('id', 'unknown')
-            clean_url = info.get("webpage_url", url).split('?')[0]
-            meta = {
-                "uuid": f"sc_{track_id}",
-                "title": info.get("title", ""),
-                "uploader": info.get("uploader", ""),
-                "genre": info.get("genre", ""),
-                "upload_date": str(info.get("upload_date", ""))[:4],
-                "webpage_url": clean_url,
-                "thumbnail": info.get("thumbnail", ""),
-                "duration": format_duration(info.get("duration", 0)),
-            }
-            
-            placeholders = ','.join(['?'] * len(meta))
-            db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(meta.keys())}) VALUES ({placeholders})", tuple(meta.values()))
-            await msg.delete()
-            
-        caption = build_caption(meta, BOT_USERNAME)
-        buttons = [[("⬇️ دریافت فایل صوتی", f"getaudio:{track_id}")]]
-        
-        if meta.get("thumbnail"):
-            await client.send_photo(message.chat.id, meta["thumbnail"], caption=caption, reply_markup=InlineKeyboard(*buttons))
-        else:
-            await client.send_message(message.chat.id, caption, reply_markup=InlineKeyboard(*buttons))
-        return
-
-    logger.info(f"Searching SoundCloud for: {content} by user {message.author.id}")
-    msg = await message.reply("🔍 در حال جستجو...")
+    logger.info(f"YouTube Music search: {query} by {message.author.id}")
+    status = await message.reply("🔍 در حال جستجو در YouTube Music...")
     try:
-        results = await search_soundcloud(content, 10)
+        results = await search_youtube_music(query)
     except Exception as e:
-        logger.error(f"Search error for query '{content}': {e}")
-        await msg.delete()
-        return await message.reply("❌ خطا در جستجو.")
+        logger.error(f"YT music search error: {e}")
+        await status.delete()
+        return await message.reply("❌ خطا در جستجوی YouTube Music.")
 
     if not results:
-        await msg.delete()
-        return await message.reply("😔 موردی یافت نشد.")
+        await status.delete()
+        return await message.reply("😔 نتیجه‌ای یافت نشد.")
 
-    text_res = get_search_text(results)
-    
-    await msg.delete()
+    text_res = "🎵 نتایج جستجو در YouTube Music:\n\n"
+    for item in results:
+        text_res += (
+            f"👤 {item['uploader']}\n"
+            f"🎵 {item['title']}\n"
+            f"⏱️ {format_duration(item.get('duration'))}\n"
+            f"[📥 دریافت](send:{item['webpage_url']})\n\n"
+        )
+    await status.delete()
     await message.reply(text_res)
 
+@bot.on_message(text & ~command("start") & ~command("ytmusic"))
+async def text_handler(_, message: Message):
+    global BOT_USERNAME
+    if not BOT_USERNAME:
+        BOT_USERNAME = (await bot.get_me()).username
 
-# =================== هندلر دکمه‌های شیشه‌ای ==================
+    if message.chat.type == "private":
+        db.add_user(message.chat.id)
+
+    content = message.text.strip()
+    # If not private, only respond when mentioned or link shared
+    if message.chat.type != "private":
+        mention = f"@{BOT_USERNAME}"
+        if mention not in content.lower() and not any(domain in content.lower() for domain in ["soundcloud.com", "youtube.com", "youtu.be", "music.youtube.com"]):
+            return
+        content = content.replace(mention, "").strip()
+        if not content:
+            return
+
+    # Extract URL
+    url_match = re.search(r"(https?://[^\s]+)", content)
+    if url_match:
+        url = url_match.group(1).split("?")[0]
+        # Determine source
+        if "soundcloud.com" in url:
+            source = "soundcloud"
+        elif any(d in url for d in ["youtube.com", "youtu.be", "music.youtube.com"]):
+            source = "youtube"
+        else:
+            # Treat as SoundCloud by default if link but not recognized? Maybe send error.
+            return await message.reply("❌ لینک پشتیبانی نمی‌شود.")
+
+        logger.info(f"Processing {source}: {url} by {message.author.id}")
+        status = await message.reply("⏳ در حال دریافت اطلاعات...")
+
+        # Check cache
+        cached = db.get_track(f"{source}_{url.split('/')[-1]}")  # crude, better to use uuid
+        # Actually we need a proper way: search by url in DB
+        cached_track = db.execute(
+            "SELECT * FROM tracks WHERE webpage_url = ? AND source = ?",
+            (url, source),
+            fetchone=True,
+        )
+        if cached_track:
+            logger.info("Found in cache")
+            await status.delete()
+            meta = cached_track
+        else:
+            try:
+                meta = await fetch_track_info(url, source)
+                db.save_track(meta)
+            except Exception as e:
+                logger.error(f"Info extraction error: {e}")
+                await status.edit_text(f"❌ خطا: {e}")
+                return
+            await status.delete()
+
+        caption = build_caption(meta, BOT_USERNAME)
+        track_id = meta["uuid"].split("_", 1)[1]
+        buttons = InlineKeyboard(
+            [InlineKeyboardButton("⬇️ دریافت فایل صوتی", callback_data=f"getaudio:{meta['source']}:{track_id}")]
+        )
+        if meta.get("thumbnail"):
+            await message.reply_photo(meta["thumbnail"], caption=caption, reply_markup=buttons)
+        else:
+            await message.reply(caption, reply_markup=buttons)
+        return
+
+    # Plain text → SoundCloud search (original behaviour)
+    query = content
+    logger.info(f"SoundCloud search: {query} by {message.author.id}")
+    status = await message.reply("🔍 در حال جستجو در SoundCloud...")
+    try:
+        results = await search_soundcloud(query)
+    except Exception as e:
+        logger.error(f"SoundCloud search error: {e}")
+        await status.delete()
+        return await message.reply("❌ خطا در جستجوی SoundCloud.")
+
+    if not results:
+        await status.delete()
+        return await message.reply("😔 نتیجه‌ای یافت نشد.")
+
+    text_res = "🎵 نتایج جستجو در SoundCloud:\n\n"
+    for item in results:
+        text_res += (
+            f"👤 {item['uploader']}\n"
+            f"🎵 {item['title']}\n"
+            f"⏱️ {format_duration(item.get('duration'))}\n"
+            f"[📥 دریافت](send:{item['webpage_url']})\n\n"
+        )
+    await status.delete()
+    await message.reply(text_res)
 
 @bot.on_callback_query()
-async def handle_callback(client, callback_query):
+async def callback_handler(_, cb):
     global BOT_USERNAME
-    if not BOT_USERNAME: 
-        BOT_USERNAME = (await client.get_me()).username
-    
-    data = callback_query.data
+    if not BOT_USERNAME:
+        BOT_USERNAME = (await bot.get_me()).username
 
+    data = cb.data
     if data == "ignore":
-        return await callback_query.answer("در حال پردازش هستیم، لطفا منتظر بمانید...")
+        return await cb.answer("در حال پردازش هستیم...")
 
-    if data.startswith("getaudio:"):       
+    if data.startswith("getaudio:"):
         parts = data.split(":")
-        if len(parts) < 2: return
-        track_id = parts[1]
-        
-        logger.info(f"User {callback_query.author.id} requested audio for track {track_id}")
-        await callback_query.answer("⏳ در حال پردازش فایل، لطفا صبور باشید...")
+        if len(parts) < 3:
+            return
+        _, source, track_id = parts
+        uuid = f"{source}_{track_id}"
 
-        # تغییر دکمه به غیرقابل کلیک و تغییر متن پست 
+        logger.info(f"Audio requested for {uuid} by {cb.author.id}")
+        await cb.answer("⏳ در حال آماده‌سازی فایل...")
+
+        # Update message to show downloading state
+        downloading_keyboard = InlineKeyboard(
+            [InlineKeyboardButton("⏳ در حال دریافت فایل...", callback_data="ignore")]
+        )
+        downloading_text = "⏳ *در حال دانلود و آماده‌سازی فایل...*"
         try:
-            downloading_keyboard = InlineKeyboard(
-                [InlineKeyboardButton("⏳ در حال دریافت فایل...", callback_data="ignore")]
-            )
-            downloading_text = "⏳ *در حال دانلود و آماده‌سازی فایل از سرورهای ساندکلاود...*\nلطفا صبور باشید."
-            
-            # بررسی اینکه پیام اصلی حاوی عکس است یا خیر تا متد مناسب استفاده شود
-            if callback_query.message.photo:
-                await client.edit_message_caption(
-                    chat_id=callback_query.message.chat.id,
-                    message_id=callback_query.message.id,
+            if cb.message.photo:
+                await bot.edit_message_caption(
+                    chat_id=cb.message.chat.id,
+                    message_id=cb.message.id,
                     caption=downloading_text,
-                    reply_markup=downloading_keyboard
+                    reply_markup=downloading_keyboard,
                 )
             else:
-                await client.edit_message_text(
-                    chat_id=callback_query.message.chat.id,
-                    message_id=callback_query.message.id,
+                await bot.edit_message_text(
+                    chat_id=cb.message.chat.id,
+                    message_id=cb.message.id,
                     text=downloading_text,
-                    reply_markup=downloading_keyboard
+                    reply_markup=downloading_keyboard,
                 )
         except Exception as e:
-            logger.error(f"Failed to update message UI to 'downloading': {e}")
-        
-        row = db.run_query("SELECT * FROM tracks WHERE uuid=?", (f"sc_{track_id}",), fetchone=True)
-        if not row:
-            logger.warning(f"Track {track_id} not found in DB.")
-            return await callback_query.message.reply("❌ اطلاعات این آهنگ منقضی شده است. لطفا دوباره لینک را بفرستید.")
+            logger.warning(f"Could not update message UI: {e}")
 
-        caption = build_caption(row, BOT_USERNAME)
-        msg_to_delete = callback_query.message
-        url = row.get("webpage_url")
+        track = db.get_track(uuid)
+        if not track:
+            return await cb.message.reply("❌ اطلاعات این آهنگ منقضی شده است. لطفاً لینک را دوباره بفرستید.")
 
-        if row.get("cache_msg_id"):
+        # If cached message exists, forward it
+        if track.get("cache_msg_id"):
             try:
-                logger.info(f"Forwarding cached message {row['cache_msg_id']} to user.")
-                await client.forward_message(
-                    chat_id=callback_query.message.chat.id,
+                await bot.forward_message(
+                    chat_id=cb.message.chat.id,
                     from_chat_id=CACHE_CHANNEL_ID,
-                    message_id=int(row["cache_msg_id"])
+                    message_id=int(track["cache_msg_id"]),
                 )
-                await msg_to_delete.delete()
+                await cb.message.delete()
                 return
             except Exception as e:
-                logger.error(f"Failed to forward cached message: {e}")
+                logger.error(f"Forward cached failed: {e}")
 
-        logger.info(f"Downloading track: {url}")
-        loop = asyncio.get_event_loop()
-        try:
-            filepath, info = await loop.run_in_executor(None, download_soundcloud_track, url)
-        except Exception as e:
-            logger.error(f"Download failed for {url}: {e}")
-            return await callback_query.message.reply(f"❌ خطا در دانلود: {e}")
+        # Download
+        lock = await get_or_create_lock(uuid)
+        async with lock:
+            url = track["webpage_url"]
+            file_path = None
+            try:
+                file_path, info = await extract_audio(url)
+            except Exception as e:
+                logger.error(f"Download failed: {e}")
+                await cb.message.reply(f"❌ خطا در دانلود: {e}")
+                return
 
+            try:
+                # Upload to cache channel
+                with open(file_path, "rb") as f:
+                    sent = await bot.send_audio(
+                        CACHE_CHANNEL_ID,
+                        f,
+                        title=track["title"],
+                        caption=build_caption(track, BOT_USERNAME),
+                    )
+                # Update DB with cache message id
+                track["cache_msg_id"] = str(sent.id)
+                db.save_track(track)
+
+                # Forward to user
+                await bot.forward_message(
+                    chat_id=cb.message.chat.id,
+                    from_chat_id=CACHE_CHANNEL_ID,
+                    message_id=sent.id,
+                )
+                await cb.message.delete()
+            except Exception as e:
+                logger.error(f"Upload/forward error: {e}")
+                await cb.message.reply(f"❌ خطا در ارسال فایل: {e}")
+            finally:
+                if file_path and file_path.exists():
+                    file_path.unlink(missing_ok=True)
+
+@bot.on_message(chat(BROADCAST_CHANNEL_ID))
+async def broadcast_handler(_, message: Message):
+    if BROADCAST_CHANNEL_ID == 0:
+        return
+    logger.info(f"New message in broadcast channel {BROADCAST_CHANNEL_ID}. Forwarding to users...")
+    users = db.get_all_users()
+    success = 0
+    for u in users:
         try:
-            logger.info(f"Uploading file {filepath} to cache channel {CACHE_CHANNEL_ID}")
-            with open(filepath, "rb") as f:
-                sent_msg = await client.send_audio(CACHE_CHANNEL_ID, f, title=row['title'], caption=caption)
-            
-            msg_id = sent_msg.id
-            if msg_id:
-                row["cache_msg_id"] = str(msg_id)
-                placeholders = ','.join(['?'] * len(row))
-                db.run_query(f"INSERT OR REPLACE INTO tracks ({','.join(row.keys())}) VALUES ({placeholders})", tuple(row.values()))
-            
-            logger.info(f"Forwarding newly uploaded message {msg_id} to user.")
-            await client.forward_message(
-                chat_id=callback_query.message.chat.id,
-                from_chat_id=CACHE_CHANNEL_ID,
-                message_id=msg_id
+            await bot.forward_message(
+                chat_id=u["chat_id"],
+                from_chat_id=message.chat.id,
+                message_id=message.id,
             )
-            await msg_to_delete.delete()
-            
+            success += 1
+            await asyncio.sleep(0.05)  # rate limit
         except Exception as e:
-            logger.error(f"Upload/Forward error: {e}")
-            await callback_query.message.reply(f"❌ خطا در آپلود یا ارسال فایل: {e}")
-        finally:
-            if os.path.exists(filepath):
-                os.remove(filepath)
-                logger.info(f"Deleted temp file: {filepath}")
+            logger.error(f"Failed to forward to {u['chat_id']}: {e}")
+    logger.info(f"Broadcast done. Forwarded to {success} users.")
 
+# ------------------- Entry Point -------------------
 if __name__ == "__main__":
     logger.info("Starting bot...")
     bot.run()
