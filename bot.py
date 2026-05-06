@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any, List
 
 import yt_dlp
 from balethon import Client
-from balethon.conditions import command, text, private, chat, callback_query
+from balethon.conditions import command, text, private, chat  # ← REMOVED callback_query
 from balethon.objects import InlineKeyboard, InlineKeyboardButton, Message
 
 # ------------------- Logging -------------------
@@ -309,8 +309,6 @@ async def text_handler(_, message: Message):
         status = await message.reply("⏳ در حال دریافت اطلاعات...")
 
         # Check cache
-        cached = db.get_track(f"{source}_{url.split('/')[-1]}")  # crude, better to use uuid
-        # Actually we need a proper way: search by url in DB
         cached_track = db.execute(
             "SELECT * FROM tracks WHERE webpage_url = ? AND source = ?",
             (url, source),
