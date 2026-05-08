@@ -152,7 +152,7 @@ def search_youtube_music_sync(query, max_results=10):
     results = []
     opts = {**YDL_BASE_OPTS, "extract_flat": True}
     with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(f"ytmsearch{max_results}:{query}", download=False)
+        info = ydl.extract_info(f"ytsearch{max_results}:{query}", download=False)
         for e in info.get("entries", []):
             results.append({
                 "id": e.get("id"),
