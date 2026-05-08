@@ -1,29 +1,110 @@
+import os
+import asyncio
+from balethon import Client
+from balethon.objects import InlineKeyboard
 from ytmusicapi import YTMusic
+from yt_dlp import YoutubeDL
 
-# Initialize the YTMusic object
-ytmusic = YTMusic()
+# Configuration
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BALE_BOT_TOKEN")
+COOKIES_PATH = "cookies.txt" 
 
-# Define your search query
-query = "Daft Punk"
+# Initialize APIs
+bot = Client(BOT_TOKEN)
+ytm = YTMusic()
 
-# Perform the search
-# The 'filter' parameter can be: 'songs', 'videos', 'albums', 'artists', 'playlists', 'community_playlists', 'featured_playlists', 'uploads'.
-# If you leave the filter blank, it returns a mix of everything.
-results = ytmusic.search(query, filter="songs")
+# yt-dlp configuration
+YDL_OPTIONS = {
+    'format': 'bestaudio/best',
+    'outtmpl': 'downloads/%(title)s.%(ext)s',
+    'cookiefile': COOKIES_PATH,
+    'postprocessors': [
+        {
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        },
+        {'key': 'FFmpegMetadata'},
+        {'key': 'EmbedThumbnail'},
+    ],
+    'quiet': True,
+}
 
-# Iterate through the results and print the details
-for item in results:
-    title = item.get('title')
+async def download_and_send(chat_id, url):
+    """Downloads audio and sends to Bale."""
+    status_msg = await bot.send_message(chat_id, "⏳ Processing...")
     
-    # Artists is usually a list of dictionaries
-    artists_list = item.get('artists', [])
-    artists = ", ".join([artist['name'] for artist in artists_list])
+    try:
+        with YoutubeDL(YDL_OPTIONS) as ydl:
+            info = ydl.extract_info(url, download=True)
+            # yt-dlp changes extension to .mp3 after post-processing
+            file_path = ydl.prepare_filename(info).rsplit(".", 1)[0] + ".mp3"
+            
+            await bot.send_audio(chat_id, file_path, caption=f"✅ {info.get('title')}")
+            
+            if os.path.exists(file_path):
+                os.remove(file_path)
+    except Exception as e:
+        await bot.send_message(chat_id, f"❌ Error: {str(e)}")
+    finally:
+        await status_msg.delete()
+
+@bot.on_message()
+async def handle_messages(message):
+    if not message.text:
+        return
+
+    if message.text.startswith("/start"):
+        await message.reply("🎶 Send a song name or a YouTube link.")
+        return
+
+    # Handle direct URL
+    if "youtube.com" in message.text or "youtu.be" in message.text:
+        await download_and_send(message.chat.id, message.text)
+        return
+
+    # Search Logic
+    search_query = message.text
+    results = ytm.search(search_query)
     
-    video_id = item.get('videoId')
-    album = item.get('album', {}).get('name') if item.get('album') else "Unknown Album"
+    # Building the UI
+    response_text = f"🔍 **Results for:** {search_query}\n\n"
+    keyboard = InlineKeyboard()
     
-    print(f"Title: {title}")
-    print(f"Artist(s): {artists}")
-    print(f"Album: {album}")
-    print(f"Link: https://music.youtube.com/watch?v={video_id}")
-    print("-" * 40)
+    # Mapping result types to emojis
+    sections = {
+        "song": ("🎵", "Tracks"),
+        "album": ("💽", "Albums"),
+        "artist": ("👤", "Artists")
+    }
+    
+    # Organize data
+    for res_type, (emoji, label) in sections.items():
+        items = [r for r in results if r['resultType'] == res_type][:3]
+        if items:
+            response_text += f"{emoji} **{label}**\n"
+            for item in items:
+                title = item.get('title') or item.get('artist', 'Unknown')
+                response_text += f"├ {title}\n"
+                
+                # Add download button only for tracks/videos
+                if res_type == "song":
+                    # In Balethon, we add a list representing a row
+                    keyboard.add([{f"📥 Get: {title[:15]}...": f"dl_{item['videoId']}"}])
+            response_text += "\n"
+
+    await message.reply(response_text, reply_markup=keyboard)
+
+@bot.on_callback_query()
+async def handle_callbacks(callback):
+    if callback.data.startswith("dl_"):
+        video_id = callback.data.split("_")[1]
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        await callback.answer("Downloading...")
+        await download_and_send(callback.message.chat.id, url)
+
+if __name__ == "__main__":
+    if not os.path.exists("downloads"):
+        os.makedirs("downloads")
+    print("Bale Music Bot is running...")
+    bot.run()
