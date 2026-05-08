@@ -48,7 +48,6 @@ async def download_and_send(chat_id, url):
         await bot.send_message(chat_id, f"❌ Error: {str(e)}")
     finally:
         await status_msg.delete()
-
 @bot.on_message()
 async def handle_messages(message):
     if not message.text:
@@ -58,27 +57,24 @@ async def handle_messages(message):
         await message.reply("🎶 Send a song name or a YouTube link.")
         return
 
-    # Handle direct URL
     if "youtube.com" in message.text or "youtu.be" in message.text:
         await download_and_send(message.chat.id, message.text)
         return
 
-    # Search Logic
     search_query = message.text
     results = ytm.search(search_query)
     
-    # Building the UI
     response_text = f"🔍 **Results for:** {search_query}\n\n"
-    keyboard = InlineKeyboard()
     
-    # Mapping result types to emojis
+    # We will collect our rows here
+    keyboard_rows = []
+    
     sections = {
         "song": ("🎵", "Tracks"),
         "album": ("💽", "Albums"),
         "artist": ("👤", "Artists")
     }
     
-    # Organize data
     for res_type, (emoji, label) in sections.items():
         items = [r for r in results if r['resultType'] == res_type][:3]
         if items:
@@ -87,14 +83,18 @@ async def handle_messages(message):
                 title = item.get('title') or item.get('artist', 'Unknown')
                 response_text += f"├ {title}\n"
                 
-                # Add download button only for tracks/videos
                 if res_type == "song":
-                    # In Balethon, we add a list representing a row
-                    keyboard.add([{f"📥 Get: {title[:15]}...": f"dl_{item['videoId']}"}])
+                    # Create a row with one button
+                    button_text = f"📥 Get: {title[:15]}..."
+                    callback_data = f"dl_{item['videoId']}"
+                    keyboard_rows.append([{button_text: callback_data}])
             response_text += "\n"
 
-    await message.reply(response_text, reply_markup=keyboard)
+    # Pass the list of rows to the InlineKeyboard constructor
+    reply_markup = InlineKeyboard(*keyboard_rows)
 
+    await message.reply(response_text, reply_markup=reply_markup)
+    
 @bot.on_callback_query()
 async def handle_callbacks(callback):
     if callback.data.startswith("dl_"):
