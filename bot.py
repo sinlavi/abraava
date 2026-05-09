@@ -404,20 +404,20 @@ async def on_message(message: Message):
 
         entity_map = {"artist": "musicArtist", "album": "album", "track": "musicTrack"}
         type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ", "all": "همه"}
-
         status_msg = await message.reply(f"🔍 *در حال جستجوی {type_fa_map[type_]}: {term}...*")
 
         search_id = generate_search_hash(type_, term)
         cache_key = f"search:{search_id}"
 
-        results = await get_cached(cache_key)
-        if not results:
-            if type_ == "all":
-                results = await search_itunes(term, entity=None, limit=50)
-            else:
-                results = await search_itunes(term, entity_map[type_], limit=50)
-            if results and results.get("resultCount", 0) > 0:
-                await set_cached(cache_key, "search", {"type": type_, "term": term, "data": results})
+        # دریافت مستقیم و تازه‌ی نتایج از API در هر بار جستجو
+        if type_ == "all":
+            results = await search_itunes(term, entity=None, limit=50)
+        else:
+            results = await search_itunes(term, entity_map[type_], limit=50)
+            
+        # ذخیره در دیتابیس صرفاً برای اینکه دکمه‌های صفحه‌بندی (بعدی/قبلی) کار کنند
+        if results and results.get("resultCount", 0) > 0:
+            await set_cached(cache_key, "search", {"type": type_, "term": term, "data": results})
 
         if not results or results.get("resultCount", 0) == 0:
             await status_msg.edit(f"❌ *هیچ نتیجه‌ای برای '{term}' یافت نشد.*")
@@ -425,6 +425,7 @@ async def on_message(message: Message):
 
         await status_msg.delete()
         await send_search_page(message.chat.id, search_id, 1)
+
 
 
 async def send_search_page(chat_id: int, search_id: str, page: int, message_to_edit: Message = None):
