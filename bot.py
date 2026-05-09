@@ -33,21 +33,16 @@ YDL_OPTIONS = {
 async def download_and_send(chat_id, url):
     """Downloads audio and sends to Bale."""
     status_msg = await bot.send_message(chat_id, "⏳ Processing...")
-    
-    try:
-        with YoutubeDL(YDL_OPTIONS) as ydl:
-            info = ydl.extract_info(url, download=True)
+
+    with YoutubeDL(YDL_OPTIONS) as ydl:
+        info = ydl.extract_info(url, download=True)
             # yt-dlp changes extension to .mp3 after post-processing
-            file_path = ydl.prepare_filename(info).rsplit(".", 1)[0] + ".mp3"
+        file_path = ydl.prepare_filename(info).rsplit(".", 1)[0] + ".mp3"
             
-            await bot.send_audio(chat_id, file_path, caption=f"✅ {info.get('title')}")
+        await bot.send_audio(chat_id, file_path, caption=f"✅ {info.get('title')}")
             
-            if os.path.exists(file_path):
-                os.remove(file_path)
-    except Exception as e:
-        await bot.send_message(chat_id, f"❌ Error: {str(e)}")
-    finally:
-        await status_msg.delete()
+        if os.path.exists(file_path):
+            os.remove(file_path)
 @bot.on_message()
 async def handle_messages(message):
     if not message.text:
