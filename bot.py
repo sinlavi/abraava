@@ -68,7 +68,7 @@ async def handle_messages(message):
     
     # We will collect our rows here
     keyboard_rows = []
-    
+    print(results)
     sections = {
         "song": ("🎵", "Tracks"),
         "album": ("💽", "Albums"),
