@@ -57,7 +57,7 @@ async def handle_messages(message):
         return
 
     search_query = message.text
-    results = ytm.search(search_query)
+    results = ytm.search("dang")
     print(results)
 
 if __name__ == "__main__":
