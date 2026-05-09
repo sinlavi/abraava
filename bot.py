@@ -254,69 +254,73 @@ async def get_track(track_id: int, status_msg: Message = None) -> Optional[Dict[
 
 
 # ---------- YouTube Download Logic ----------
-async def download_and_send_track(chat_id: int, track_name: str, artist_name: str, status_msg: Message):
+
+async def download_and_send_track(bot, chat_id, video_url, track_title, artist_name, cover_url):
+    temp_audio_file = f"temp_{chat_id}.mp3"
+    
+    # پیام در حال پردازش
+    status_msg = await bot.send_message(chat_id, "⏳ در حال دانلود و آماده‌سازی آهنگ...")
+
     try:
-        await status_msg.edit("🔍 *در حال جستجو در YouTube Music...*")
+        # 1. تنظیمات بهینه‌شده yt-dlp
+        ydl_opts = {
+            'format': 'bestaudio/best', # انتخاب بهترین کیفیت صدای موجود
+            'outtmpl': temp_audio_file.replace('.mp3', ''), # نام فایل خروجی
+            'quiet': True,
+            'no_warnings': True,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+        }
 
-        def yt_search():
-            ytmusic = YTMusic()
-            return ytmusic.search(f"{track_name} {artist_name}", filter="songs")
+        # دانلود آهنگ
+        with YoutubeDL(ydl_opts) as ydl:
+            # yt-dlp به صورت خودکار پسوند .mp3 را بعد از تبدیل اضافه میکند
+            ydl.download([video_url])
 
-        results = await asyncio.to_thread(yt_search)
-        if not results:
-            await status_msg.edit("❌ *آهنگ مورد نظر در یوتیوب یافت نشد.*")
-            return
+        # 2. دانلود کاور آهنگ در حافظه برای ارسال در بله
+        cover_bytes = None
+        if cover_url:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(cover_url) as resp:
+                    if resp.status == 200:
+                        cover_bytes = await resp.read()
 
-        video_id = results[0]['videoId']
-        url = f"https://music.youtube.com/watch?v={video_id}"
+        # 3. ارسال فایل صوتی به همراه کاور
+        caption = f"🎵 {track_title}\n🎤 {artist_name}"
         
-        await status_msg.edit("⬇️ *در حال دانلود فایل از سرور (لطفاً صبور باشید)...*")
+        with open(temp_audio_file, 'rb') as audio_file:
+            audio_input = InputFile(audio_file, filename=f"{track_title}.mp3")
+            
+            if cover_bytes:
+                # اگر کاور با موفقیت دانلود شد
+                thumb_input = InputFile(cover_bytes, filename="cover.jpg")
+                await bot.send_audio(
+                    chat_id, 
+                    audio=audio_input, 
+                    caption=caption,
+                    thumb=thumb_input # ارسال عکس به عنوان تامنیل/کاور
+                )
+            else:
+                # اگر کاور در دسترس نبود، فقط آهنگ را بفرست
+                await bot.send_audio(
+                    chat_id, 
+                    audio=audio_input, 
+                    caption=caption
+                )
 
-        file_path_template = f"download_{video_id}"
-
-        def run_ytdlp():
-            ydl_opts = {
-                # استفاده از بهترین صدای موجود به جای اصرار بر m4a
-                'format': 'bestaudio/best',
-                'outtmpl': f'{file_path_template}.%(ext)s',
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
-                'quiet': True,
-                'noprogress': True,
-                'no_warnings': True
-            }
-            # بررسی وجود فایل کوکی برای استفاده
-            if os.path.exists('cookies.txt'):
-                ydl_opts['cookiefile'] = 'cookies.txt'
-
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-
-        await asyncio.to_thread(run_ytdlp)
-        
-        mp3_file = f"{file_path_template}.mp3"
-        if not os.path.exists(mp3_file):
-            raise FileNotFoundError("فایل دانلود شده پیدا نشد، احتمالا فرآیند با خطا مواجه شده است.")
-
-        await status_msg.edit("⬆️ *در حال آپلود آهنگ...*")
-        
-        with open(mp3_file, 'rb') as audio_file:
-            await bot.send_audio(chat_id, audio=InputFile(audio_file), caption=f"🎵 {track_name}\n🎤 {artist_name}")
-
-        # Cleanup
-        os.remove(mp3_file)
-        await status_msg.delete()
+        await status_msg.edit_text("✅ آهنگ با موفقیت ارسال شد.")
 
     except Exception as e:
-        logger.error(f"Download error: {e}")
-        try:
-            await status_msg.edit("❌ *خطا در دانلود یا استخراج آهنگ. ممکن است فایل در دسترس نباشد یا مشکل سرور وجود داشته باشد.*")
-        except:
-            pass
-
+        print(f"Download Error: {e}")
+        await status_msg.edit_text("❌ خطا در دانلود یا استخراج آهنگ. لطفا دوباره تلاش کنید.")
+        
+    finally:
+        # 4. پاک کردن فایل موقت برای خالی کردن فضای سرور
+        if os.path.exists(temp_audio_file):
+            os.remove(temp_audio_file)
 
 # ---------- Helper functions ----------
 def format_duration(milliseconds: int) -> str:
