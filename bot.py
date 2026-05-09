@@ -280,13 +280,13 @@ async def download_and_send_track(chat_id: int, track_name: str, artist_name: st
         def run_ytdlp():
             ydl_opts = {
                 'format': 'bestaudio/best',
+                'cookiefile': 'cookies.txt',
                 'outtmpl': f'{file_path_template}.%(ext)s',
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
                     'preferredquality': '192',
                 }],
-                'cookiefile': 'cookies.txt',  # Requires cookies.txt in the root directory
                 'quiet': True,
                 'noprogress': True
             }
