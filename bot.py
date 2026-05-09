@@ -164,7 +164,6 @@ async def crawl_artist_albums(artist_id: int, status_msg: Message = None):
                 albums.append(album_id)
                 album_cache_id = f"album:{album_id}"
                 if not await is_cached(album_cache_id):
-                    # Added resultCount to prevent "not found" error
                     await set_cached(album_cache_id, "album", {"resultCount": 1, "results": [item]})
         await set_cached(cache_id, "artist_albums", {"albums": albums})
 
@@ -209,7 +208,6 @@ async def crawl_album_tracks(album_id: int, status_msg: Message = None):
                 tracks.append(track_id)
                 track_cache_id = f"track:{track_id}"
                 if not await is_cached(track_cache_id):
-                    # Added resultCount to prevent "not found" error
                     await set_cached(track_cache_id, "track", {"resultCount": 1, "results": [item]})
         await set_cached(cache_id, "album_tracks", {"tracks": tracks})
 
@@ -255,17 +253,30 @@ async def get_track(track_id: int, status_msg: Message = None) -> Optional[Dict[
 
 # ---------- YouTube Download Logic ----------
 
-async def download_and_send_track(bot, chat_id, video_url, track_title, artist_name, cover_url):
+async def download_and_send_track(chat_id: int, track_title: str, artist_name: str, cover_url: str, status_msg: Message):
     temp_audio_file = f"temp_{chat_id}.mp3"
     
-    # پیام در حال پردازش
-    status_msg = await bot.send_message(chat_id, "⏳ در حال دانلود و آماده‌سازی آهنگ...")
-
     try:
-        # 1. تنظیمات بهینه‌شده yt-dlp
+        await status_msg.edit_text("⏳ در حال جستجو در یوتیوب موزیک...")
+        
+        # Run synchronous YTMusic search in executor to not block async loop
+        ytmusic = YTMusic()
+        loop = asyncio.get_event_loop()
+        search_query = f"{track_title} {artist_name}"
+        search_results = await loop.run_in_executor(None, lambda: ytmusic.search(query=search_query, filter="songs"))
+        
+        if not search_results:
+            await status_msg.edit_text("❌ آهنگ مورد نظر در یوتیوب موزیک یافت نشد.")
+            return
+            
+        video_id = search_results[0]['videoId']
+        video_url = f"https://music.youtube.com/watch?v={video_id}"
+
+        await status_msg.edit_text("⏳ در حال دانلود و استخراج آهنگ...")
+
         ydl_opts = {
-            'format': 'bestaudio/best', # انتخاب بهترین کیفیت صدای موجود
-            'outtmpl': temp_audio_file.replace('.mp3', ''), # نام فایل خروجی
+            'format': 'bestaudio/best',
+            'outtmpl': temp_audio_file.replace('.mp3', ''),
             'quiet': True,
             'no_warnings': True,
             'postprocessors': [{
@@ -275,12 +286,13 @@ async def download_and_send_track(bot, chat_id, video_url, track_title, artist_n
             }],
         }
 
-        # دانلود آهنگ
-        with YoutubeDL(ydl_opts) as ydl:
-            # yt-dlp به صورت خودکار پسوند .mp3 را بعد از تبدیل اضافه میکند
-            ydl.download([video_url])
+        def download_yt():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
 
-        # 2. دانلود کاور آهنگ در حافظه برای ارسال در بله
+        await loop.run_in_executor(None, download_yt)
+
+        # Download cover image
         cover_bytes = None
         if cover_url:
             async with aiohttp.ClientSession() as session:
@@ -288,23 +300,20 @@ async def download_and_send_track(bot, chat_id, video_url, track_title, artist_n
                     if resp.status == 200:
                         cover_bytes = await resp.read()
 
-        # 3. ارسال فایل صوتی به همراه کاور
         caption = f"🎵 {track_title}\n🎤 {artist_name}"
         
         with open(temp_audio_file, 'rb') as audio_file:
-            audio_input = InputFile(audio_file, filename=f"{track_title}.mp3")
+            audio_input = InputFile(audio_file.read(), filename=f"{track_title}.mp3")
             
             if cover_bytes:
-                # اگر کاور با موفقیت دانلود شد
                 thumb_input = InputFile(cover_bytes, filename="cover.jpg")
                 await bot.send_audio(
                     chat_id, 
                     audio=audio_input, 
                     caption=caption,
-                    thumb=thumb_input # ارسال عکس به عنوان تامنیل/کاور
+                    thumb=thumb_input
                 )
             else:
-                # اگر کاور در دسترس نبود، فقط آهنگ را بفرست
                 await bot.send_audio(
                     chat_id, 
                     audio=audio_input, 
@@ -314,13 +323,16 @@ async def download_and_send_track(bot, chat_id, video_url, track_title, artist_n
         await status_msg.edit_text("✅ آهنگ با موفقیت ارسال شد.")
 
     except Exception as e:
-        print(f"Download Error: {e}")
-        await status_msg.edit_text("❌ خطا در دانلود یا استخراج آهنگ. لطفا دوباره تلاش کنید.")
+        logger.error(f"Download Error: {e}")
+        try:
+            await status_msg.edit_text("❌ خطا در دانلود یا استخراج آهنگ. لطفا دوباره تلاش کنید.")
+        except:
+            pass
         
     finally:
-        # 4. پاک کردن فایل موقت برای خالی کردن فضای سرور
         if os.path.exists(temp_audio_file):
             os.remove(temp_audio_file)
+
 
 # ---------- Helper functions ----------
 def format_duration(milliseconds: int) -> str:
@@ -409,13 +421,11 @@ async def on_message(message: Message):
         search_id = generate_search_hash(type_, term)
         cache_key = f"search:{search_id}"
 
-        # دریافت مستقیم و تازه‌ی نتایج از API در هر بار جستجو
         if type_ == "all":
             results = await search_itunes(term, entity=None, limit=50)
         else:
             results = await search_itunes(term, entity_map[type_], limit=50)
             
-        # ذخیره در دیتابیس صرفاً برای اینکه دکمه‌های صفحه‌بندی (بعدی/قبلی) کار کنند
         if results and results.get("resultCount", 0) > 0:
             await set_cached(cache_key, "search", {"type": type_, "term": term, "data": results})
 
@@ -425,7 +435,6 @@ async def on_message(message: Message):
 
         await status_msg.delete()
         await send_search_page(message.chat.id, search_id, 1)
-
 
 
 async def send_search_page(chat_id: int, search_id: str, page: int, message_to_edit: Message = None):
@@ -548,7 +557,8 @@ async def on_callback(callback: CallbackQuery):
                 track = track_data["results"][0]
                 t_name = track.get("trackName", "")
                 a_name = track.get("artistName", "")
-                asyncio.create_task(download_and_send_track(chat_id, t_name, a_name, status_msg))
+                c_url = get_high_res_artwork(track.get("artworkUrl100"))
+                asyncio.create_task(download_and_send_track(chat_id, t_name, a_name, c_url, status_msg))
             else:
                 await status_msg.edit("❌ خطا در دریافت اطلاعات آهنگ.")
 
@@ -599,6 +609,10 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1, message_to_ed
                 albums.append(album_data["results"][0])
 
     markup = InlineKeyboardMarkup()
+    
+    # Add Tracks / Albums navigation placeholder button (if you had a dedicated top tracks view)
+    # We display albums below, so we'll add an Albums button pointing to page 1 for completeness
+    markup.add(InlineKeyboardButton(text="📀 آلبوم‌های این هنرمند", callback_data=f"artist:{artist_id}:1"), row=1)
 
     if albums:
         total_items = len(albums)
@@ -611,21 +625,20 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1, message_to_ed
 
         text += f"\n*📀 آلبوم‌ها ({total_items}):*\n"
 
-        for i, album in enumerate(page_items, 1):
+        for i, album in enumerate(page_items, 2): # Start row from 2
             btn_text = f"📀 {album.get('collectionName', 'نامشخص')[:45]}"
             markup.add(InlineKeyboardButton(text=btn_text, callback_data=f"album:{album['collectionId']}:1"), row=i)
 
         if total_pages > 1:
             pagination_row = create_pagination_row(f"artist:{artist_id}", page, total_pages)
             for btn in pagination_row:
-                markup.add(btn, row=len(page_items) + 1)
+                markup.add(btn, row=len(page_items) + 2)
 
-        bottom_row = len(page_items) + 2
+        bottom_row = len(page_items) + 3
     else:
-        bottom_row = 1
+        bottom_row = 2
 
-    markup.add(InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}"),
-               row=bottom_row)
+    markup.add(InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}"), row=bottom_row)
     markup.add(InlineKeyboardButton(text="🔍 جستجوی جدید", callback_data="new_search"), row=bottom_row + 1)
 
     await status_msg.delete()
@@ -670,6 +683,10 @@ async def show_album(chat_id: int, album_id: int, page: int = 1, message_to_edit
 
     markup = InlineKeyboardMarkup()
 
+    # Add Artist Button
+    if album.get('artistId'):
+        markup.add(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{album['artistId']}:1"), row=1)
+
     if tracks:
         total_items = len(tracks)
         total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
@@ -684,21 +701,20 @@ async def show_album(chat_id: int, album_id: int, page: int = 1, message_to_edit
             duration = format_duration(track.get('trackTimeMillis', 0))
             text += f"`{i}.` {track.get('trackName', 'نامشخص')} ({duration})\n"
 
-        for i, track in enumerate(page_items, 1):
+        for i, track in enumerate(page_items, 2): # Start from row 2
             markup.add(InlineKeyboardButton(text=f"🎵 {track.get('trackName', 'نامشخص')[:40]}",
                                             callback_data=f"track:{track['trackId']}"), row=i)
 
         if total_pages > 1:
             pagination_row = create_pagination_row(f"album:{album_id}", page, total_pages)
             for btn in pagination_row:
-                markup.add(btn, row=len(page_items) + 1)
+                markup.add(btn, row=len(page_items) + 2)
 
-        bottom_row = len(page_items) + 2
+        bottom_row = len(page_items) + 3
     else:
-        bottom_row = 1
+        bottom_row = 2
 
-    markup.add(InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:album:{album_id}"),
-               row=bottom_row)
+    markup.add(InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:album:{album_id}"), row=bottom_row)
     markup.add(InlineKeyboardButton(text="🔍 جستجوی جدید", callback_data="new_search"), row=bottom_row + 1)
 
     await status_msg.delete()
@@ -706,8 +722,12 @@ async def show_album(chat_id: int, album_id: int, page: int = 1, message_to_edit
     artwork_url = get_high_res_artwork(album.get("artworkUrl100"))
     if artwork_url and not message_to_edit:
         try:
-            await bot.send_photo(chat_id, photo=artwork_url, caption=text, components=markup)
-            return
+            async with aiohttp.ClientSession() as session:
+                async with session.get(artwork_url) as resp:
+                    if resp.status == 200:
+                        photo_bytes = await resp.read()
+                        await bot.send_photo(chat_id, photo=InputFile(photo_bytes, filename="album.jpg"), caption=text, components=markup)
+                        return
         except Exception as e:
             logger.error(f"Could not send album cover photo: {e}")
 
@@ -760,11 +780,13 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Message = Non
     sent_photo = False
     if artwork_url:
         try:
-            if message_to_edit:
-                pass
-            else:
-                await bot.send_photo(chat_id, photo=artwork_url, caption=text, components=markup)
-                sent_photo = True
+            if not message_to_edit:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(artwork_url) as resp:
+                        if resp.status == 200:
+                            photo_bytes = await resp.read()
+                            await bot.send_photo(chat_id, photo=InputFile(photo_bytes, filename="track.jpg"), caption=text, components=markup)
+                            sent_photo = True
         except Exception as e:
             logger.error(f"Failed to send track cover: {e}")
 
@@ -780,7 +802,11 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Message = Non
     preview_url = track.get("previewUrl")
     if preview_url:
         try:
-            await bot.send_audio(chat_id, audio=preview_url, caption="🎧 پیش‌نمایش صوتی ۳۰ ثانیه‌ای")
+            async with aiohttp.ClientSession() as session:
+                async with session.get(preview_url) as resp:
+                    if resp.status == 200:
+                        audio_bytes = await resp.read()
+                        await bot.send_audio(chat_id, audio=InputFile(audio_bytes, filename="preview.m4a"), caption="🎧 پیش‌نمایش صوتی ۳۰ ثانیه‌ای")
         except Exception as e:
             logger.error(f"Failed to send audio preview: {e}")
 
