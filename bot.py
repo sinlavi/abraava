@@ -34,10 +34,8 @@ logger = logging.getLogger("iTunesBot")
 # ---------- Async SQLite Cache ----------
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
-        # Check if table exists and has the correct structure
         try:
             await db.execute("SELECT id, type, data, last_updated FROM cache LIMIT 1")
-            # If structure is valid, we just ensure the table exists
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS cache (
                     id TEXT PRIMARY KEY,
@@ -47,7 +45,6 @@ async def init_db():
                 )
             """)
         except aiosqlite.OperationalError:
-            # Structure was not true or table didn't exist properly, recreate
             logger.warning("Database structure mismatch or missing. Recreating 'cache' table...")
             await db.execute("DROP TABLE IF EXISTS cache")
             await db.execute("""
@@ -131,7 +128,6 @@ async def fetch_itunes(endpoint: str, params: dict) -> Optional[Dict[str, Any]]:
 
 
 async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50) -> Optional[Dict[str, Any]]:
-    """Search iTunes. If entity is None, search all music types."""
     logger.info(f"Searching iTunes: term='{term}', entity='{entity}'")
     params = {"term": term, "media": "music", "limit": limit, "country": "US"}
     if entity:
@@ -168,7 +164,8 @@ async def crawl_artist_albums(artist_id: int, status_msg: Message = None):
                 albums.append(album_id)
                 album_cache_id = f"album:{album_id}"
                 if not await is_cached(album_cache_id):
-                    await set_cached(album_cache_id, "album", {"results": [item]})
+                    # Added resultCount to prevent "not found" error
+                    await set_cached(album_cache_id, "album", {"resultCount": 1, "results": [item]})
         await set_cached(cache_id, "artist_albums", {"albums": albums})
 
 
@@ -185,7 +182,7 @@ async def get_artist(artist_id: int, status_msg: Message = None) -> Optional[Dic
             pass
 
     data = await lookup_itunes(artist_id)
-    if data and data.get("resultCount", 0) > 0:
+    if data and data.get("results"):
         await set_cached(cache_id, "artist", data)
         await crawl_artist_albums(artist_id, status_msg)
         return data
@@ -212,7 +209,8 @@ async def crawl_album_tracks(album_id: int, status_msg: Message = None):
                 tracks.append(track_id)
                 track_cache_id = f"track:{track_id}"
                 if not await is_cached(track_cache_id):
-                    await set_cached(track_cache_id, "track", {"results": [item]})
+                    # Added resultCount to prevent "not found" error
+                    await set_cached(track_cache_id, "track", {"resultCount": 1, "results": [item]})
         await set_cached(cache_id, "album_tracks", {"tracks": tracks})
 
 
@@ -229,7 +227,7 @@ async def get_album(album_id: int, status_msg: Message = None) -> Optional[Dict[
             pass
 
     data = await lookup_itunes(album_id)
-    if data and data.get("resultCount", 0) > 0:
+    if data and data.get("results"):
         await set_cached(cache_id, "album", data)
         await crawl_album_tracks(album_id, status_msg)
         return data
@@ -249,7 +247,7 @@ async def get_track(track_id: int, status_msg: Message = None) -> Optional[Dict[
             pass
 
     data = await lookup_itunes(track_id)
-    if data and data.get("resultCount", 0) > 0:
+    if data and data.get("results"):
         await set_cached(cache_id, "track", data)
         return data
     return None
@@ -266,21 +264,20 @@ async def download_and_send_track(chat_id: int, track_name: str, artist_name: st
 
         results = await asyncio.to_thread(yt_search)
         if not results:
-            await status_msg.edit("❌ *آهنگ مورد نظر یافت نشد.*")
+            await status_msg.edit("❌ *آهنگ مورد نظر در یوتیوب یافت نشد.*")
             return
 
         video_id = results[0]['videoId']
         url = f"https://music.youtube.com/watch?v={video_id}"
         
-        await status_msg.edit("⬇️ *در حال دانلود فایل (لطفاً صبور باشید)...*")
+        await status_msg.edit("⬇️ *در حال دانلود فایل از سرور (لطفاً صبور باشید)...*")
 
-        # The downloaded file pattern
         file_path_template = f"download_{video_id}"
 
         def run_ytdlp():
             ydl_opts = {
-                'format': 'm4a/bestaudio/best',
-                'cookiefile': 'cookies.txt',
+                # استفاده از بهترین صدای موجود به جای اصرار بر m4a
+                'format': 'bestaudio/best',
                 'outtmpl': f'{file_path_template}.%(ext)s',
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
@@ -288,8 +285,13 @@ async def download_and_send_track(chat_id: int, track_name: str, artist_name: st
                     'preferredquality': '192',
                 }],
                 'quiet': True,
-                'noprogress': True
+                'noprogress': True,
+                'no_warnings': True
             }
+            # بررسی وجود فایل کوکی برای استفاده
+            if os.path.exists('cookies.txt'):
+                ydl_opts['cookiefile'] = 'cookies.txt'
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
 
@@ -297,9 +299,9 @@ async def download_and_send_track(chat_id: int, track_name: str, artist_name: st
         
         mp3_file = f"{file_path_template}.mp3"
         if not os.path.exists(mp3_file):
-            raise FileNotFoundError("فایل دانلود شده یافت نشد.")
+            raise FileNotFoundError("فایل دانلود شده پیدا نشد، احتمالا فرآیند با خطا مواجه شده است.")
 
-        await status_msg.edit("⬆️ *در حال ارسال آهنگ...*")
+        await status_msg.edit("⬆️ *در حال آپلود آهنگ...*")
         
         with open(mp3_file, 'rb') as audio_file:
             await bot.send_audio(chat_id, audio=InputFile(audio_file), caption=f"🎵 {track_name}\n🎤 {artist_name}")
@@ -311,7 +313,7 @@ async def download_and_send_track(chat_id: int, track_name: str, artist_name: st
     except Exception as e:
         logger.error(f"Download error: {e}")
         try:
-            await status_msg.edit("❌ *خطا در دانلود یا استخراج آهنگ (ممکن است کوکی‌ها منقضی شده باشند).*")
+            await status_msg.edit("❌ *خطا در دانلود یا استخراج آهنگ. ممکن است فایل در دسترس نباشد یا مشکل سرور وجود داشته باشد.*")
         except:
             pass
 
@@ -569,7 +571,7 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1, message_to_ed
     status_msg = await bot.send_message(chat_id, "🔄 *در حال پردازش هنرمند...*")
 
     data = await get_artist(artist_id, status_msg)
-    if not data or data.get("resultCount", 0) == 0:
+    if not data or not data.get("results"):
         await status_msg.edit("❌ *هنرمند یافت نشد.*")
         return
 
@@ -635,7 +637,7 @@ async def show_album(chat_id: int, album_id: int, page: int = 1, message_to_edit
     status_msg = await bot.send_message(chat_id, "🔄 *در حال پردازش آلبوم...*")
 
     data = await get_album(album_id, status_msg)
-    if not data or data.get("resultCount", 0) == 0:
+    if not data or not data.get("results"):
         await status_msg.edit("❌ *آلبوم یافت نشد.*")
         return
 
@@ -717,7 +719,7 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Message = Non
     status_msg = await bot.send_message(chat_id, "🔄 *در حال بارگذاری اطلاعات آهنگ...*")
 
     data = await get_track(track_id, status_msg)
-    if not data or data.get("resultCount", 0) == 0:
+    if not data or not data.get("results"):
         await status_msg.edit("❌ *آهنگ یافت نشد.*")
         return
 
@@ -736,7 +738,6 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Message = Non
 
     markup = InlineKeyboardMarkup()
     
-    # دکمه دانلود (نیاز به YTMusicAPI و YT_dlp)
     markup.add(InlineKeyboardButton(text="⬇️ دانلود کامل آهنگ", callback_data=f"download:{track_id}"), row=1)
 
     row = 2
