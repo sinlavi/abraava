@@ -1,3 +1,4 @@
 balethon
 ytmusicapi
 yt_dlp
+python-bale-bot
