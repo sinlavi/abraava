@@ -1,56 +1,73 @@
-name: Run Bale Music Archive Bot
+name: 🎵 Bale Music Bot
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  schedule:
+    - cron: "0 */6 * * *"
 
-concurrency:
-  group: bale-music-archive-bot
-  cancel-in-progress: true
-
-permissions:
-  contents: write
-  
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.PAT_TOKEN }} # استفاده از توکن شخصی برای دور زدن محدودیت تریگر مجدد
+          fetch-depth: 1
 
-      - name: Install ffmpeg
+      # ---------- WARP (Cloudflare proxy) with Docker caching ----------
+      - name: Cache Docker images (WARP)
+        uses: actions/cache@v4
+        id: cache-warp
+        with:
+          path: /tmp/warp-image.tar
+          key: warp-image-caomingjun
+
+      - name: Load or pull WARP container
+        run: |
+          if [[ -f /tmp/warp-image.tar ]]; then
+            docker load < /tmp/warp-image.tar
+          else
+            docker pull caomingjun/warp
+            docker save caomingjun/warp -o /tmp/warp-image.tar
+          fi
+
+      - name: Start Cloudflare WARP proxy
+        run: |
+          docker network inspect warp-net >/dev/null 2>&1 || docker network create warp-net
+          docker rm -f warp 2>/dev/null || true
+          docker run -d --name warp --restart=always --network warp-net \
+            -p 1080:1080 --cap-add NET_ADMIN \
+            --sysctl net.ipv6.conf.all.disable_ipv6=0 \
+            --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+            -v warp-data:/var/lib/cloudflare-warp \
+            caomingjun/warp
+          sleep 10
+          curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 5 || true
+
+      # ---------- FFmpeg using official action (faster & simpler) ----------
+      - name: Set up FFmpeg
         uses: FedericoCarboni/setup-ffmpeg@v3
+        id: setup-ffmpeg
         with:
           ffmpeg-version: release
+          architecture: ''        # auto
+          linking-type: static
+          github-token: ${{ github.server_url == 'https://github.com' && github.token || '' }}
 
+      # ---------- Python & dependencies ----------
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
+          python-version: '3.11'
           cache: 'pip'
-          python-version: '3.10'
 
-      - name: Install Dependencies
-        run: |
-          pip install -r requirements.txt
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
 
-      - name: Run Bot
+      # ---------- Run the bot ----------
+      - name: Run bot
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CACHE_CHANNEL_ID: ${{ secrets.CACHE_CHANNEL_ID }}
-        run: |
-          timeout 5h python bot.py || true
-
-      - name: Commit & Push Updated Database
-        if: always()
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add cache.db
-          git diff-index --quiet HEAD || git commit -m "Auto-update audio database"
-          git push
+          BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
+        run: python bale_music_bot.py
