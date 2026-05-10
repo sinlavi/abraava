@@ -166,8 +166,7 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
     """Send audio with retry on gateway timeout (504). Accepts string path."""
     last_exception = None
     audio_path = str(audio_path)
-    logger.info(f"Sending audio: {audio_path}")
-    audio_path = audio_path + " .";
+    audio_path = "./downloads" + audio_path.split("/downloads")[1]
     logger.info(f"Sending audio: {audio_path}")
     for attempt in range(1, max_retries + 1):
         try:
