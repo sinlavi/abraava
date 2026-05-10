@@ -293,10 +293,10 @@ async def download_and_send_track(bot: Bot, chat_id: int, video_url: str, track_
                 await bot.send_audio(chat_id, audio=audio_input, caption=caption, thumb=thumb_input)
             else:
                 await bot.send_audio(chat_id, audio=audio_input, caption=caption)
-        await status_msg.edit_text("✅ آهنگ با موفقیت ارسال شد.")
+        await status_msg.edit("✅ آهنگ با موفقیت ارسال شد.")
     except Exception as e:
         logger.error(f"Download Error: {e}")
-        await status_msg.edit_text("❌ خطا در دانلود یا استخراج آهنگ. لطفا دوباره تلاش کنید.")
+        await status_msg.edit("❌ خطا در دانلود یا استخراج آهنگ. لطفا دوباره تلاش کنید.")
     finally:
         if os.path.exists(temp_audio_file):
             os.remove(temp_audio_file)
