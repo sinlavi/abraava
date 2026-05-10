@@ -6311,3 +6311,62 @@ client_session: <aiohttp.client.ClientSession object at 0x000002D84A80D610>
 2026-05-10 18:41:51,842 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
 2026-05-10 18:41:56,859 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
 2026-05-10 18:41:56,861 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:42:01,874 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:42:01,876 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:42:06,897 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:42:06,900 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:42:13,071 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:42:13,074 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:42:18,089 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:42:18,092 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:42:23,105 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:42:23,108 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:42:28,125 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:42:28,127 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:42:33,148 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:42:33,151 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:42:38,170 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:42:38,173 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:42:43,192 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:42:43,194 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:42:48,210 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:42:48,213 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:42:53,236 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:42:53,239 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:42:58,255 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:42:58,258 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:43:03,291 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:43:03,294 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:43:08,320 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:43:08,323 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:43:13,335 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:43:13,338 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:43:18,356 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:43:18,358 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:43:23,387 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:43:23,389 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:43:28,457 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:43:28,459 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:43:33,473 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:43:33,476 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:43:38,493 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:43:38,495 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:43:43,511 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:43:43,514 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:43:48,532 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:43:48,534 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:43:53,545 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:43:53,549 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:43:58,578 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:43:58,581 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:44:03,593 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:44:03,596 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:44:08,611 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:44:08,614 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:44:13,644 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:44:13,647 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:44:18,661 - httpx - INFO - HTTP Request: POST https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getUpdates "HTTP/1.1 200 OK"
+2026-05-10 18:44:18,664 - balethon.network.connection - INFO - [getUpdates] JSON{'offset': 2300}
+2026-05-10 18:44:22,813 - ABRAAVA - INFO - 🎵 ابرآوا Music Bot Starting (with relational DB & offline search)...
+2026-05-10 18:44:23,226 - httpx - INFO - HTTP Request: GET https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/getMe "HTTP/1.1 200 OK"
+2026-05-10 18:44:23,242 - httpx - INFO - HTTP Request: GET https://tapi.bale.ai/bot1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ/deleteWebhook "HTTP/1.1 200 OK"
