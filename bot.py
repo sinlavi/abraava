@@ -25,8 +25,8 @@ from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, error
 from youtube_downloader import download_audio
 
 # ---------- Configuration ----------
-PROXY_URL = "http://127.0.0.1:8085"        # change if needed
-VERIFY_SSL = False
+#PROXY_URL = "http://127.0.0.1:8085"        # change if needed
+#VERIFY_SSL = False
 
 ITUNES_BASE_URL = "https://itunes.apple.com"
 DB_PATH = Path("cache.db")
@@ -49,7 +49,7 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("AbraavaBot")
-OFFLINE_MODE = os.environ.get("OFFLINE_MODE", "true").lower() in ("true", "1", "yes")
+OFFLINE_MODE = os.environ.get("OFFLINE_MODE", "false").lower() in ("true", "1", "yes")
 if OFFLINE_MODE:
     logger.warning("🔴 Bot running in OFFLINE MODE – no external API calls will be made.")
 
