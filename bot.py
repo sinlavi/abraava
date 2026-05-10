@@ -173,6 +173,8 @@ async def crawl_artist_albums(artist_id: int, status_msg: Message = None):
                 album_cache_id = f"album:{album_id}"
                 if not await is_cached(album_cache_id):
                     await set_cached(album_cache_id, "album", {"resultCount": 1, "results": [item]})
+                # Also crawl the tracks of this album to fully populate the cache
+                await crawl_album_tracks(album_id, status_msg)
         await set_cached(cache_id, "artist_albums", {"albums": albums})
 
 async def get_artist(artist_id: int, status_msg: Message = None) -> Optional[Dict[str, Any]]:
@@ -354,9 +356,9 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
         if DB_CHANNEL_ID:
             try:
                 await status_msg.edit(f"☁️ در حال آپلود در سرورهای ابری {BOT_NAME}...{FOOTER}")
-                audio_input = InputFile(mp3_path)
+                audio_input = InputFile(str(mp3_path))  # Fixed: pass string path
                 db_msg = await bot.send_audio(
-                    6053683389,
+                    int(DB_CHANNEL_ID),  # Fixed: use the correct channel ID
                     audio=audio_input,
                     caption=caption
                 )
@@ -369,11 +371,11 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
                     await status_msg.edit(f"✅ دانلود و پردازش با موفقیت انجام شد.{FOOTER}")
             except Exception as e:
                 logger.error(f"Error caching to DB_CHANNEL: {e}")
-                audio_input = InputFile(mp3_path)
+                audio_input = InputFile(str(mp3_path))  # Fixed
                 await bot.send_audio(chat_id, audio=audio_input, caption=caption)
                 await status_msg.edit(f"✅ آهنگ مستقیما ارسال شد (خطا در ذخیره دیتابیس).{FOOTER}")
         else:
-            audio_input = InputFile(mp3_path)
+            audio_input = InputFile(str(mp3_path))  # Fixed
             await bot.send_audio(chat_id, audio=audio_input, caption=caption)
             await status_msg.edit(f"✅ دانلود و ارسال با موفقیت انجام شد.{FOOTER}")
 
@@ -402,7 +404,7 @@ async def send_voice_preview(chat_id: int, track_id: int):
             async with session.get(preview_url) as resp:
                 if resp.status == 200:
                     audio_bytes = await resp.read()
-                    voice_input = InputFile(audio_bytes, file_name="preview.m4a")
+                    voice_input = InputFile(audio_bytes, file_name="preview.m4a")  # bytes is fine
                     await bot.send_audio(chat_id, audio=voice_input, caption=f"🎧 پیش‌نمایش صوتی آهنگ {track.get('trackName')}{FOOTER}")
                     await status_msg.delete()
                 else:
