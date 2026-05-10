@@ -132,18 +132,24 @@ async def is_cached(id: str) -> bool:
 
 
 async def get_audio_cache(track_id: int) -> Optional[int]:
+    """Get cached balePostId for a track if it exists and is not 0."""
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT balePostId FROM tracks WHERE trackId = ?", (track_id,)) as cursor:
+        async with db.execute(
+            "SELECT balePostId FROM track WHERE trackId = ? AND balePostId != 0", 
+            (track_id,)
+        ) as cursor:
             row = await cursor.fetchone()
             return row[0] if row else None
 
 
 async def set_audio_cache(track_id: int, bale_post_id: int):
+    """Update the balePostId for an existing track."""
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT OR REPLACE INTO tracks (trackId, balePostId) VALUES (?, ?)",
-                         (track_id, bale_post_id))
+        await db.execute(
+            "UPDATE track SET balePostId = ? WHERE trackId = ?",
+            (bale_post_id, track_id)
+        )
         await db.commit()
-
 
 async def local_search(term: str, entity: str = "all") -> Optional[Dict[str, Any]]:
     """Search the local relational database for the given term."""
