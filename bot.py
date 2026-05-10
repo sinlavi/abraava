@@ -302,6 +302,7 @@ async def download_and_send_track(bot: Bot, chat_id: int, video_url: str, track_
             os.remove(temp_audio_file)
 
 def download_video(url, options):
+    url = url.replace("music.","")
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
