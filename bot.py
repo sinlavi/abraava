@@ -17,7 +17,7 @@ from typing import Optional, Dict, Any, List, Union
 
 import yt_dlp
 from ytmusicapi import YTMusic
-from bale import Bot, Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
+from bale import Bot, Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, InputFile, APIError
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, error
 
 # Import the 8‑method downloader
@@ -289,6 +289,27 @@ def tag_mp3(file_path: Path, title: str, artist: str, album: str, cover_bytes: b
         logger.error(f"Failed to tag MP3 {file_path}: {e}")
 
 # ---------- Download & Caching Logic ----------
+async def send_audio_with_retry(bot: Bot, chat_id: int, audio: InputFile, caption: str, max_retries=3):
+    """Send audio with retry on gateway timeout (504)."""
+    last_exception = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            return await bot.send_audio(chat_id, audio=audio, caption=caption)
+        except APIError as e:
+            # Check if it's a 504 or similar gateway error
+            if "504" in str(e) or "Gateway Time-out" in str(e):
+                logger.warning(f"send_audio 504, retry {attempt}/{max_retries}")
+                last_exception = e
+                await asyncio.sleep(attempt * 2)  # exponential backoff
+                # Need a fresh InputFile because the stream might be consumed
+                audio = InputFile(audio.read_bytes(), file_name=audio.file_name)
+            else:
+                raise
+        except Exception as e:
+            last_exception = e
+            break
+    raise last_exception
+
 async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
     status_msg = await bot.send_message(chat_id, f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*{FOOTER}")
     
@@ -360,11 +381,7 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
         if DB_CHANNEL_ID:
             try:
                 await status_msg.edit(f"☁️ در حال آپلود در سرورهای ابری {BOT_NAME}...{FOOTER}")
-                db_msg = await bot.send_audio(
-                    int(DB_CHANNEL_ID),
-                    audio=audio_input,
-                    caption=caption
-                )
+                db_msg = await send_audio_with_retry(bot, int(DB_CHANNEL_ID), audio_input, caption)
                 
                 if db_msg and db_msg.message_id:
                     # Cache successful, save ID
@@ -376,10 +393,10 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
                 logger.error(f"Error caching to DB_CHANNEL: {e}")
                 # Retry with fresh bytes if the first upload consumed the stream (InputFile is consumed once)
                 audio_input2 = InputFile(mp3_path.read_bytes(), file_name=f"{t_name}.mp3")
-                await bot.send_audio(chat_id, audio=audio_input2, caption=caption)
+                await send_audio_with_retry(bot, chat_id, audio_input2, caption)
                 await status_msg.edit(f"✅ آهنگ مستقیما ارسال شد (خطا در ذخیره دیتابیس).{FOOTER}")
         else:
-            await bot.send_audio(chat_id, audio=audio_input, caption=caption)
+            await send_audio_with_retry(bot, chat_id, audio_input, caption)
             await status_msg.edit(f"✅ دانلود و ارسال با موفقیت انجام شد.{FOOTER}")
 
         # Clean up temp file
@@ -633,30 +650,30 @@ async def send_search_page(chat_id: int, search_id: str, page: int, message_to_e
                 callback = f"track:{item['trackId']}"
         markup.add(InlineKeyboardButton(text=btn_text, callback_data=callback), row=i)
 
-    # Pagination
+    # Pagination row
     if total_pages > 1:
         pagination_row = create_pagination_row(f"page:search:{search_id}", page, total_pages)
         for btn in pagination_row:
             markup.add(btn, row=len(page_items) + 1)
-
-    # Refinement buttons (only for "all" searches)
-    if type_ == "all" and original_term:
-        refine_row = len(page_items) + 2
-        markup.add(InlineKeyboardButton(text="🔍 جستجو در آلبوم‌ها", callback_data=f"refine:album:{original_term}"), row=refine_row)
-        markup.add(InlineKeyboardButton(text="🔍 جستجو در هنرمندان", callback_data=f"refine:artist:{original_term}"), row=refine_row+1)
-        markup.add(InlineKeyboardButton(text="🔍 جستجو در آهنگ‌ها", callback_data=f"refine:track:{original_term}"), row=refine_row+2)
-        new_search_row = refine_row + 3
+        current_row = len(page_items) + 2
     else:
-        new_search_row = len(page_items) + 2
+        current_row = len(page_items) + 1
+
+    # Refinement buttons (always show, using cached term)
+    refine_term = term  # use the term from cache
+    if refine_term:
+        markup.add(InlineKeyboardButton(text="🔍 جستجو در آلبوم‌ها", callback_data=f"refine:album:{refine_term}"), row=current_row)
+        markup.add(InlineKeyboardButton(text="🔍 جستجو در هنرمندان", callback_data=f"refine:artist:{refine_term}"), row=current_row+1)
+        markup.add(InlineKeyboardButton(text="🔍 جستجو در آهنگ‌ها", callback_data=f"refine:track:{refine_term}"), row=current_row+2)
+        new_search_row = current_row + 3
+    else:
+        new_search_row = current_row
 
     markup.add(InlineKeyboardButton(text="🔍 جستجوی جدید", callback_data="new_search"), row=new_search_row)
 
     text = header + FOOTER
     await edit_or_send(bot, chat_id, message_to_edit, text, markup)
 
-
-# ... (the rest of the callback handling and show functions) ...
-# Replace the existing callback handler and show functions with the improved versions below.
 
 @bot.event
 async def on_callback(callback: CallbackQuery):
@@ -674,10 +691,8 @@ async def on_callback(callback: CallbackQuery):
         if data.startswith("page:search:"):
             search_id = parts[2]
             page = int(parts[3])
-            # original_term not needed here, refinement buttons will be added only for "all" type which is stored in cache
             await send_search_page(chat_id, search_id, page, callback.message)
         elif data.startswith("refine:"):
-            # Refine search: entity:term
             entity = parts[1]  # album, artist, track
             term = parts[2]
             entity_map = {"artist": "musicArtist", "album": "album", "track": "musicTrack"}
@@ -700,6 +715,19 @@ async def on_callback(callback: CallbackQuery):
         elif data.startswith("album:"):
             album_id = int(parts[1])
             page = int(parts[2]) if len(parts) > 2 else 1
+            # Check if album has exactly one track -> redirect to track
+            cached_album_tracks = await get_cached(f"album_tracks:{album_id}")
+            if not cached_album_tracks:
+                # Album tracks not yet crawled, fetch first
+                await crawl_album_tracks(album_id)
+                cached_album_tracks = await get_cached(f"album_tracks:{album_id}")
+            if cached_album_tracks and "tracks" in cached_album_tracks:
+                track_ids = cached_album_tracks["tracks"]
+                if len(track_ids) == 1:
+                    # Single track album - show track directly
+                    await show_track(chat_id, track_ids[0], callback.message)
+                    return
+            # Otherwise show album page
             await show_album(chat_id, album_id, page, callback.message)
         elif data.startswith("track:"):
             track_id = int(parts[1])
@@ -724,22 +752,7 @@ async def on_callback(callback: CallbackQuery):
             elif type_ == "track":
                 await delete_cached(f"track:{id_}")
                 await show_track(chat_id, id_, callback.message)
-        elif data.startswith("artist_tracks:"):
-            artist_id = int(parts[1])
-            page = int(parts[2]) if len(parts) > 2 else 1
-            artist_data = await get_artist(artist_id)
-            if not artist_data or not artist_data.get("results"):
-                await bot.send_message(chat_id, f"❌ هنرمند یافت نشد.{FOOTER}")
-                return
-            artist_name = artist_data["results"][0].get("artistName", "نامشخص")
-            search_id = generate_search_hash("track", artist_name)
-            cache_key = f"search:{search_id}"
-            results = await search_itunes(artist_name, entity="musicTrack", limit=50)
-            if results and results.get("resultCount", 0) > 0:
-                await set_cached(cache_key, "search", {"type": "track", "term": artist_name, "data": results})
-                await send_search_page(chat_id, search_id, page, callback.message)
-            else:
-                await bot.send_message(chat_id, f"❌ هیچ آهنگی برای این هنرمند یافت نشد.{FOOTER}")
+        # Removed artist_tracks callback entirely
     except Exception as e:
         logger.error(f"Error handling callback {data}: {e}")
 
@@ -786,21 +799,18 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1, message_to_ed
             pagination_row = create_pagination_row(f"artist:{artist_id}", page, total_pages)
             for btn in pagination_row:
                 markup.add(btn, row=len(page_items) + 1)
-        bottom_row = len(page_items) + 2
+        bottom_row = len(page_items) + 2 if total_pages > 1 else len(page_items) + 1
     else:
         bottom_row = 1
 
-    artist_name = artist.get("artistName", "")
-    markup.add(InlineKeyboardButton(text="🎵 مشاهده آهنگ‌های هنرمند",
-                                    callback_data=f"artist_tracks:{artist_id}:1"), row=bottom_row)
+    # Removed the "artist_tracks" button
     markup.add(InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}"),
-               row=bottom_row + 1)
-    markup.add(InlineKeyboardButton(text="🔍 جستجوی جدید", callback_data="new_search"), row=bottom_row + 2)
+               row=bottom_row)
+    markup.add(InlineKeyboardButton(text="🔍 جستجوی جدید", callback_data="new_search"), row=bottom_row + 1)
 
     text += FOOTER
     await status_msg.delete()
 
-    # Prepare photo if artwork exists
     artwork_url = get_high_res_artwork(artist.get("artworkUrl100"))
     photo_bytes = None
     if artwork_url:
@@ -858,7 +868,7 @@ async def show_album(chat_id: int, album_id: int, page: int = 1, message_to_edit
             pagination_row = create_pagination_row(f"album:{album_id}", page, total_pages)
             for btn in pagination_row:
                 markup.add(btn, row=len(page_items) + 1)
-        bottom_row = len(page_items) + 2
+        bottom_row = len(page_items) + 2 if total_pages > 1 else len(page_items) + 1
     else:
         bottom_row = 1
 
