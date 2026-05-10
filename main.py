@@ -170,7 +170,7 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
     logger.info(f"Sending audio: {audio_path}")
     for attempt in range(1, max_retries + 1):
         try:
-            return await bot.send_audio(6053683389, audio=audio_path, caption=caption)
+            return await bot.send_audio(6053683389, audio=audio_path.replace('/','\\'), caption=caption)
         except Exception as e:
             if "504" in str(e) or "Gateway Time-out" in str(e):
                 logger.warning(f"send_audio 504, retry {attempt}/{max_retries}")
