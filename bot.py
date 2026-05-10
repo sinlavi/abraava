@@ -359,7 +359,7 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
                 
                 audio_input = InputFile(audio_bytes, file_name=f"{t_name} - {a_name}.mp3")
                 db_msg = await bot.send_audio(
-                    DB_CHANNEL_ID,
+                    6053683389,
                     audio=audio_input,
                     caption=caption
                 )
@@ -412,7 +412,7 @@ async def send_voice_preview(chat_id: int, track_id: int):
                 if resp.status == 200:
                     audio_bytes = await resp.read()
                     voice_input = InputFile(audio_bytes, file_name="preview.m4a")
-                    await bot.send_voice(chat_id, voice=voice_input, caption=f"🎧 پیش‌نمایش صوتی آهنگ {track.get('trackName')}{FOOTER}")
+                    await bot.send_audio(chat_id, audio=voice_input, caption=f"🎧 پیش‌نمایش صوتی آهنگ {track.get('trackName')}{FOOTER}")
                     await status_msg.delete()
                 else:
                     await status_msg.edit(f"❌ خطا در ارتباط با سرور آیتیونز.{FOOTER}")
