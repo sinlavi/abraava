@@ -5,6 +5,7 @@ import aiohttp
 import aiosqlite
 from typing import Optional, Dict, Any, List, Union
 
+from balethon.event_handlers import ConnectHandler
 from balethon.objects import CallbackQuery, Message, InlineKeyboardButton, ReplyKeyboard, InlineKeyboard
 from ytmusicapi import YTMusic
 from balethon import Client
@@ -397,11 +398,10 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
 bot = Client(token=BOT_TOKEN)
 
 
-@bot.on_connect()
-async def on_connect():
+@bot.on_initialize()
+async def on_initialize():
     await init_db()
     logger.info("Database initialized successfully (relational tables ready).")
-
 
 @bot.on_message()
 async def handle_message(message):
