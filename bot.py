@@ -287,9 +287,9 @@ async def download_and_send_track(bot: Bot, chat_id: int, video_url: str, track_
         caption = f"🎵 {track_title}\n🎤 {artist_name}\n🔊 MP3 320 kbps | {file_size_mb:.1f} MB"
 
         with open(mp3_path, "rb") as f:
-            audio_input = InputFile(f.read(), filename=f"{track_title}.mp3")
+            audio_input = InputFile(f.read(), file_name=f"{track_title}.mp3")
             if cover_bytes:
-                thumb_input = InputFile(cover_bytes, filename="cover.jpg")
+                thumb_input = InputFile(cover_bytes, file_name="cover.jpg")
                 await bot.send_audio(chat_id, audio=audio_input, caption=caption, thumb=thumb_input)
             else:
                 await bot.send_audio(chat_id, audio=audio_input, caption=caption)
@@ -348,7 +348,7 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
                     audio_bytes = f.read()
                 sent_msg = await bot.send_audio(
                     CACHE_CHANNEL_ID,
-                    audio=InputFile(audio_bytes, filename=f"{t_name}.mp3"),
+                    audio=InputFile(audio_bytes, file_name=f"{t_name}.mp3"),
                     caption=f"🎵 {t_name}\n🎤 {a_name}"
                 )
                 if sent_msg and sent_msg.message_id:
@@ -716,7 +716,7 @@ async def show_album(chat_id: int, album_id: int, page: int = 1, message_to_edit
                 async with session.get(artwork_url) as resp:
                     if resp.status == 200:
                         img_bytes = await resp.read()
-                        photo_input = InputFile(img_bytes, filename="cover.jpg")
+                        photo_input = InputFile(img_bytes, file_name="cover.jpg")
                         if message_to_edit:
                             await message_to_edit.delete()
                         await bot.send_photo(chat_id, photo=photo_input, caption=text, components=markup)
@@ -771,7 +771,7 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Message = Non
                 async with session.get(artwork_url) as resp:
                     if resp.status == 200:
                         img_bytes = await resp.read()
-                        photo_input = InputFile(img_bytes, filename="cover.jpg")
+                        photo_input = InputFile(img_bytes, file_name="cover.jpg")
                         if message_to_edit:
                             await message_to_edit.delete()
                         await bot.send_photo(chat_id, photo=photo_input, caption=text, components=markup)
@@ -795,7 +795,7 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Message = Non
                 async with session.get(preview_url) as resp:
                     if resp.status == 200:
                         audio_bytes = await resp.read()
-                        audio_input = InputFile(audio_bytes, filename="preview.m4a")
+                        audio_input = InputFile(audio_bytes, file_name="preview.m4a")
                         await bot.send_audio(chat_id, audio=audio_input, caption="🎧 پیش‌نمایش صوتی ۳۰ ثانیه‌ای")
         except Exception as e:
             logger.error(f"Failed to send audio preview: {e}")
