@@ -158,12 +158,12 @@ def download_audio(
         output_dir: Optional[str] = None,
         *,
         max_retries_per_method: int = 1,
-) -> Optional[Path]:
+) -> Optional[str]:  # 🔄 تغییر: حالا string برمی‌گرداند
     """
     Download YouTube audio as 320 kbps MP3.
 
-    Tries all 8 anti‑detection methods in sequence. Returns the Path
-    to the downloaded MP3 file, or None if every method failed.
+    Tries all 8 anti‑detection methods in sequence. Returns the path
+    to the downloaded MP3 file as a string, or None if every method failed.
     """
     url = _normalize_url(url)
 
@@ -205,7 +205,7 @@ def download_audio(
                 mp3_path = max(new_files, key=lambda p: p.stat().st_mtime)
                 size_mb = mp3_path.stat().st_size / (1024 * 1024)
                 logger.info("✅ Success with method %d → %s (%.1f MB)", method, mp3_path.name, size_mb)
-                return mp3_path
+                return str(mp3_path)  # 🔄 تبدیل Path به string
             else:
                 logger.warning("Method %d completed but no MP3 found – retrying…", method)
                 time.sleep(2)
