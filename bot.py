@@ -1,6 +1,7 @@
 """
 bale_music_bot.py
 Abraava Music Bot with advanced 8‑method YouTube Music downloader, metadata tagging, and caching.
+Now featuring relational database for offline search & fallback.
 """
 
 import logging
@@ -24,6 +25,9 @@ from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, error
 from youtube_downloader import download_audio
 
 # ---------- Configuration ----------
+PROXY_URL = "http://127.0.0.1:8085"        # change if needed
+VERIFY_SSL = False
+
 ITUNES_BASE_URL = "https://itunes.apple.com"
 DB_PATH = Path("cache.db")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ")
@@ -45,16 +49,61 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("AbraavaBot")
+OFFLINE_MODE = os.environ.get("OFFLINE_MODE", "true").lower() in ("true", "1", "yes")
+if OFFLINE_MODE:
+    logger.warning("🔴 Bot running in OFFLINE MODE – no external API calls will be made.")
 
-# ---------- Async SQLite Cache ----------
+# ---------- Async SQLite Database (relational) ----------
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        # Preserve old cache table if needed (for search result caching)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS cache (
                 id TEXT PRIMARY KEY,
                 type TEXT NOT NULL,
                 data TEXT NOT NULL,
                 last_updated INTEGER NOT NULL
+            )
+        """)
+        # New relational tables
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS artist (
+                artistId INTEGER PRIMARY KEY,
+                artistName TEXT,
+                primaryGenreName TEXT,
+                artistLinkUrl TEXT,
+                artworkUrl100 TEXT,
+                data TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS album (
+                collectionId INTEGER PRIMARY KEY,
+                artistId INTEGER,
+                collectionName TEXT,
+                releaseDate TEXT,
+                primaryGenreName TEXT,
+                artworkUrl100 TEXT,
+                collectionViewUrl TEXT,
+                data TEXT,
+                FOREIGN KEY (artistId) REFERENCES artist(artistId)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS track (
+                trackId INTEGER PRIMARY KEY,
+                artistId INTEGER,
+                collectionId INTEGER,
+                trackName TEXT,
+                trackTimeMillis INTEGER,
+                primaryGenreName TEXT,
+                releaseDate TEXT,
+                trackViewUrl TEXT,
+                previewUrl TEXT,
+                artworkUrl100 TEXT,
+                data TEXT,
+                FOREIGN KEY (artistId) REFERENCES artist(artistId),
+                FOREIGN KEY (collectionId) REFERENCES album(collectionId)
             )
         """)
         await db.execute("""
@@ -64,8 +113,97 @@ async def init_db():
             )
         """)
         await db.commit()
-    logger.info("Database initialized successfully.")
+    logger.info("Database initialized successfully (relational tables ready).")
 
+# ---------- Relational DB store/retrieve helpers ----------
+async def store_artist(item: dict):
+    """Insert or replace an artist from iTunes API item into the artist table."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT OR REPLACE INTO artist (artistId, artistName, primaryGenreName, artistLinkUrl, artworkUrl100, data)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            item.get("artistId"),
+            item.get("artistName", ""),
+            item.get("primaryGenreName", ""),
+            item.get("artistLinkUrl", ""),
+            item.get("artworkUrl100", ""),
+            json.dumps(item)
+        ))
+        await db.commit()
+
+async def store_album(item: dict):
+    """Insert or replace an album from iTunes API item into the album table."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT OR REPLACE INTO album (collectionId, artistId, collectionName, releaseDate, 
+                                          primaryGenreName, artworkUrl100, collectionViewUrl, data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            item.get("collectionId"),
+            item.get("artistId"),
+            item.get("collectionName", ""),
+            item.get("releaseDate", ""),
+            item.get("primaryGenreName", ""),
+            item.get("artworkUrl100", ""),
+            item.get("collectionViewUrl", ""),
+            json.dumps(item)
+        ))
+        await db.commit()
+
+async def store_track(item: dict):
+    """Insert or replace a track from iTunes API item into the track table."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT OR REPLACE INTO track (trackId, artistId, collectionId, trackName, trackTimeMillis,
+                                          primaryGenreName, releaseDate, trackViewUrl, previewUrl, artworkUrl100, data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            item.get("trackId"),
+            item.get("artistId"),
+            item.get("collectionId"),
+            item.get("trackName", ""),
+            item.get("trackTimeMillis", 0),
+            item.get("primaryGenreName", ""),
+            item.get("releaseDate", ""),
+            item.get("trackViewUrl", ""),
+            item.get("previewUrl", ""),
+            item.get("artworkUrl100", ""),
+            json.dumps(item)
+        ))
+        await db.commit()
+
+async def get_artist_db(artist_id: int) -> Optional[Dict[str, Any]]:
+    """Fetch artist from local DB and return in iTunes lookup format."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT data FROM artist WHERE artistId = ?", (artist_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                artist_data = json.loads(row[0])
+                return {"resultCount": 1, "results": [artist_data]}
+    return None
+
+async def get_album_db(collection_id: int) -> Optional[Dict[str, Any]]:
+    """Fetch album from local DB and return in iTunes lookup format."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT data FROM album WHERE collectionId = ?", (collection_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                album_data = json.loads(row[0])
+                return {"resultCount": 1, "results": [album_data]}
+    return None
+
+async def get_track_db(track_id: int) -> Optional[Dict[str, Any]]:
+    """Fetch track from local DB and return in iTunes lookup format."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT data FROM track WHERE trackId = ?", (track_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                track_data = json.loads(row[0])
+                return {"resultCount": 1, "results": [track_data]}
+    return None
+
+# ---------- Old cache helpers (kept for search result sets) ----------
 async def get_cached(id: str) -> Optional[Dict[str, Any]]:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT data FROM cache WHERE id = ?", (id,)) as cursor:
@@ -122,6 +260,9 @@ class HttpClient:
 
 # ---------- iTunes API Client ----------
 async def fetch_itunes(endpoint: str, params: dict) -> Optional[Dict[str, Any]]:
+    if OFFLINE_MODE:
+        logger.info(f"Offline mode: skipping iTunes API call to {endpoint}")
+        return None
     session = await HttpClient.get_session()
     url = f"{ITUNES_BASE_URL}/{endpoint}"
     try:
@@ -135,6 +276,7 @@ async def fetch_itunes(endpoint: str, params: dict) -> Optional[Dict[str, Any]]:
                     return None
             else:
                 logger.warning(f"iTunes API returned status {resp.status} for {url}")
+                # If rate limited (429) or other error, could fallback to local DB
     except Exception as e:
         logger.error(f"Error fetching from iTunes API ({endpoint}): {e}")
     return None
@@ -153,8 +295,68 @@ async def lookup_itunes(id: int, entity: Optional[str] = None) -> Optional[Dict[
         params["entity"] = entity
     return await fetch_itunes("lookup", params)
 
-# ---------- Crawlers ----------
+# ---------- Local search (offline/fallback) ----------
+async def local_search(term: str, entity: str = "all") -> Optional[Dict[str, Any]]:
+    """Search the local relational database for the given term."""
+    results = []
+    pattern = f"%{term}%"
+
+    if entity in ("artist", "all"):
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                    "SELECT artistId, artistName, primaryGenreName, artworkUrl100, artistLinkUrl FROM artist WHERE artistName LIKE ? LIMIT ?",
+                    (pattern, 50)
+            ) as cursor:
+                async for row in cursor:
+                    results.append({
+                        "wrapperType": "artist",
+                        "artistId": row[0],
+                        "artistName": row[1],
+                        "primaryGenreName": row[2],
+                        "artworkUrl100": row[3],
+                        "artistLinkUrl": row[4]
+                    })
+
+    if entity in ("album", "all"):
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                    "SELECT collectionId, artistId, collectionName, artworkUrl100 FROM album WHERE collectionName LIKE ? LIMIT ?",
+                    (pattern, 50)
+            ) as cursor:
+                async for row in cursor:
+                    results.append({
+                        "wrapperType": "collection",
+                        "collectionId": row[0],
+                        "artistId": row[1],
+                        "collectionName": row[2],
+                        "artworkUrl100": row[3]
+                    })
+
+    if entity in ("track", "all"):
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                    "SELECT trackId, artistId, collectionId, trackName, artworkUrl100 FROM track WHERE trackName LIKE ? LIMIT ?",
+                    (pattern, 50)
+            ) as cursor:
+                async for row in cursor:
+                    results.append({
+                        "wrapperType": "track",
+                        "trackId": row[0],
+                        "artistId": row[1],
+                        "collectionId": row[2],
+                        "trackName": row[3],
+                        "artworkUrl100": row[4]
+                    })
+
+    # Trim to overall limit 50 if entity is "all"
+    if entity == "all":
+        results = results[:50]
+    return {"resultCount": len(results), "results": results}
+
+# ---------- Crawlers (modified to use relational DB) ----------
 async def crawl_artist_albums(artist_id: int, status_msg: Message = None):
+    if OFFLINE_MODE:
+        return
     cache_id = f"artist_albums:{artist_id}"
     if await is_cached(cache_id):
         return
@@ -170,18 +372,20 @@ async def crawl_artist_albums(artist_id: int, status_msg: Message = None):
             if item.get("wrapperType") == "collection" and item.get("collectionType") == "Album":
                 album_id = item["collectionId"]
                 albums.append(album_id)
-                album_cache_id = f"album:{album_id}"
-                if not await is_cached(album_cache_id):
-                    await set_cached(album_cache_id, "album", {"resultCount": 1, "results": [item]})
+                # Store album in relational DB
+                await store_album(item)
                 # Also crawl the tracks of this album to fully populate the cache
                 await crawl_album_tracks(album_id, status_msg)
         await set_cached(cache_id, "artist_albums", {"albums": albums})
 
 async def get_artist(artist_id: int, status_msg: Message = None) -> Optional[Dict[str, Any]]:
-    cache_id = f"artist:{artist_id}"
-    cached = await get_cached(cache_id)
-    if cached:
-        return cached
+    # Try local DB first
+    db_data = await get_artist_db(artist_id)
+    if db_data:
+        return db_data
+    if OFFLINE_MODE:
+        logger.info(f"Offline mode: artist {artist_id} not in local DB")
+        return None
     if status_msg:
         try:
             await status_msg.edit(f"⏳ *در حال دریافت اطلاعات هنرمند...*{FOOTER}")
@@ -189,12 +393,17 @@ async def get_artist(artist_id: int, status_msg: Message = None) -> Optional[Dic
             pass
     data = await lookup_itunes(artist_id)
     if data and data.get("results"):
-        await set_cached(cache_id, "artist", data)
+        # Store in relational table
+        for item in data["results"]:
+            if item.get("wrapperType") == "artist":
+                await store_artist(item)
         await crawl_artist_albums(artist_id, status_msg)
         return data
     return None
 
 async def crawl_album_tracks(album_id: int, status_msg: Message = None):
+    if OFFLINE_MODE:
+        return
     cache_id = f"album_tracks:{album_id}"
     if await is_cached(cache_id):
         return
@@ -210,16 +419,17 @@ async def crawl_album_tracks(album_id: int, status_msg: Message = None):
             if item.get("wrapperType") == "track" and item.get("kind") == "song":
                 track_id = item["trackId"]
                 tracks.append(track_id)
-                track_cache_id = f"track:{track_id}"
-                if not await is_cached(track_cache_id):
-                    await set_cached(track_cache_id, "track", {"resultCount": 1, "results": [item]})
+                # Store track in relational DB
+                await store_track(item)
         await set_cached(cache_id, "album_tracks", {"tracks": tracks})
 
 async def get_album(album_id: int, status_msg: Message = None) -> Optional[Dict[str, Any]]:
-    cache_id = f"album:{album_id}"
-    cached = await get_cached(cache_id)
-    if cached:
-        return cached
+    db_data = await get_album_db(album_id)
+    if db_data:
+        return db_data
+    if OFFLINE_MODE:
+        logger.info(f"Offline mode: album {album_id} not in local DB")
+        return None
     if status_msg:
         try:
             await status_msg.edit(f"⏳ *در حال دریافت اطلاعات آلبوم...*{FOOTER}")
@@ -227,16 +437,21 @@ async def get_album(album_id: int, status_msg: Message = None) -> Optional[Dict[
             pass
     data = await lookup_itunes(album_id)
     if data and data.get("results"):
-        await set_cached(cache_id, "album", data)
+        # Store album in relational DB
+        for item in data["results"]:
+            if item.get("wrapperType") == "collection":
+                await store_album(item)
         await crawl_album_tracks(album_id, status_msg)
         return data
     return None
 
 async def get_track(track_id: int, status_msg: Message = None) -> Optional[Dict[str, Any]]:
-    cache_id = f"track:{track_id}"
-    cached = await get_cached(cache_id)
-    if cached:
-        return cached
+    db_data = await get_track_db(track_id)
+    if db_data:
+        return db_data
+    if OFFLINE_MODE:
+        logger.info(f"Offline mode: track {track_id} not in local DB")
+        return None
     if status_msg:
         try:
             await status_msg.edit(f"⏳ *در حال دریافت اطلاعات آهنگ...*{FOOTER}")
@@ -244,16 +459,21 @@ async def get_track(track_id: int, status_msg: Message = None) -> Optional[Dict[
             pass
     data = await lookup_itunes(track_id)
     if data and data.get("results"):
-        await set_cached(cache_id, "track", data)
+        for item in data["results"]:
+            if item.get("wrapperType") == "track":
+                await store_track(item)
         return data
     return None
 
 # ---------- YouTube Music Helper ----------
 async def search_youtube_track(query: str) -> Optional[str]:
     """Search YouTube Music and return best video ID."""
+    if OFFLINE_MODE:
+        logger.info("Offline mode: skipping YouTube search")
+        return None
     global YT
     if YT is None:
-        YT = YTMusic()  
+        YT = YTMusic()
     try:
         results = YT.search(query, filter="songs", limit=1)
         if results and isinstance(results, list) and len(results) > 0:
@@ -270,7 +490,7 @@ def tag_mp3(file_path: Path, title: str, artist: str, album: str, cover_bytes: b
             audio = ID3(file_path)
         except error:
             audio = ID3()
-        
+
         audio.add(TIT2(encoding=3, text=title))
         audio.add(TPE1(encoding=3, text=artist))
         if album:
@@ -288,7 +508,6 @@ def tag_mp3(file_path: Path, title: str, artist: str, album: str, cover_bytes: b
     except Exception as e:
         logger.error(f"Failed to tag MP3 {file_path}: {e}")
 
-# ---------- Download & Caching Logic ----------
 # ---------- Download & Caching Logic ----------
 async def send_audio_with_retry(bot: Bot, chat_id: int, audio_bytes: bytes, file_name: str, caption: str, max_retries=3):
     """Send audio with retry on gateway timeout (504)."""
@@ -309,27 +528,29 @@ async def send_audio_with_retry(bot: Bot, chat_id: int, audio_bytes: bytes, file
             break
     raise last_exception
 
-
 async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
     status_msg = await bot.send_message(chat_id, f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*{FOOTER}")
-    
+
     # Check if already cached in DB Channel
     channel_msg_id = await get_audio_cache(track_id)
     if channel_msg_id and DB_CHANNEL_ID:
         try:
-            # Forward directly from database channel to the user
             await bot.forward_message(chat_id, from_chat_id=DB_CHANNEL_ID, message_id=channel_msg_id)
             await status_msg.edit(f"✅ آهنگ با موفقیت از دیتابیس {BOT_NAME} دریافت شد.{FOOTER}")
             return
         except Exception as e:
             logger.error(f"Forward failed: {e}, will re-download")
 
+    # In offline mode we cannot download – error out
+    if OFFLINE_MODE:
+        await status_msg.edit(f"❌ آهنگ در دیتابیس محلی یافت نشد و بات در حالت آفلاین است.{FOOTER}")
+        return
     # If not cached, fetch track info for downloading
     track_data = await get_track(track_id, status_msg)
     if not track_data or not track_data.get("results"):
         await status_msg.edit(f"❌ خطا در دریافت اطلاعات آهنگ.{FOOTER}")
         return
-    
+
     track = track_data["results"][0]
     t_name = track.get("trackName", "Unknown Title")
     a_name = track.get("artistName", "Unknown Artist")
@@ -338,7 +559,7 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
 
     query = f"{t_name} {a_name}"
     await status_msg.edit(f"🔍 جستجوی سورس باکیفیت آهنگ در یوتیوب موزیک...{FOOTER}")
-    
+
     video_id = await search_youtube_track(query)
     if not video_id:
         await status_msg.edit(f"❌ نتوانستیم لینک یوتیوب موزیک را برای این آهنگ پیدا کنیم.{FOOTER}")
@@ -383,7 +604,7 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
                 db_msg = await send_audio_with_retry(
                     bot, int(DB_CHANNEL_ID), audio_bytes, f"{t_name}.mp3", caption
                 )
-                
+
                 if db_msg and db_msg.message_id:
                     # Cache successful, save ID
                     await set_audio_cache(track_id, db_msg.message_id)
@@ -405,13 +626,14 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
     except Exception as e:
         logger.exception("Download error")
         await status_msg.edit(f"❌ خطا در عملیات: {e}{FOOTER}")
+
 async def send_voice_preview(chat_id: int, track_id: int):
     status_msg = await bot.send_message(chat_id, f"⏳ در حال دریافت پیش‌نمایش...{FOOTER}")
     track_data = await get_track(track_id)
     if not track_data or not track_data.get("results"):
         await status_msg.edit(f"❌ اطلاعات آهنگ یافت نشد.{FOOTER}")
         return
-    
+
     track = track_data["results"][0]
     preview_url = track.get("previewUrl")
     if not preview_url:
@@ -431,7 +653,6 @@ async def send_voice_preview(chat_id: int, track_id: int):
     except Exception as e:
         logger.error(f"Failed to send audio preview: {e}")
         await status_msg.edit(f"❌ خطا در ارسال پیش‌نمایش.{FOOTER}")
-
 
 # ---------- Helper functions ----------
 def format_duration(milliseconds: int) -> str:
@@ -485,13 +706,12 @@ async def edit_or_send(bot: Bot, chat_id: int, message_to_edit: Optional[Message
             return
         except Exception as e:
             logger.warning(f"Edit failed: {e}, sending new message")
-    
+
     # Send new
     if photo_bytes:
         await bot.send_photo(chat_id, photo=InputFile(photo_bytes, file_name="cover.jpg"), caption=text, components=markup)
     else:
         await bot.send_message(chat_id, text, components=markup)
-
 
 # ---------- Bale Bot Initialization & Handlers ----------
 bot = Bot(token=BOT_TOKEN)
@@ -516,7 +736,7 @@ async def on_message(message: Message):
         if bot_mention not in msg_text:
             return
         msg_text = msg_text.replace(bot_mention, "").strip()
-    
+
     # Command Handlers
     if msg_text.startswith("/start"):
         await message.reply(
@@ -579,20 +799,36 @@ async def on_message(message: Message):
         search_id = generate_search_hash(type_, term)
         cache_key = f"search:{search_id}"
 
-        if type_ == "all":
-            results = await search_itunes(term, entity=None, limit=50)
-        else:
-            results = await search_itunes(term, entity_map[type_], limit=50)
+        # Attempt online search first, fallback to local DB on failure or offline
+        results = None
+        if not OFFLINE_MODE:
+            if type_ == "all":
+                results = await search_itunes(term, entity=None, limit=50)
+            else:
+                results = await search_itunes(term, entity_map[type_], limit=50)
+
+        # If online failed or offline, try local DB
+        if results is None:
+            results = await local_search(term, type_)
 
         if results and results.get("resultCount", 0) > 0:
             await set_cached(cache_key, "search", {"type": type_, "term": term, "data": results})
+            # Store results in relational DB for future offline use (only if online result)
+            if not OFFLINE_MODE:
+                for item in results["results"]:
+                    # store by type
+                    if item.get("wrapperType") == "artist":
+                        await store_artist(item)
+                    elif item.get("wrapperType") == "collection":
+                        await store_album(item)
+                    elif item.get("wrapperType") == "track":
+                        await store_track(item)
         else:
             await status_msg.edit(f"❌ *هیچ نتیجه‌ای برای '{term}' یافت نشد.*{FOOTER}")
             return
 
         await status_msg.delete()
         await send_search_page(message.chat.id, search_id, 1, message_to_edit=None, original_term=term)
-
 
 async def send_search_page(chat_id: int, search_id: str, page: int, message_to_edit: Optional[Message] = None, original_term: Optional[str] = None):
     cache_key = f"search:{search_id}"
@@ -673,7 +909,6 @@ async def send_search_page(chat_id: int, search_id: str, page: int, message_to_e
     text = header + FOOTER
     await edit_or_send(bot, chat_id, message_to_edit, text, markup)
 
-
 @bot.event
 async def on_callback(callback: CallbackQuery):
     data = callback.data
@@ -699,10 +934,24 @@ async def on_callback(callback: CallbackQuery):
                 await bot.send_message(chat_id, "نوع فیلتر نامعتبر است.")
                 return
             status_msg = await bot.send_message(chat_id, f"🔍 *در حال جستجوی {entity} برای: {term}...*{FOOTER}")
-            results = await search_itunes(term, entity=entity_map[entity], limit=50)
+            # Online search, fallback to local
+            results = None
+            if not OFFLINE_MODE:
+                results = await search_itunes(term, entity=entity_map[entity], limit=50)
+            if results is None:
+                results = await local_search(term, entity)
             if results and results.get("resultCount", 0) > 0:
                 search_id = generate_search_hash(entity, term)
                 await set_cached(f"search:{search_id}", "search", {"type": entity, "term": term, "data": results})
+                # Store items if online
+                if not OFFLINE_MODE:
+                    for item in results["results"]:
+                        if item.get("wrapperType") == "artist":
+                            await store_artist(item)
+                        elif item.get("wrapperType") == "collection":
+                            await store_album(item)
+                        elif item.get("wrapperType") == "track":
+                            await store_track(item)
                 await status_msg.delete()
                 await send_search_page(chat_id, search_id, 1, original_term=term)
             else:
@@ -740,24 +989,31 @@ async def on_callback(callback: CallbackQuery):
         elif data.startswith("recrawl:"):
             type_ = parts[1]
             id_ = int(parts[2])
+            # Remove from local relational tables as well
             if type_ == "artist":
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute("DELETE FROM artist WHERE artistId = ?", (id_,))
+                    await db.commit()
                 await delete_cached(f"artist:{id_}")
                 await delete_cached(f"artist_albums:{id_}")
                 await show_artist(chat_id, id_, 1, callback.message)
             elif type_ == "album":
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute("DELETE FROM album WHERE collectionId = ?", (id_,))
+                    await db.commit()
                 await delete_cached(f"album:{id_}")
                 await delete_cached(f"album_tracks:{id_}")
                 await show_album(chat_id, id_, 1, callback.message)
             elif type_ == "track":
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute("DELETE FROM track WHERE trackId = ?", (id_,))
+                    await db.commit()
                 await delete_cached(f"track:{id_}")
                 await show_track(chat_id, id_, callback.message)
-        # Removed artist_tracks callback entirely
     except Exception as e:
         logger.error(f"Error handling callback {data}: {e}")
 
-
 # ---------- Show functions (improved for photo caption editing) ----------
-
 async def show_artist(chat_id: int, artist_id: int, page: int = 1, message_to_edit: Optional[Message] = None):
     status_msg = await bot.send_message(chat_id, f"🔄 *در حال پردازش هنرمند...*{FOOTER}")
     data = await get_artist(artist_id, status_msg)
@@ -778,9 +1034,14 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1, message_to_ed
     albums = []
     if albums_cache and "albums" in albums_cache:
         for album_id in albums_cache["albums"]:
-            album_data = await get_cached(f"album:{album_id}")
+            album_data = await get_album_db(album_id)  # prefer local DB
             if album_data and album_data.get("results"):
                 albums.append(album_data["results"][0])
+            else:
+                # fallback to old cache if not in DB
+                album_data_cache = await get_cached(f"album:{album_id}")
+                if album_data_cache and album_data_cache.get("results"):
+                    albums.append(album_data_cache["results"][0])
 
     markup = InlineKeyboardMarkup()
     if albums:
@@ -802,7 +1063,6 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1, message_to_ed
     else:
         bottom_row = 1
 
-    # Removed the "artist_tracks" button
     markup.add(InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}"),
                row=bottom_row)
     markup.add(InlineKeyboardButton(text="🔍 جستجوی جدید", callback_data="new_search"), row=bottom_row + 1)
@@ -819,7 +1079,6 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1, message_to_ed
                     photo_bytes = await resp.read()
 
     await edit_or_send(bot, chat_id, message_to_edit, text, markup, photo_bytes)
-
 
 async def show_album(chat_id: int, album_id: int, page: int = 1, message_to_edit: Optional[Message] = None):
     status_msg = await bot.send_message(chat_id, f"🔄 *در حال پردازش آلبوم...*{FOOTER}")
@@ -844,9 +1103,13 @@ async def show_album(chat_id: int, album_id: int, page: int = 1, message_to_edit
     tracks = []
     if tracks_cache and "tracks" in tracks_cache:
         for track_id in tracks_cache["tracks"]:
-            track_data = await get_cached(f"track:{track_id}")
+            track_data = await get_track_db(track_id)
             if track_data and track_data.get("results"):
                 tracks.append(track_data["results"][0])
+            else:
+                track_data_cache = await get_cached(f"track:{track_id}")
+                if track_data_cache and track_data_cache.get("results"):
+                    tracks.append(track_data_cache["results"][0])
 
     markup = InlineKeyboardMarkup()
     if tracks:
@@ -892,7 +1155,6 @@ async def show_album(chat_id: int, album_id: int, page: int = 1, message_to_edit
 
     await edit_or_send(bot, chat_id, message_to_edit, text, markup, photo_bytes)
 
-
 async def show_track(chat_id: int, track_id: int, message_to_edit: Optional[Message] = None):
     status_msg = await bot.send_message(chat_id, f"🔄 *در حال بارگذاری اطلاعات آهنگ...*{FOOTER}")
     data = await get_track(track_id, status_msg)
@@ -913,7 +1175,7 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Optional[Mess
 
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton(text="⬇️ دانلود کامل آهنگ (320 kbps)", callback_data=f"download:{track_id}"), row=1)
-    
+
     row = 2
     if track.get("previewUrl"):
         markup.add(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}"), row=row)
@@ -923,7 +1185,7 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Optional[Mess
         markup.add(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"album:{track['collectionId']}:1"), row=row)
     if track.get('artistId'):
         markup.add(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{track['artistId']}:1"), row=row)
-    
+
     markup.add(InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:track:{track_id}"), row=row + 1)
     markup.add(InlineKeyboardButton(text="🔍 جستجوی جدید", callback_data="new_search"), row=row + 2)
 
@@ -940,7 +1202,6 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Optional[Mess
 
     await edit_or_send(bot, chat_id, message_to_edit, text, markup, photo_bytes)
 
-
 if __name__ == "__main__":
-    logger.info(f"🎵 {BOT_NAME} Music Bot Starting (with anti‑detection & tagging)...")
+    logger.info(f"🎵 {BOT_NAME} Music Bot Starting (with relational DB & offline search)...")
     bot.run()
