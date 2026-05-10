@@ -169,7 +169,6 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
     logger.info(f"Sending audio: {audio_path}")
     audio_path = audio_path + " .";
     logger.info(f"Sending audio: {audio_path}")
-    logger.error(f"YTMusic search error: {e}")
     for attempt in range(1, max_retries + 1):
         try:
             return await bot.send_audio(chat_id, audio=audio_path, caption=caption)
@@ -179,6 +178,7 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
                 last_exception = e
                 await asyncio.sleep(attempt * 2)
             else:
+                logger.error(f"YTMusic search error: {e}")
                 raise
     raise last_exception
 
