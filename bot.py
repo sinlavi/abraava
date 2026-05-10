@@ -1,7 +1,8 @@
 """
 bale_music_bot.py
-Abraava Music Bot – recoded for Balethon (balethon.ir)
+Abraava Music Bot with advanced 8‑method YouTube Music downloader, metadata tagging, and caching.
 """
+
 import logging
 import json
 import time
@@ -16,13 +17,10 @@ from typing import Optional, Dict, Any, List, Union
 
 import yt_dlp
 from ytmusicapi import YTMusic
-
-# ---------- Balethon imports ----------
-from balethon import Bot, Message, CallbackQuery
-from balethon.objects import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
-# --------------------------------------
-
+from bale import Bot, Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, error
+
+# Import the 8‑method downloader
 from youtube_downloader import download_audio
 
 # ---------- Configuration ----------
@@ -253,7 +251,7 @@ async def search_youtube_track(query: str) -> Optional[str]:
     """Search YouTube Music and return best video ID."""
     global YT
     if YT is None:
-        YT = YTMusic()
+        YT = YTMusic()  
     try:
         results = YT.search(query, filter="songs", limit=1)
         if results and isinstance(results, list) and len(results) > 0:
@@ -292,20 +290,18 @@ def tag_mp3(file_path: Path, title: str, artist: str, album: str, cover_bytes: b
 async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
     status_msg = await bot.send_message(chat_id, f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*{FOOTER}")
     
+    # Check if already cached in DB Channel
     channel_msg_id = await get_audio_cache(track_id)
     if channel_msg_id and DB_CHANNEL_ID:
         try:
-            # Balethon forward method uses forward_messages
-            await bot.forward_messages(
-                chat_id=chat_id,
-                from_chat_id=DB_CHANNEL_ID,
-                message_ids=channel_msg_id
-            )
+            # Forward directly from database channel to the user
+            await bot.forward_message(chat_id, from_chat_id=DB_CHANNEL_ID, message_id=channel_msg_id)
             await status_msg.edit(f"✅ آهنگ با موفقیت از دیتابیس {BOT_NAME} دریافت شد.{FOOTER}")
             return
         except Exception as e:
             logger.error(f"Forward failed: {e}, will re-download")
 
+    # If not cached, fetch track info for downloading
     track_data = await get_track(track_id, status_msg)
     if not track_data or not track_data.get("results"):
         await status_msg.edit(f"❌ خطا در دریافت اطلاعات آهنگ.{FOOTER}")
@@ -339,6 +335,7 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
 
         file_size_mb = mp3_path.stat().st_size / (1024 * 1024)
 
+        # Download cover image
         cover_bytes = None
         if cover_url:
             async with aiohttp.ClientSession() as session:
@@ -346,12 +343,14 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
                     if resp.status == 200:
                         cover_bytes = await resp.read()
 
+        # Update metadata using mutagen
         await asyncio.get_event_loop().run_in_executor(
             None, tag_mp3, mp3_path, t_name, a_name, album_name, cover_bytes
         )
 
         caption = f"🎵 {t_name}\n🎤 {a_name}\n📀 {album_name}\n🔊 MP3 320 kbps | {file_size_mb:.1f} MB{FOOTER}"
 
+        # Upload the tagged file to the DB_CHANNEL_ID first (if exists)
         if DB_CHANNEL_ID:
             try:
                 await status_msg.edit(f"☁️ در حال آپلود در سرورهای ابری {BOT_NAME}...{FOOTER}")
@@ -366,27 +365,28 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
                 )
                 
                 if db_msg and db_msg.message_id:
+                    # Cache successful, save ID
                     await set_audio_cache(track_id, db_msg.message_id)
-                    await bot.forward_messages(
-                        chat_id=chat_id,
-                        from_chat_id=DB_CHANNEL_ID,
-                        message_ids=db_msg.message_id
-                    )
+                    # Forward to User
+                    await bot.forward_message(chat_id, from_chat_id=DB_CHANNEL_ID, message_id=db_msg.message_id)
                     await status_msg.edit(f"✅ دانلود و پردازش با موفقیت انجام شد.{FOOTER}")
             except Exception as e:
                 logger.error(f"Error caching to DB_CHANNEL: {e}")
+                # Fallback: Send directly to user if DB Channel upload fails
                 with open(mp3_path, "rb") as f:
                     audio_bytes = f.read()
                 audio_input = InputFile(audio_bytes, file_name=f"{t_name} - {a_name}.mp3")
                 await bot.send_audio(chat_id, audio=audio_input, caption=caption)
                 await status_msg.edit(f"✅ آهنگ مستقیما ارسال شد (خطا در ذخیره دیتابیس).{FOOTER}")
         else:
+            # If no DB_CHANNEL_ID is configured, send directly to user
             with open(mp3_path, "rb") as f:
                 audio_bytes = f.read()
             audio_input = InputFile(audio_bytes, file_name=f"{t_name} - {a_name}.mp3")
             await bot.send_audio(chat_id, audio=audio_input, caption=caption)
             await status_msg.edit(f"✅ دانلود و ارسال با موفقیت انجام شد.{FOOTER}")
 
+        # Clean up temp file
         mp3_path.unlink(missing_ok=True)
 
     except Exception as e:
@@ -446,7 +446,7 @@ def create_pagination_row(callback_prefix: str, current_page: int, total_pages: 
 def generate_search_hash(type_: str, term: str) -> str:
     return hashlib.md5(f"{type_}:{term}".encode()).hexdigest()[:10]
 
-# ---------- Balethon Bot Initialization & Handlers ----------
+# ---------- Bale Bot Initialization & Handlers ----------
 bot = Bot(token=BOT_TOKEN)
 
 @bot.event
@@ -460,15 +460,17 @@ async def on_message(message: Message):
     if not message.content:
         return
 
+    # Handle Group / Channel tagging logic
     is_group = message.chat.type in ["group", "supergroup", "channel"]
     msg_text = message.content
 
     if is_group:
         bot_mention = f"@{bot.user.username}"
         if bot_mention not in msg_text:
-            return
+            return  # Ignore messages in groups if bot is not explicitly mentioned
         msg_text = msg_text.replace(bot_mention, "").strip()
     
+    # Command Handlers
     if msg_text.startswith("/start"):
         await message.reply(
             f"🎵 *به ربات جستجو و دانلود موسیقی {BOT_NAME} خوش آمدید!*\n\n"
@@ -857,6 +859,7 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Message = Non
     markup.add(InlineKeyboardButton(text="⬇️ دانلود کامل آهنگ (320 kbps)", callback_data=f"download:{track_id}"), row=1)
     
     row = 2
+    # Add Preview button ONLY if previewUrl exists
     if track.get("previewUrl"):
         markup.add(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}"), row=row)
         row += 1
@@ -899,5 +902,5 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Message = Non
 
 
 if __name__ == "__main__":
-    logger.info(f"🎵 {BOT_NAME} Music Bot Starting (Balethon version)...")
+    logger.info(f"🎵 {BOT_NAME} Music Bot Starting (with anti‑detection & tagging)...")
     bot.run()
