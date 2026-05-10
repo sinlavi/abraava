@@ -290,7 +290,7 @@ async def download_and_send_track(bot: Bot, chat_id: int, video_url: str, track_
             audio_input = InputFile(f.read(), file_name=f"{track_title}.mp3")
             if cover_bytes:
                 thumb_input = InputFile(cover_bytes, file_name="cover.jpg")
-                await bot.send_audio(chat_id, audio=audio_input, caption=caption, thumb=thumb_input)
+                await bot.send_audio(chat_id, audio=audio_input, caption=caption)
             else:
                 await bot.send_audio(chat_id, audio=audio_input, caption=caption)
 
