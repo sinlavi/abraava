@@ -302,8 +302,40 @@ async def download_and_send_track(bot: Bot, chat_id: int, video_url: str, track_
             os.remove(temp_audio_file)
 
 def download_video(url, options):
-    with yt_dlp.YoutubeDL(options) as ydl:
-        ydl.download([url])
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            ydl.download([url])
+    except Exception as e:
+        error_msg = str(e)
+        if "Requested format is not available" in error_msg:
+            logger.error(f"Format error for {url}. Fetching available formats list...")
+            try:
+                # Set up a new extractor without format limits to get all formats
+                info_opts = {
+                    'quiet': True,
+                    'no_warnings': True,
+                    'cookiefile': options.get('cookiefile')
+                }
+                with yt_dlp.YoutubeDL(info_opts) as ydl_info:
+                    info = ydl_info.extract_info(url, download=False)
+                    formats = info.get('formats', [])
+                    
+                    format_log = f"\n--- Available formats for {url} ---\n"
+                    for f in formats:
+                        fid = f.get('format_id', 'N/A')
+                        ext = f.get('ext', 'N/A')
+                        acodec = f.get('acodec', 'none')
+                        vcodec = f.get('vcodec', 'none')
+                        note = f.get('format_note', '')
+                        format_log += f"ID: {fid:<5} | Ext: {ext:<4} | Acodec: {acodec:<10} | Vcodec: {vcodec:<10} | Note: {note}\n"
+                    
+                    logger.error(format_log)
+            except Exception as extract_error:
+                logger.error(f"Failed to extract format list: {extract_error}")
+        
+        # Re-raise the original exception so the rest of your error handling works
+        raise e
+
 
 async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
     """Check audio cache channel, forward if exists; else download, upload to channel, store mapping."""
