@@ -289,26 +289,26 @@ def tag_mp3(file_path: Path, title: str, artist: str, album: str, cover_bytes: b
         logger.error(f"Failed to tag MP3 {file_path}: {e}")
 
 # ---------- Download & Caching Logic ----------
-async def send_audio_with_retry(bot: Bot, chat_id: int, audio: InputFile, caption: str, max_retries=3):
+# ---------- Download & Caching Logic ----------
+async def send_audio_with_retry(bot: Bot, chat_id: int, audio_bytes: bytes, file_name: str, caption: str, max_retries=3):
     """Send audio with retry on gateway timeout (504)."""
     last_exception = None
     for attempt in range(1, max_retries + 1):
         try:
-            return await bot.send_audio(chat_id, audio=audio, caption=caption)
+            audio_input = InputFile(audio_bytes, file_name=file_name)
+            return await bot.send_audio(chat_id, audio=audio_input, caption=caption)
         except APIError as e:
-            # Check if it's a 504 or similar gateway error
             if "504" in str(e) or "Gateway Time-out" in str(e):
                 logger.warning(f"send_audio 504, retry {attempt}/{max_retries}")
                 last_exception = e
-                await asyncio.sleep(attempt * 2)  # exponential backoff
-                # Need a fresh InputFile because the stream might be consumed
-                audio = InputFile(audio.read_bytes(), file_name=audio.file_name)
+                await asyncio.sleep(attempt * 2)
             else:
                 raise
         except Exception as e:
             last_exception = e
             break
     raise last_exception
+
 
 async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
     status_msg = await bot.send_message(chat_id, f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*{FOOTER}")
@@ -373,15 +373,16 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
 
         caption = f"🎵 {t_name}\n🎤 {a_name}\n📀 {album_name}\n🔊 MP3 320 kbps | {file_size_mb:.1f} MB{FOOTER}"
 
-        # Read the MP3 as bytes for sending
+        # Read the entire file into memory once
         audio_bytes = mp3_path.read_bytes()
-        audio_input = InputFile(audio_bytes, file_name=f"{t_name}.mp3")
 
         # Upload the tagged file to the DB_CHANNEL_ID first (if exists)
         if DB_CHANNEL_ID:
             try:
                 await status_msg.edit(f"☁️ در حال آپلود در سرورهای ابری {BOT_NAME}...{FOOTER}")
-                db_msg = await send_audio_with_retry(bot, int(DB_CHANNEL_ID), audio_input, caption)
+                db_msg = await send_audio_with_retry(
+                    bot, int(DB_CHANNEL_ID), audio_bytes, f"{t_name}.mp3", caption
+                )
                 
                 if db_msg and db_msg.message_id:
                     # Cache successful, save ID
@@ -391,12 +392,11 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
                     await status_msg.edit(f"✅ دانلود و پردازش با موفقیت انجام شد.{FOOTER}")
             except Exception as e:
                 logger.error(f"Error caching to DB_CHANNEL: {e}")
-                # Retry with fresh bytes if the first upload consumed the stream (InputFile is consumed once)
-                audio_input2 = InputFile(mp3_path.read_bytes(), file_name=f"{t_name}.mp3")
-                await send_audio_with_retry(bot, chat_id, audio_input2, caption)
+                # Retry sending directly to user with the same bytes
+                await send_audio_with_retry(bot, chat_id, audio_bytes, f"{t_name}.mp3", caption)
                 await status_msg.edit(f"✅ آهنگ مستقیما ارسال شد (خطا در ذخیره دیتابیس).{FOOTER}")
         else:
-            await send_audio_with_retry(bot, chat_id, audio_input, caption)
+            await send_audio_with_retry(bot, chat_id, audio_bytes, f"{t_name}.mp3", caption)
             await status_msg.edit(f"✅ دانلود و ارسال با موفقیت انجام شد.{FOOTER}")
 
         # Clean up temp file
@@ -405,7 +405,6 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
     except Exception as e:
         logger.exception("Download error")
         await status_msg.edit(f"❌ خطا در عملیات: {e}{FOOTER}")
-
 async def send_voice_preview(chat_id: int, track_id: int):
     status_msg = await bot.send_message(chat_id, f"⏳ در حال دریافت پیش‌نمایش...{FOOTER}")
     track_data = await get_track(track_id)
