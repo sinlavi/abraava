@@ -1,0 +1,84 @@
+name: 🎵 Bale Music Bot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ---------- WARP (Cloudflare proxy) with Docker caching ----------
+      - name: Cache Docker images (WARP)
+        uses: actions/cache@v4
+        id: cache-warp
+        with:
+          path: /tmp/warp-image.tar
+          key: warp-image-caomingjun
+
+      - name: Load or pull WARP container
+        run: |
+          if [[ -f /tmp/warp-image.tar ]]; then
+            docker load < /tmp/warp-image.tar
+          else
+            docker pull caomingjun/warp
+            docker save caomingjun/warp -o /tmp/warp-image.tar
+          fi
+
+      - name: Start Cloudflare WARP proxy
+        run: |
+          docker network inspect warp-net >/dev/null 2>&1 || docker network create warp-net
+          docker rm -f warp 2>/dev/null || true
+          docker run -d --name warp --restart=always --network warp-net \
+            -p 1080:1080 --cap-add NET_ADMIN \
+            --sysctl net.ipv6.conf.all.disable_ipv6=0 \
+            --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+            -v warp-data:/var/lib/cloudflare-warp \
+            caomingjun/warp
+          sleep 10
+          curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 5 || true
+
+      # ---------- FFmpeg using official action (faster & simpler) ----------
+      - name: Set up FFmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v3
+        id: setup-ffmpeg
+        with:
+          ffmpeg-version: release
+          architecture: ''        # auto
+          linking-type: static
+          github-token: ${{ github.server_url == 'https://github.com' && github.token || '' }}
+
+      # ---------- Python & dependencies ----------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # ---------- Run the bot ----------
+      - name: Run bot
+        env:
+          DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
+          BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
+        run: |
+          timeout 5h python bot.py || true
+
+      - name: Commit & Push Updated Database
+        if: always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add cache.db
+          git diff-index --quiet HEAD || git commit -m "Auto-update audio database"
+          git push
