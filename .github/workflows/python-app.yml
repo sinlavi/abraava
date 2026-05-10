@@ -16,13 +16,20 @@ jobs:
         with:
           fetch-depth: 1
 
-      # ---------- WARP (Cloudflare proxy) with Docker caching ----------
-      - name: Cache Docker images (WARP)
-        uses: actions/cache@v4
+      # ---------- WARP (Cloudflare proxy) with digest‑based Docker caching ----------
+      - name: Get WARP image digest
+        id: warp-digest
+        run: |
+          docker pull --quiet caomingjun/warp
+          DIGEST=$(docker inspect caomingjun/warp --format='{{.Id}}')
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+      - name: Cache WARP Docker image
         id: cache-warp
+        uses: actions/cache@v4
         with:
           path: /tmp/warp-image.tar
-          key: warp-image-caomingjun
+          key: warp-image-${{ steps.warp-digest.outputs.digest }}
 
       - name: Load or pull WARP container
         run: |
@@ -46,13 +53,20 @@ jobs:
           sleep 10
           curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 5 || true
 
-      # ---------- FFmpeg using official action (faster & simpler) ----------
+      # ---------- FFmpeg caching (tool cache directory) ----------
+      - name: Cache FFmpeg binaries
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: ~/tool_cache/ffmpeg
+          key: ffmpeg-release-${{ runner.os }}
+
       - name: Set up FFmpeg
         uses: FedericoCarboni/setup-ffmpeg@v3
-        id: setup-ffmpeg
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         with:
           ffmpeg-version: release
-          architecture: ''        # auto
+          architecture: ''
           linking-type: static
           github-token: ${{ github.server_url == 'https://github.com' && github.token || '' }}
 
