@@ -509,13 +509,13 @@ def tag_mp3(file_path: Path, title: str, artist: str, album: str, cover_bytes: b
         logger.error(f"Failed to tag MP3 {file_path}: {e}")
 
 # ---------- Download & Caching Logic ----------
-async def send_audio_with_retry(bot: Bot, chat_id: int, audio_bytes: bytes, file_name: str, caption: str, max_retries=3):
+async def send_audio_with_retry(bot: Bot, chat_id: int, audio_path: str, file_name: str, caption: str, max_retries=1):
     """Send audio with retry on gateway timeout (504)."""
     last_exception = None
     for attempt in range(1, max_retries + 1):
         try:
-            audio_input = InputFile(audio_bytes, file_name=file_name)
-            return await bot.send_audio(chat_id, audio=audio_input, caption=caption)
+            audio_file = InputFile(audio_path, file_name=file_name)
+            return await bot.send_audio(chat_id, audio=audio_file, caption=caption)
         except APIError as e:
             if "504" in str(e) or "Gateway Time-out" in str(e):
                 logger.warning(f"send_audio 504, retry {attempt}/{max_retries}")
@@ -594,30 +594,27 @@ async def send_cached_or_download(bot: Bot, chat_id: int, track_id: int):
 
         caption = f"🎵 {t_name}\n🎤 {a_name}\n📀 {album_name}\n🔊 MP3 320 kbps | {file_size_mb:.1f} MB{FOOTER}"
 
-        # Read the entire file into memory once
-        audio_bytes = mp3_path.read_bytes()
-
         # Upload the tagged file to the DB_CHANNEL_ID first (if exists)
         if DB_CHANNEL_ID:
             try:
                 await status_msg.edit(f"☁️ در حال آپلود در سرورهای ابری {BOT_NAME}...{FOOTER}")
                 db_msg = await send_audio_with_retry(
-                    bot, int(DB_CHANNEL_ID), audio_bytes, f"{t_name}.mp3", caption
+                    bot, int(DB_CHANNEL_ID), mp3_path, f"{t_name}.mp3", caption
                 )
 
                 if db_msg and db_msg.message_id:
                     # Cache successful, save ID
-                    await set_audio_cache(track_id, db_msg.message_id)
+                    await set_audio_cache(track_id, int(db_msg.message_id))
                     # Forward to User
                     await bot.forward_message(chat_id, from_chat_id=DB_CHANNEL_ID, message_id=db_msg.message_id)
                     await status_msg.edit(f"✅ دانلود و پردازش با موفقیت انجام شد.{FOOTER}")
             except Exception as e:
                 logger.error(f"Error caching to DB_CHANNEL: {e}")
                 # Retry sending directly to user with the same bytes
-                await send_audio_with_retry(bot, chat_id, audio_bytes, f"{t_name}.mp3", caption)
+                await send_audio_with_retry(bot, chat_id, mp3_path, f"{t_name}.mp3", caption)
                 await status_msg.edit(f"✅ آهنگ مستقیما ارسال شد (خطا در ذخیره دیتابیس).{FOOTER}")
         else:
-            await send_audio_with_retry(bot, chat_id, audio_bytes, f"{t_name}.mp3", caption)
+            await send_audio_with_retry(bot, chat_id, mp3_path, f"{t_name}.mp3", caption)
             await status_msg.edit(f"✅ دانلود و ارسال با موفقیت انجام شد.{FOOTER}")
 
         # Clean up temp file
