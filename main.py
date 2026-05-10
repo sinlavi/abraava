@@ -65,8 +65,6 @@ async def crawl_artist_albums(artist_id: int, status_msg: Message = None):
                 albums.append(album_id)
                 # Store album in relational DB
                 await store_album(item)
-                # Also crawl the tracks of this album to fully populate the cache
-                await crawl_album_tracks(album_id, status_msg)
         await set_cached(cache_id, "artist_albums", {"albums": albums})
 
 
@@ -553,10 +551,10 @@ async def send_search_page(chat_id: int, search_id: str, page: int, message_to_e
                 btn_text = f"🎤 {item.get('artistName', 'نامشخص')}"
                 callback = f"artist:{item['artistId']}:1"
             elif wrapper == "collection":
-                btn_text = f"📀 {item.get('collectionName', 'نامشخص')[:45]}"
+                btn_text = f"📀 {item.get('collectionName', 'نامشخص')[:45]} - {item.get('artistName', 'نامشخص')}"
                 callback = f"album:{item['collectionId']}:1"
             elif wrapper == "track":
-                btn_text = f"🎵 {item.get('trackName', 'نامشخص')[:45]}"
+                btn_text = f"🎵 {item.get('trackName', 'نامشخص')[:45]} - {item.get('artistName', 'نامشخص')}"
                 callback = f"track:{item['trackId']}"
             else:
                 continue
@@ -565,10 +563,10 @@ async def send_search_page(chat_id: int, search_id: str, page: int, message_to_e
                 btn_text = f"🎤 {item.get('artistName', 'نامشخص')}"
                 callback = f"artist:{item['artistId']}:1"
             elif type_ == "album":
-                btn_text = f"📀 {item.get('collectionName', 'نامشخص')[:45]}"
+                btn_text = f"📀 {item.get('collectionName', 'نامشخص')[:45]} - {item.get('artistName', 'نامشخص')}"
                 callback = f"album:{item['collectionId']}:1"
             elif type_ == "track":
-                btn_text = f"🎵 {item.get('trackName', 'نامشخص')[:45]}"
+                btn_text = f"🎵 {item.get('trackName', 'نامشخص')[:45]} - {item.get('artistName', 'نامشخص')}"
                 callback = f"track:{item['trackId']}"
         markup.append([InlineKeyboardButton(text=btn_text, callback_data=callback)])
 
@@ -808,7 +806,7 @@ async def show_album(chat_id: int, album_id: int, page: int = 1, message_to_edit
         for i, track in enumerate(page_items, 1):
             markup.append([InlineKeyboardButton(
                 text=f"🎵 {track.get('trackName', 'نامشخص')[:40]} - {track.get('artistName', 'نامشخص')[:40]}",
-                callback_data=f"track:{track['trackId']}")] - {track.get('artistName', 'نامشخص')[:40]})
+                callback_data=f"track:{track['trackId']}")])
         if total_pages > 1:
             pagination_row = create_pagination_row(f"album:{album_id}", page, total_pages)
             markup.append(pagination_row)
