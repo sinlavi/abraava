@@ -4,7 +4,6 @@ import os
 import sys
 import time
 import logging
-import tempfile
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -163,17 +162,25 @@ def download_audio(
     """
     Download YouTube audio as 320 kbps MP3.
 
-    Tries all 8 anti‑detection methods in sequence.  Returns the Path
+    Tries all 8 anti‑detection methods in sequence. Returns the Path
     to the downloaded MP3 file, or None if every method failed.
     """
     url = _normalize_url(url)
 
+    # استفاده از پوشه فعلی پروژه به جای temp
     if output_dir is None:
-        output_dir = tempfile.mkdtemp(prefix="yt_audio_")
+        # پوشه "downloads" در مسیر فعلی پروژه
+        output_dir = os.path.join(os.getcwd(), "downloads")
     else:
-        os.makedirs(output_dir, exist_ok=True)
+        # اگر مسیر نسبی داده شده، آن را به مسیر مطلق در پروژه تبدیل کن
+        if not os.path.isabs(output_dir):
+            output_dir = os.path.join(os.getcwd(), output_dir)
+    
+    # ایجاد پوشه اگر وجود نداشت
+    os.makedirs(output_dir, exist_ok=True)
 
     logger.info("Starting download: %s", url)
+    logger.info("Output directory: %s", output_dir)
     logger.info("Deno available: %s | Proxy available: %s", _check_deno(), _check_proxy())
 
     # Remember what files existed before so we can identify the new MP3
