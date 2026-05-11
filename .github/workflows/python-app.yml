@@ -1,4 +1,4 @@
-name: 🎵 Bale Music Bot
+name: Test Deply
 
 on:
   workflow_dispatch:
