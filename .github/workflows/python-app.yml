@@ -93,6 +93,14 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add abraava.db
+          
+          # Install git-lfs if needed
+          git lfs install
+          
+          # Track .db files with LFS
+          git lfs track "*.db"
+          
+          # Add and commit
+          git add abraava.db .gitattributes
           git diff-index --quiet HEAD || git commit -m "Auto-update audio database"
           git push
