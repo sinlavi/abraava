@@ -19,6 +19,12 @@ async def init_db():
                 last_updated INTEGER NOT NULL
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                last_updated INTEGER NOT NULL
+            )
+        """)
         # New relational tables
         await db.execute("""
             CREATE TABLE IF NOT EXISTS artist (

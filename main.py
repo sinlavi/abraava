@@ -6,18 +6,68 @@ import aiosqlite
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Union
 import os
+import time
+from collections import defaultdict
 from balethon.objects import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboard
 from ytmusicapi import YTMusic
 from balethon import Client
-from config import BOT_NAME, FOOTER, OFFLINE_MODE, ITEMS_PER_PAGE, BOT_TOKEN, DB_CHANNEL_ID, logger
+from config import BOT_NAME, FOOTER, OFFLINE_MODE, ITEMS_PER_PAGE, BOT_TOKEN, DB_CHANNEL_ID, INFO_CHANNEL_ID, logger
 from crawlers.itunes import search_itunes, lookup_itunes
 from crawlers.youtube import download_audio
 from database.config import init_db, DB_PATH
 from database.utils import is_cached, get_artist_db, set_cached, store_album, store_artist, set_audio_cache, \
-    delete_cached, get_album_db, get_cached, get_track_db, store_track, get_audio_cache, local_search
+    delete_cached, get_album_db, get_cached, get_track_db, store_track, get_audio_cache, local_search, store_user, \
+    get_users_db
 from utils import tag_mp3
 
 YT = None  # YTMusic instance initialized later
+
+
+# ---------- Rate Limiting ----------
+class RateLimiter:
+    def __init__(self, max_requests: int = 30, time_window: int = 60):
+        self.max_requests = max_requests
+        self.time_window = time_window
+        self.users = defaultdict(list)
+        self.global_requests = []
+        self.max_global = 1000  # Max global requests per minute
+
+    async def check_user(self, user_id: int) -> tuple[bool, int]:
+        """Check if user has exceeded rate limit. Returns (allowed, wait_time)"""
+        now = time.time()
+        user_requests = self.users[user_id]
+
+        # Clean old requests
+        user_requests = [t for t in user_requests if now - t < self.time_window]
+        self.users[user_id] = user_requests
+
+        # Global rate limit
+        self.global_requests = [t for t in self.global_requests if now - t < self.time_window]
+
+        if len(self.global_requests) >= self.max_global:
+            wait_time = int(self.time_window - (now - self.global_requests[0]))
+            return False, wait_time
+
+        if len(user_requests) >= self.max_requests:
+            wait_time = int(self.time_window - (now - user_requests[0]))
+            return False, wait_time
+
+        user_requests.append(now)
+        self.global_requests.append(now)
+        return True, 0
+
+    def get_user_remaining(self, user_id: int) -> int:
+        now = time.time()
+        user_requests = [t for t in self.users[user_id] if now - t < self.time_window]
+        return max(0, self.max_requests - len(user_requests))
+
+
+rate_limiter = RateLimiter(max_requests=30, time_window=60)
+
+# ---------- User Management ----------
+user_states = {}  # Track user states for conversation
+user_last_message = {}  # Track last message time for spam prevention
+broadcast_queue = asyncio.Queue()  # Queue for broadcast messages
 
 # ---------- Advanced Logging ----------
 logging.basicConfig(
@@ -168,7 +218,6 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
                                 max_retries=3, direct=False):
     """Send audio with retry on gateway timeout or internal errors."""
     last_exception = None
-    # Fix: Safely resolve absolute path and prevent splitting errors
     abs_audio_path = os.path.abspath(str(audio_path))
 
     if not os.path.exists(abs_audio_path):
@@ -302,7 +351,6 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int):
         logger.exception("Download error")
         await status_msg.edit(f"❌ خطا در عملیات: {e}{FOOTER}")
     finally:
-        # Fix: Safely clean up temp file using try-except
         if mp3_path and mp3_path.exists():
             try:
                 mp3_path.unlink()
@@ -330,6 +378,44 @@ async def send_voice_preview(chat_id: int, track_id: int):
     except Exception as e:
         logger.error(f"Failed to send audio preview: {e}")
         await status_msg.edit(f"❌ خطا در ارسال پیش‌نمایش.{FOOTER}")
+
+
+# ---------- Channel Membership Check ----------
+async def check_channel_membership(bot: Client, user_id: int) -> bool:
+    is_registered = await get_users_db(user_id)
+    logger.info(is_registered)
+    if is_registered == 0:
+        await store_user(user_id)
+    """Check if user is member of INFO_CHANNEL_ID"""
+    if not INFO_CHANNEL_ID:
+        return True
+
+    try:
+        member = await bot.get_chat_member(int(INFO_CHANNEL_ID), user_id)
+        if member.status in ["member", "administrator", "creator"]:
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Error checking membership for user {user_id}: {e}")
+        return False
+
+
+async def require_membership(bot: Client, chat_id: int, user_id: int) -> bool:
+    """Check membership and send join request if not member"""
+    is_member = await check_channel_membership(bot, user_id)
+    if not is_member:
+        markup = InlineKeyboard(*[
+            [InlineKeyboardButton(text="🔗 عضویت در کانال", url=f"https://ble.ir/abraava")],
+            [InlineKeyboardButton(text="✅ تایید عضویت", callback_data="verify_membership")]
+        ])
+        await bot.send_message(
+            chat_id,
+            f"⚠️ *برای استفاده از {BOT_NAME}، ابتدا باید در کانال ما عضو شوید.*\n\n"
+            f"پس از عضویت، روی دکمه «تایید عضویت» کلیک کنید.{FOOTER}",
+            reply_markup=markup
+        )
+        return False
+    return True
 
 
 # ---------- Helper functions ----------
@@ -384,53 +470,174 @@ bot = Client(token=BOT_TOKEN)
 async def on_initialize():
     await init_db()
     logger.info("Database initialized successfully (relational tables ready).")
+    logger.info(f"Bot started with rate limiting: {rate_limiter.max_requests} req/min per user")
+
+    # Start broadcast worker
+    asyncio.create_task(broadcast_worker())
+
+
+async def broadcast_worker():
+    """Worker to send broadcast messages to all users"""
+    logger.info("Broadcast worker started")
+    while True:
+        try:
+            message_data = await broadcast_queue.get()
+            users = message_data["users"]
+            message = message_data["message"]
+            success_count = 0
+            fail_count = 0
+
+            for user_id in users:
+                try:
+                    await bot.forward_message(
+                        chat_id=user_id,
+                        from_chat_id=int(INFO_CHANNEL_ID),
+                        message_id=message.id
+                    )
+                    success_count += 1
+                    await asyncio.sleep(0.05)  # Rate limit for broadcasting
+                except Exception as e:
+                    logger.error(f"Failed to forward to user {user_id}: {e}")
+                    fail_count += 1
+                    await asyncio.sleep(0.1)
+
+            logger.info(f"Broadcast completed: {success_count} success, {fail_count} failed")
+            broadcast_queue.task_done()
+        except Exception as e:
+            logger.error(f"Broadcast worker error: {e}")
+            await asyncio.sleep(1)
+
+
+async def get_all_users() -> List[int]:
+    """Get all unique user IDs from database"""
+    users = set()
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute("SELECT DISTINCT user_id FROM user_sessions") as cursor:
+                async for row in cursor:
+                    users.add(row[0])
+    except:
+        pass
+    return list(users)
+
+
+async def parse_search_query(text: str) -> Optional[tuple[str, str]]:
+    """Parse search query from text. Returns (type, term) or None"""
+    text = text.strip()
+    if not text:
+        return None
+
+    # Check for direct commands without /search
+    if text.startswith("/search"):
+        text = text[7:].strip()
+
+    if ":" in text:
+        parts = text.split(":", 1)
+        type_ = parts[0].lower()
+        term = parts[1].strip()
+        if type_ in ["artist", "album", "track", "آهنگ", "آلبوم", "خواننده", "هنرمند"]:
+            # Translate Persian to English
+            persian_map = {
+                "آهنگ": "track",
+                "آلبوم": "album",
+                "خواننده": "artist",
+                "هنرمند": "artist"
+            }
+            type_ = persian_map.get(type_, type_)
+            return (type_, term)
+        else:
+            return ("track", text)
+    else:
+        return ("track", text)
 
 
 @bot.on_message()
 async def handle_message(message):
-    if not message.content:
-        return
+    if message.content:
+        if message.chat.id == int(INFO_CHANNEL_ID) and message.chat.type == "channel":
+            await handle_channel_post(message)
+            return
 
     is_group = message.chat.type in ["group", "supergroup", "channel"]
     msg_text = message.content
+    user_id = message.author.id
+    chat_id = message.chat.id
 
+    # Rate limiting check
+    date = await rate_limiter.check_user(user_id)
+    allowed, wait_time = await rate_limiter.check_user(user_id)
+    if not allowed:
+        if is_group:
+            return  # Silent ignore in groups
+        await message.reply(
+            f"⚠️ *محدودیت نرخ درخواست*\n\n"
+            f"شما حداکثر {rate_limiter.max_requests} درخواست در دقیقه مجاز هستید.\n"
+            f"لطفاً {wait_time} ثانیه صبر کنید.{FOOTER}"
+        )
+        return
+
+    # Handle group mentions
     if is_group:
         bot_mention = f"@{bot.user.username}"
         if bot_mention not in msg_text:
             return
         msg_text = msg_text.replace(bot_mention, "").strip()
 
+    if not is_group and INFO_CHANNEL_ID and not msg_text.startswith('/start'):
+        is_member = await check_channel_membership(bot, user_id)
+        if not is_member:
+            await require_membership(bot, chat_id, user_id)
+            return
     # Command Handlers
     if msg_text.startswith("/start"):
-        await message.reply(
+        welcome_text = (
             f"🎵 *به ربات جستجو و دانلود موسیقی {BOT_NAME} خوش آمدید!*\n\n"
+            f"✨ *قابلیت جدید:* کافیست نام آهنگ را مستقیماً بنویسید (بدون /search)!\n\n"
             "*دستورات:*\n"
             "/search artist:<نام> - جستجوی هنرمند\n"
             "/search album:<نام> - جستجوی آلبوم\n"
             "/search track:<نام> - جستجوی آهنگ\n"
-            "/search <نام> - جستجوی ترکیبی\n\n"
+            "/search <نام> - جستجوی ترکیبی\n"
+            "`<نام>` - جستجوی مستقیم آهنگ\n\n"
             "*ویژگی‌ها:*\n"
             "• کش شدن و دیتابیس اختصاصی (ارسال فوری)\n"
             "• ثبت خودکار متادیتا (کاور، نام و خواننده) روی آهنگ\n"
             "• پخش پیش‌نمایش صوتی با لمس دکمه\n"
             "• دانلود سورس اورجینال از یوتیوب موزیک (ضد تحریم)\n"
+            "• محدودیت نرخ: ۳۰ درخواست در دقیقه\n"
             "  🔊 MP3 320 kbps | ۸ روش عبور از تشخیص ربات"
-            f"{FOOTER}"
         )
+
+        if INFO_CHANNEL_ID:
+            welcome_text += f"\n\n📢 *برای اطلاع از آخرین اخبار در کانال ما عضو شوید:* \n\nble.ir/join/4T95Zt7P5X"
+
+        welcome_text += FOOTER
+
+        markup = None
+        if INFO_CHANNEL_ID:
+            markup = InlineKeyboard([
+                [InlineKeyboardButton(text="📢 کانال اطلاع‌رسانی", url=f"https://ble.ir/{INFO_CHANNEL_ID}")]
+            ])
+
+        await message.reply(welcome_text, reply_markup=markup)
+
     elif msg_text.startswith("/help"):
         await message.reply(
             f"🛠 *راهنمای استفاده از {BOT_NAME}*\n\n"
-            "برای جستجوی موزیک کافیست از دستور /search استفاده کنید.\n"
-            "مثال: /search ed sheeran\n\n"
+            "برای جستجوی موزیک کافیست نام آن را بنویسید یا از دستور /search استفاده کنید.\n"
+            "مثال: `Ed Sheeran Perfect`\n\n"
             "⚠️ اگر می‌خواهید ربات را در گروه‌ها استفاده کنید، حتما باید آیدی ربات را تگ کنید:\n"
-            f"@{bot.user.username} /search hello"
+            f"@{bot.user.username} Ed Sheeran\n\n"
+            f"🔒 محدودیت: {rate_limiter.max_requests} درخواست در دقیقه"
             f"{FOOTER}"
         )
     elif msg_text.startswith("/about"):
         await message.reply(
             f"ℹ️ *درباره ربات {BOT_NAME}*\n\n"
             f"این ربات یک دستیار هوشمند برای جستجو در دیتابیس عظیم iTunes و دانلود باکیفیت‌ترین سورس موجود از YouTube Music به صورت ضدتحریم می‌باشد.\n"
-            f"تمامی آهنگ‌ها پیش از ارسال توسط سرورهای ما پردازش و تگ‌گذاری (کاور و اطلاعات) می‌شوند."
+            f"تمامی آهنگ‌ها پیش از ارسال توسط سرورهای ما پردازش و تگ‌گذاری (کاور و اطلاعات) می‌شوند.\n\n"
+            f"⚡ *مقیاس‌پذیری:* آماده سرویس‌دهی به ۱ میلیون کاربر\n"
+            f"🔒 *Rate Limit:* {rate_limiter.max_requests} req/min per user"
             f"{FOOTER}"
         )
     elif msg_text.startswith("/setting"):
@@ -439,57 +646,74 @@ async def handle_message(message):
             "در حال حاضر تنظیمات خاصی برای پیکربندی وجود ندارد و ربات در بهترین حالت کیفی (MP3 320kbps) تنظیم شده است."
             f"{FOOTER}"
         )
-    elif msg_text.startswith("/search"):
-        parts = msg_text.split(" ", 1)
-        if len(parts) < 2:
-            await message.reply(
-                f"❌ *لطفاً عبارت جستجو را وارد کنید.*\nمثال: /search artist:Taylor Swift یا /search hello{FOOTER}")
-            return
-        query = parts[1].strip()
-        if ":" in query:
-            type_, term = query.split(":", 1)
-            type_ = type_.lower()
-            if type_ not in ["artist", "album", "track"]:
-                await message.reply(
-                    f"❌ *نوع جستجو نامعتبر است.*\nیکی از گزینه‌های artist, album, track را انتخاب کنید.{FOOTER}")
-                return
+    elif msg_text.startswith("/stats"):
+        # Admin stats
+        remaining = rate_limiter.get_user_remaining(user_id)
+        await message.reply(
+            f"📊 *آمار شما*\n\n"
+            f"• درخواست‌های باقی‌مانده: {remaining}/{rate_limiter.max_requests}\n"
+            f"• پنجره زمانی: {rate_limiter.time_window} ثانیه\n"
+            f"• وضعیت: {'✅ فعال' if remaining > 0 else '⛔ محدود شده'}"
+            f"{FOOTER}"
+        )
+    else:
+        # Direct search without /search command
+        result = await parse_search_query(msg_text)
+        if result:
+            type_, term = result
+            await handle_search_command(chat_id, user_id, type_, term, message)
+
+
+async def handle_channel_post(message):
+    """Handle new posts in INFO_CHANNEL_ID for broadcasting"""
+    content = message.content
+    should_broadcast = "#تبلیغ" in content or "#اطلاع_رسانی" in content
+
+    if should_broadcast:
+        logger.info(f"Broadcasting message from channel: {content[:100]}...")
+        users = await get_all_users()
+        if users:
+            await broadcast_queue.put({"users": users, "message": message})
+            logger.info(f"Broadcast queued for {len(users)} users")
+
+
+async def handle_search_command(chat_id: int, user_id: int, type_: str, term: str, original_message: Message = None):
+    """Handle search command with rate limiting"""
+    entity_map = {"artist": "musicArtist", "album": "album", "track": "musicTrack"}
+    type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ", "all": "همه"}
+
+    status_msg = await bot.send_message(chat_id,
+                                        f"🔍 *در حال جستجوی {type_fa_map.get(type_, type_)}: {term}...*{FOOTER}")
+
+    search_id = generate_search_hash(type_, term)
+    cache_key = f"search:{search_id}"
+
+    results = None
+    if not OFFLINE_MODE:
+        if type_ == "all":
+            results = await search_itunes(term, entity=None, limit=50)
         else:
-            type_ = "track"
-            term = query
+            results = await search_itunes(term, entity_map.get(type_, type_), limit=50)
 
-        entity_map = {"artist": "musicArtist", "album": "album", "track": "musicTrack"}
-        type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ", "all": "همه"}
-        status_msg = await message.reply(f"🔍 *در حال جستجوی {type_fa_map[type_]}: {term}...*{FOOTER}")
+    if results is None:
+        results = await local_search(term, type_)
 
-        search_id = generate_search_hash(type_, term)
-        cache_key = f"search:{search_id}"
-
-        results = None
+    if results and results.get("resultCount", 0) > 0:
+        await set_cached(cache_key, "search", {"type": type_, "term": term, "data": results})
         if not OFFLINE_MODE:
-            if type_ == "all":
-                results = await search_itunes(term, entity=None, limit=50)
-            else:
-                results = await search_itunes(term, entity_map[type_], limit=50)
+            for item in results["results"]:
+                if item.get("wrapperType") == "artist":
+                    await store_artist(item)
+                elif item.get("wrapperType") == "collection":
+                    await store_album(item)
+                elif item.get("wrapperType") == "track":
+                    await store_track(item)
+    else:
+        await status_msg.edit(f"❌ *هیچ نتیجه‌ای برای '{term}' یافت نشد.*{FOOTER}")
+        return
 
-        if results is None:
-            results = await local_search(term, type_)
-
-        if results and results.get("resultCount", 0) > 0:
-            await set_cached(cache_key, "search", {"type": type_, "term": term, "data": results})
-            if not OFFLINE_MODE:
-                for item in results["results"]:
-                    if item.get("wrapperType") == "artist":
-                        await store_artist(item)
-                    elif item.get("wrapperType") == "collection":
-                        await store_album(item)
-                    elif item.get("wrapperType") == "track":
-                        await store_track(item)
-        else:
-            await status_msg.edit(f"❌ *هیچ نتیجه‌ای برای '{term}' یافت نشد.*{FOOTER}")
-            return
-
-        await status_msg.delete()
-        await send_search_page(message.chat.id, search_id, 1, message_to_edit=None, original_term=term)
+    await status_msg.delete()
+    await send_search_page(chat_id, search_id, 1, message_to_edit=None, original_term=term)
 
 
 async def send_search_page(chat_id: int, search_id: str, page: int, message_to_edit: Optional[Message] = None,
@@ -567,8 +791,18 @@ async def send_search_page(chat_id: int, search_id: str, page: int, message_to_e
 async def on_callback(callback_query: CallbackQuery):
     data = callback_query.data
     chat_id = callback_query.message.chat.id
+    user_id = callback_query.author.id
+
     logger.info(f"Callback received: {data} from user {chat_id}")
+
+    # Rate limiting for callbacks too
+    allowed, wait_time = await rate_limiter.check_user(user_id)
+    if not allowed:
+        await bot.answer_callback_query(callback_query.id, f"⏳ لطفاً {wait_time} ثانیه صبر کنید", show_alert=True)
+        return
+
     if data == "ignore":
+        await bot.answer_callback_query(callback_query.id)
         return
     if data == "close":
         try:
@@ -576,6 +810,22 @@ async def on_callback(callback_query: CallbackQuery):
         except:
             pass
         return
+    if data == "verify_membership":
+        if INFO_CHANNEL_ID:
+            is_member = await check_channel_membership(bot, user_id)
+            if is_member:
+                await bot.answer_callback_query(callback_query.id, "✅ عضویت شما تایید شد!", show_alert=True)
+                await callback_query.message.delete()
+                await bot.send_message(
+                    chat_id,
+                    f"✅ *عضویت شما با موفقیت تایید شد!*\n\n"
+                    f"حالا می‌توانید از {BOT_NAME} استفاده کنید.\n"
+                    f"کافیست نام آهنگ مورد نظر خود را بنویسید.{FOOTER}"
+                )
+            else:
+                await bot.answer_callback_query(callback_query.id, "❌ هنوز عضو نشده‌اید!", show_alert=True)
+        return
+
     try:
         parts = data.split(":")
         if data.startswith("page:search:"):
@@ -822,6 +1072,8 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Optional[Mess
 
 
 if __name__ == "__main__":
-    logger.info(f"🎵 {BOT_NAME} Music Bot Starting (with relational DB & offline search)...")
+    logger.info(f"🎵 {BOT_NAME} Music Bot Starting (with relational DB, rate limiting & broadcast)...")
+    logger.info(f"Rate limit: {rate_limiter.max_requests} req/min per user")
+    logger.info(f"Global rate limit: {rate_limiter.max_global} req/min")
+    logger.info(f"Broadcast enabled for channel: {INFO_CHANNEL_ID}")
     bot.run()
-

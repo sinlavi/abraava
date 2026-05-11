@@ -24,6 +24,18 @@ async def store_artist(item: dict):
         await db.commit()
 
 
+async def store_user(id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT OR REPLACE INTO users (id,last_updated)
+            VALUES (?,?)
+        """, (
+            str(id),
+            int(time.time())
+        ))
+        await db.commit()
+
+
 async def store_album(item: dict):
     """Insert or replace an album from iTunes API item into the album table."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -79,6 +91,16 @@ async def get_artist_db(artist_id: int) -> Optional[Dict[str, Any]]:
     return None
 
 
+async def get_users_db(id: int):
+    """Fetch artist from local DB and return in iTunes lookup format."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT id FROM users WHERE id = ?", (id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return True
+    return False
+
+
 async def get_album_db(collection_id: int) -> Optional[Dict[str, Any]]:
     """Fetch album from local DB and return in iTunes lookup format."""
     async with aiosqlite.connect(DB_PATH) as db:
@@ -117,6 +139,19 @@ async def set_cached(id: str, type: str, data: Dict[str, Any]):
             VALUES (?, ?, ?, ?)
         """, (id, type, json.dumps(data), int(time.time())))
         await db.commit()
+
+
+async def get_all_users():
+    """Get all unique user IDs from database"""
+    users = set()
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute("SELECT DISTINCT id FROM users") as cursor:
+                async for row in cursor:
+                    users.add(row[0])
+    except:
+        pass
+    return list(users)
 
 
 async def delete_cached(id: str):
