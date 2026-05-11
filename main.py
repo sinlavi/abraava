@@ -21,45 +21,54 @@ from database.utils import is_cached, get_artist_db, set_cached, store_album, st
 from utils import tag_mp3
 
 YT = None  # YTMusic instance initialized later
+HTTP_SESSION: Optional[aiohttp.ClientSession] = None
+# محدود کردن تعداد دانلودهای همزمان برای جلوگیری از بن شدن IP و مصرف بیش از حد RAM
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(20) 
 
-
-# ---------- Rate Limiting ----------
+# ---------- Rate Limiting (Optimized for High Concurrency) ----------
 class RateLimiter:
     def __init__(self, max_requests: int = 30, time_window: int = 60):
         self.max_requests = max_requests
         self.time_window = time_window
-        self.users = defaultdict(list)
-        self.global_requests = []
-        self.max_global = 1000  # Max global requests per minute
+        # ذخیره به شکل: {user_id: [تعداد درخواست, زمان ریست پنجره]}
+        self.users: Dict[int, List[Union[int, float]]] = {}
+        self.global_count = 0
+        self.global_reset = time.time()
+        self.max_global = 3000  # Max global requests per minute
 
     async def check_user(self, user_id: int) -> tuple[bool, int]:
         """Check if user has exceeded rate limit. Returns (allowed, wait_time)"""
         now = time.time()
-        user_requests = self.users[user_id]
-
-        # Clean old requests
-        user_requests = [t for t in user_requests if now - t < self.time_window]
-        self.users[user_id] = user_requests
-
-        # Global rate limit
-        self.global_requests = [t for t in self.global_requests if now - t < self.time_window]
-
-        if len(self.global_requests) >= self.max_global:
-            wait_time = int(self.time_window - (now - self.global_requests[0]))
+        
+        # بررسی گلوبال
+        if now - self.global_reset > self.time_window:
+            self.global_count = 0
+            self.global_reset = now
+            
+        if self.global_count >= self.max_global:
+            wait_time = int(self.time_window - (now - self.global_reset))
             return False, wait_time
 
-        if len(user_requests) >= self.max_requests:
-            wait_time = int(self.time_window - (now - user_requests[0]))
+        # بررسی کاربر
+        user_data = self.users.get(user_id)
+        if not user_data or now - user_data[1] > self.time_window:
+            user_data = [0, now]
+            self.users[user_id] = user_data
+
+        if user_data[0] >= self.max_requests:
+            wait_time = int(self.time_window - (now - user_data[1]))
             return False, wait_time
 
-        user_requests.append(now)
-        self.global_requests.append(now)
+        user_data[0] += 1
+        self.global_count += 1
         return True, 0
 
     def get_user_remaining(self, user_id: int) -> int:
         now = time.time()
-        user_requests = [t for t in self.users[user_id] if now - t < self.time_window]
-        return max(0, self.max_requests - len(user_requests))
+        user_data = self.users.get(user_id)
+        if not user_data or now - user_data[1] > self.time_window:
+            return self.max_requests
+        return max(0, self.max_requests - user_data[0])
 
 
 rate_limiter = RateLimiter(max_requests=30, time_window=60)
@@ -197,10 +206,8 @@ async def get_track(track_id: int, status_msg: Message = None) -> Optional[Dict[
 
 
 # ---------- YouTube Music Helper ----------
-async def search_youtube_track(query: str) -> Optional[str]:
-    if OFFLINE_MODE:
-        logger.info("Offline mode: skipping YouTube search")
-        return None
+def _sync_search_youtube(query: str) -> Optional[str]:
+    """تبدیل به تابع همگام برای اجرا در Thread"""
     global YT
     if YT is None:
         YT = YTMusic()
@@ -212,6 +219,13 @@ async def search_youtube_track(query: str) -> Optional[str]:
         logger.error(f"YTMusic search error: {e}")
     return None
 
+async def search_youtube_track(query: str) -> Optional[str]:
+    if OFFLINE_MODE:
+        logger.info("Offline mode: skipping YouTube search")
+        return None
+    # جلوگیری از قفل شدن Event Loop
+    return await asyncio.to_thread(_sync_search_youtube, query)
+
 
 # ---------- Download & Caching Logic ----------
 async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file_name: str, caption: str,
@@ -220,9 +234,11 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
     last_exception = None
     abs_audio_path = os.path.abspath(str(audio_path))
 
-    if not os.path.exists(abs_audio_path):
+    exists = await asyncio.to_thread(os.path.exists, abs_audio_path)
+    if not exists:
         logger.error(f"File not found for upload: {abs_audio_path}")
         raise FileNotFoundError(f"File not found: {abs_audio_path}")
+        
     chat_to_send = DB_CHANNEL_ID
     if direct:
         chat_to_send = chat_id
@@ -230,6 +246,7 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
 
     for attempt in range(1, max_retries + 1):
         try:
+            # Open file efficiently
             with open(abs_audio_path, 'rb') as audio_file:
                 logger.info('Sending audio...')
                 return await bot.send_document(
@@ -248,6 +265,17 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
                 raise e
     raise last_exception
 
+def _get_file_size_sync(path_str):
+    p = Path(path_str)
+    return p.stat().st_size / (1024 * 1024) if p.exists() else 0
+
+def _delete_file_sync(path_str):
+    try:
+        p = Path(path_str)
+        if p.exists():
+            p.unlink()
+    except Exception as e:
+        logger.error(f"Failed to delete temp file {path_str}: {e}")
 
 async def send_cached_or_download(bot: Client, chat_id: int, track_id: int):
     status_msg = await bot.send_message(chat_id, f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*{FOOTER}")
@@ -287,75 +315,71 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int):
         return
     video_url = f"https://music.youtube.com/watch?v={video_id}"
 
-    await status_msg.edit(f"⏳ در حال دانلود و آماده‌سازی آهنگ (روش‌های پیشرفته ضد تحریم)...{FOOTER}")
+    await status_msg.edit(f"⏳ در صف دانلود و آماده‌سازی...{FOOTER}")
 
-    mp3_path = None
+    mp3_path_str = None
     try:
-        mp3_path_str = await asyncio.get_event_loop().run_in_executor(
-            None, download_audio, video_url
-        )
+        # مدیریت دانلودهای همزمان
+        async with DOWNLOAD_SEMAPHORE:
+            await status_msg.edit(f"⏳ در حال دانلود و پردازش (روش‌های پیشرفته ضد تحریم)...{FOOTER}")
+            mp3_path_str = await asyncio.get_event_loop().run_in_executor(
+                None, download_audio, video_url
+            )
 
-        if not mp3_path_str:
-            await status_msg.edit(f"❌ دانلود با شکست مواجه شد — همه ۸ روش ناموفق بودند.{FOOTER}")
-            return
+            if not mp3_path_str:
+                await status_msg.edit(f"❌ دانلود با شکست مواجه شد — همه ۸ روش ناموفق بودند.{FOOTER}")
+                return
 
-        mp3_path = Path(mp3_path_str)
-        if not mp3_path.exists():
-            await status_msg.edit(f"❌ خطای داخلی: فایل دانلود شده یافت نشد.{FOOTER}")
-            return
+            file_size_mb = await asyncio.to_thread(_get_file_size_sync, mp3_path_str)
+            if file_size_mb == 0:
+                await status_msg.edit(f"❌ خطای داخلی: فایل دانلود شده یافت نشد.{FOOTER}")
+                return
 
-        file_size_mb = mp3_path.stat().st_size / (1024 * 1024)
-
-        # Download cover image
-        cover_bytes = None
-        if cover_url:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(cover_url) as resp:
+            # Download cover image using the global HTTP session
+            cover_bytes = None
+            if cover_url and HTTP_SESSION:
+                try:
+                    async with HTTP_SESSION.get(cover_url) as resp:
                         if resp.status == 200:
                             cover_bytes = await resp.read()
-            except Exception as e:
-                logger.error(f"Failed to download cover: {e}")
+                except Exception as e:
+                    logger.error(f"Failed to download cover: {e}")
 
-        # Update metadata using mutagen
-        await asyncio.get_event_loop().run_in_executor(
-            None, tag_mp3, mp3_path, t_name, a_name, album_name, cover_bytes
-        )
+            # Update metadata using mutagen
+            await asyncio.get_event_loop().run_in_executor(
+                None, tag_mp3, mp3_path_str, t_name, a_name, album_name, cover_bytes
+            )
 
-        caption = f"🎵 {t_name}\n🎤 {a_name}\n📀 {album_name}\n🔊 MP3 320 kbps | {file_size_mb:.1f} MB{FOOTER}"
+            caption = f"🎵 {t_name}\n🎤 {a_name}\n📀 {album_name}\n🔊 MP3 320 kbps | {file_size_mb:.1f} MB{FOOTER}"
 
-        # Upload the tagged file to DB_CHANNEL first (if exists)
-        if DB_CHANNEL_ID:
-            try:
-                await status_msg.edit(f"☁️ در حال آپلود در سرورهای ابری {BOT_NAME}...{FOOTER}")
-                db_msg = await send_audio_with_retry(
-                    bot, chat_id, str(mp3_path), f"{t_name}.mp3", caption
-                )
+            # Upload the tagged file to DB_CHANNEL first (if exists)
+            if DB_CHANNEL_ID:
+                try:
+                    await status_msg.edit(f"☁️ در حال آپلود در سرورهای ابری {BOT_NAME}...{FOOTER}")
+                    db_msg = await send_audio_with_retry(
+                        bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption
+                    )
 
-                if db_msg and db_msg.id:
-                    logger.info(db_msg)
-                    await bot.forward_message(chat_id, from_chat_id=int(DB_CHANNEL_ID), message_id=db_msg.id)
-                    await set_audio_cache(track_id, int(db_msg.id))
-                    await status_msg.edit(f"✅ دانلود و پردازش با موفقیت انجام شد.{FOOTER}")
-                else:
-                    raise Exception("No message ID returned from DB Channel")
-            except Exception as e:
-                logger.error(f"Error caching to DB_CHANNEL: {e}")
-                await send_audio_with_retry(bot, chat_id, str(mp3_path), f"{t_name}.mp3", caption, direct=True)
-                await status_msg.edit(f"✅ آهنگ مستقیما ارسال شد (خطا در ذخیره دیتابیس).{FOOTER}")
-        else:
-            await send_audio_with_retry(bot, chat_id, str(mp3_path), f"{t_name}.mp3", caption)
-            await status_msg.edit(f"✅ دانلود و ارسال با موفقیت انجام شد.{FOOTER}")
+                    if db_msg and db_msg.id:
+                        await bot.forward_message(chat_id, from_chat_id=int(DB_CHANNEL_ID), message_id=db_msg.id)
+                        await set_audio_cache(track_id, int(db_msg.id))
+                        await status_msg.edit(f"✅ دانلود و پردازش با موفقیت انجام شد.{FOOTER}")
+                    else:
+                        raise Exception("No message ID returned from DB Channel")
+                except Exception as e:
+                    logger.error(f"Error caching to DB_CHANNEL: {e}")
+                    await send_audio_with_retry(bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, direct=True)
+                    await status_msg.edit(f"✅ آهنگ مستقیما ارسال شد (خطا در ذخیره دیتابیس).{FOOTER}")
+            else:
+                await send_audio_with_retry(bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption)
+                await status_msg.edit(f"✅ دانلود و ارسال با موفقیت انجام شد.{FOOTER}")
 
     except Exception as e:
         logger.exception("Download error")
         await status_msg.edit(f"❌ خطا در عملیات: {e}{FOOTER}")
     finally:
-        if mp3_path and mp3_path.exists():
-            try:
-                mp3_path.unlink()
-            except Exception as e:
-                logger.error(f"Failed to delete temp file {mp3_path}: {e}")
+        if mp3_path_str:
+            await asyncio.to_thread(_delete_file_sync, mp3_path_str)
 
 
 async def send_voice_preview(chat_id: int, track_id: int):
@@ -383,7 +407,6 @@ async def send_voice_preview(chat_id: int, track_id: int):
 # ---------- Channel Membership Check ----------
 async def check_channel_membership(bot: Client, user_id: int) -> bool:
     is_registered = await get_users_db(user_id)
-    logger.info(is_registered)
     if is_registered == 0:
         await store_user(user_id)
     """Check if user is member of INFO_CHANNEL_ID"""
@@ -468,6 +491,8 @@ bot = Client(token=BOT_TOKEN)
 
 @bot.on_initialize()
 async def on_initialize():
+    global HTTP_SESSION
+    HTTP_SESSION = aiohttp.ClientSession()
     await init_db()
     logger.info("Database initialized successfully (relational tables ready).")
     logger.info(f"Bot started with rate limiting: {rate_limiter.max_requests} req/min per user")
@@ -475,6 +500,12 @@ async def on_initialize():
     # Start broadcast worker
     asyncio.create_task(broadcast_worker())
 
+
+@bot.on_disconnect()
+async def on_disconnect():
+    global HTTP_SESSION
+    if HTTP_SESSION and not HTTP_SESSION.closed:
+        await HTTP_SESSION.close()
 
 async def broadcast_worker():
     """Worker to send broadcast messages to all users"""
@@ -497,17 +528,14 @@ async def broadcast_worker():
                     success_count += 1
                     await asyncio.sleep(0.05)  # Rate limit for broadcasting
                 except Exception as e:
-                    logger.error(f"Failed to forward to user {user_id}: {e}")
                     fail_count += 1
-                    await asyncio.sleep(0.1)
+                    pass
 
             logger.info(f"Broadcast completed: {success_count} success, {fail_count} failed")
             broadcast_queue.task_done()
         except Exception as e:
             logger.error(f"Broadcast worker error: {e}")
             await asyncio.sleep(1)
-
-
 
 
 async def parse_search_query(text: str) -> Optional[tuple[str, str]]:
@@ -553,7 +581,6 @@ async def handle_message(message):
     chat_id = message.chat.id
 
     # Rate limiting check
-    date = await rate_limiter.check_user(user_id)
     allowed, wait_time = await rate_limiter.check_user(user_id)
     if not allowed:
         if is_group:
@@ -782,8 +809,6 @@ async def on_callback(callback_query: CallbackQuery):
     chat_id = callback_query.message.chat.id
     user_id = callback_query.author.id
 
-    logger.info(f"Callback received: {data} from user {chat_id}")
-
     # Rate limiting for callbacks too
     allowed, wait_time = await rate_limiter.check_user(user_id)
     if not allowed:
@@ -871,13 +896,17 @@ async def on_callback(callback_query: CallbackQuery):
             await show_track(chat_id, track_id, callback_query.message)
         elif data.startswith("download:"):
             track_id = int(parts[1])
-            await send_cached_or_download(bot, chat_id, track_id)
+            # این بخش را در Task جدید می‌فرستیم تا کالبک سریع بسته شود
+            await bot.answer_callback_query(callback_query.id, "در حال پردازش دانلود...")
+            asyncio.create_task(send_cached_or_download(bot, chat_id, track_id))
         elif data.startswith("preview:"):
             track_id = int(parts[1])
-            await send_voice_preview(chat_id, track_id)
+            await bot.answer_callback_query(callback_query.id, "در حال دریافت پیش‌نمایش...")
+            asyncio.create_task(send_voice_preview(chat_id, track_id))
         elif data.startswith("recrawl:"):
             type_ = parts[1]
             id_ = int(parts[2])
+            await bot.answer_callback_query(callback_query.id, "در حال بروزرسانی اطلاعات...")
             if type_ == "artist":
                 async with aiosqlite.connect(DB_PATH) as db:
                     await db.execute("DELETE FROM artist WHERE artistId = ?", (id_,))
@@ -902,7 +931,7 @@ async def on_callback(callback_query: CallbackQuery):
         logger.error(f"Error handling callback {data}: {e}")
 
 
-# ---------- Show functions (adapted for string path from download_audio) ----------
+# ---------- Show functions ----------
 async def show_artist(chat_id: int, artist_id: int, page: int = 1, message_to_edit: Optional[Message] = None):
     status_msg = await bot.send_message(chat_id, f"🔄 *در حال پردازش هنرمند...*{FOOTER}")
     data = await get_artist(artist_id, status_msg)
@@ -1061,8 +1090,7 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Optional[Mess
 
 
 if __name__ == "__main__":
-    logger.info(f"🎵 {BOT_NAME} Music Bot Starting (with relational DB, rate limiting & broadcast)...")
+    logger.info(f"🎵 {BOT_NAME} Music Bot Starting (High Concurrency Mode)...")
     logger.info(f"Rate limit: {rate_limiter.max_requests} req/min per user")
     logger.info(f"Global rate limit: {rate_limiter.max_global} req/min")
-    logger.info(f"Broadcast enabled for channel: {INFO_CHANNEL_ID}")
     bot.run()
