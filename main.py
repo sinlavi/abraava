@@ -249,9 +249,9 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
             # Open file efficiently
             with open(abs_audio_path, 'rb') as audio_file:
                 logger.info('Sending audio...')
-                return await bot.send_document(
+                return await bot.send_audio(
                     chat_id=int(chat_to_send),
-                    document=audio_file,
+                    audio=audio_file,
                     caption=caption
                 )
         except Exception as e:
@@ -306,7 +306,7 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int):
     album_name = track.get("collectionName", "")
     cover_url = get_high_res_artwork(track.get("artworkUrl100"), size=600)
 
-    query = f"{t_name}  {ye} by {a_name}"
+    query = f'"{t_name}" by {a_name} album {album_name} {ye}'
     await status_msg.edit(f"🔍 جستجوی سورس باکیفیت آهنگ در یوتیوب موزیک...{FOOTER}")
 
     video_id = await search_youtube_track(query)
