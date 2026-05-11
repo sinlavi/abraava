@@ -17,7 +17,7 @@ from crawlers.youtube import download_audio
 from database.config import init_db, DB_PATH
 from database.utils import is_cached, get_artist_db, set_cached, store_album, store_artist, set_audio_cache, \
     delete_cached, get_album_db, get_cached, get_track_db, store_track, get_audio_cache, local_search, store_user, \
-    get_users_db
+    get_users_db, get_all_users
 from utils import tag_mp3
 
 YT = None  # YTMusic instance initialized later
@@ -508,17 +508,6 @@ async def broadcast_worker():
             await asyncio.sleep(1)
 
 
-async def get_all_users() -> List[int]:
-    """Get all unique user IDs from database"""
-    users = set()
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute("SELECT DISTINCT user_id FROM user_sessions") as cursor:
-                async for row in cursor:
-                    users.add(row[0])
-    except:
-        pass
-    return list(users)
 
 
 async def parse_search_query(text: str) -> Optional[tuple[str, str]]:
