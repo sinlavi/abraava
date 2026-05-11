@@ -16,7 +16,7 @@ logger = logging.getLogger("yt_downloader")
 AUDIO_POSTPROCESSOR = {
     "key": "FFmpegExtractAudio",
     "preferredcodec": "mp3",
-    "preferredquality": "320",
+    "preferredquality": "192",
 }
 
 # ── Common yt‑dlp flags (shared by all methods) ──────────────────────────
