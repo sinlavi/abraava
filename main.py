@@ -179,8 +179,8 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
 
     for attempt in range(1, max_retries + 1):
         try:
-            # Fix: Passing opened file securely, and use actual chat_id
             with open(abs_audio_path, 'rb') as audio_file:
+                logger.info('Sending audio...')
                 return await bot.send_document(
                     chat_id=int(DB_CHANNEL_ID),
                     document=audio_file,
