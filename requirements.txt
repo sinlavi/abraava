@@ -1,7 +1,7 @@
 balethon
 ytmusicapi
 yt_dlp
-python-bale-bot
 aiosqlite
 aiohttp
 mutagen
+dotenv
