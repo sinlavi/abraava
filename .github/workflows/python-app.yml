@@ -91,17 +91,18 @@ jobs:
 
       - name: Commit & Push Updated Database
         if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Install git-lfs if needed
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
+          
           git lfs install
           
-          # Track .db files with LFS
           git lfs track "*.db"
           
-          # Add and commit
           git add abraava.db .gitattributes
           git diff-index --quiet HEAD || git commit -m "Auto-update audio database"
           git push
