@@ -72,6 +72,7 @@ def _build_opts(method: int, output_dir: str) -> dict:
     opts = dict(COMMON_OPTS)
     opts["outtmpl"] = f"{output_dir}/%(title)s.%(ext)s"
     opts["format"] = "bestaudio/best"
+    opts["cookiefile"] = "cookies.txt"
     opts["postprocessors"] = [AUDIO_POSTPROCESSOR]
 
     has_deno = _check_deno()
