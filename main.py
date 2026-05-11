@@ -6,13 +6,11 @@ import aiosqlite
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Union
 import os
-from balethon.event_handlers import ConnectHandler
-from balethon.objects import CallbackQuery, Message, InlineKeyboardButton, ReplyKeyboard, InlineKeyboard
+from balethon.objects import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboard
 from ytmusicapi import YTMusic
 from balethon import Client
 from config import BOT_NAME, FOOTER, OFFLINE_MODE, ITEMS_PER_PAGE, BOT_TOKEN, DB_CHANNEL_ID, logger
 from crawlers.itunes import search_itunes, lookup_itunes
-# Import the 8‑method downloader (returns str path)
 from crawlers.youtube import download_audio
 from database.config import init_db, DB_PATH
 from database.utils import is_cached, get_artist_db, set_cached, store_album, store_artist, set_audio_cache, \
@@ -31,7 +29,7 @@ logging.basicConfig(
     ]
 )
 if OFFLINE_MODE:
-    logger.warning("🔴 Bot running in OFFLINE MODE – no external API calls will be made.")
+    logger.warning("Bot running in OFFLINE MODE – no external API calls will be made.")
 
 
 # ---------- Crawlers (modified to use relational DB) ----------
@@ -162,25 +160,26 @@ async def search_youtube_track(query: str) -> Optional[str]:
 
 
 # ---------- Download & Caching Logic ----------
-async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file_name: str, caption: str, max_retries=3):
+async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file_name: str, caption: str,
+                                max_retries=3):
     """Send audio with retry on gateway timeout or internal errors."""
     last_exception = None
     # Fix: Safely resolve absolute path and prevent splitting errors
     abs_audio_path = os.path.abspath(str(audio_path))
-    
+
     if not os.path.exists(abs_audio_path):
         logger.error(f"File not found for upload: {abs_audio_path}")
         raise FileNotFoundError(f"File not found: {abs_audio_path}")
 
     logger.info(f"Sending audio: {abs_audio_path} to chat {chat_id}")
-    
+
     for attempt in range(1, max_retries + 1):
         try:
             # Fix: Passing opened file securely, and use actual chat_id
             with open(abs_audio_path, 'rb') as audio_file:
                 return await bot.send_document(
-                    chat_id=chat_id, 
-                    document=audio_file, 
+                    chat_id=chat_id,
+                    document=audio_file,
                     caption=caption
                 )
         except Exception as e:
@@ -246,9 +245,9 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int):
 
         mp3_path = Path(mp3_path_str)
         if not mp3_path.exists():
-             await status_msg.edit(f"❌ خطای داخلی: فایل دانلود شده یافت نشد.{FOOTER}")
-             return
-             
+            await status_msg.edit(f"❌ خطای داخلی: فایل دانلود شده یافت نشد.{FOOTER}")
+            return
+
         file_size_mb = mp3_path.stat().st_size / (1024 * 1024)
 
         # Download cover image
@@ -361,7 +360,7 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
         await bot.send_photo(chat_id, photo=artwork_url, caption=text, reply_markup=markup)
     else:
         await bot.send_message(chat_id, text, reply_markup=markup)
-    
+
     if message_to_edit:
         try:
             await message_to_edit.delete()

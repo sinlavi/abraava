@@ -3,6 +3,9 @@ import os
 from typing import Optional
 
 import aiohttp
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BOT_NAME = "ابرآوا"
 BOT_USERNAME = "@abraava_bot"
@@ -12,8 +15,9 @@ FOOTER = '\n\n' + BOT_USERNAME + '\n' + INFO_CHANNEL_USERNAME
 # VERIFY_SSL = False
 
 ITUNES_BASE_URL = "https://itunes.apple.com"
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "1011430416:5JY8CU9nGwYtVz0ahfDEIkJyCkVTUCAhLXQ")
-DB_CHANNEL_ID = os.environ.get("DB_CHANNEL_ID", None)  # Github Secret: DB_CHANNEL_ID
+BOT_TOKEN = os.environ.get("BOT_TOKEN", None)
+DB_CHANNEL_ID = os.environ.get("DB_CHANNEL_ID", None)
+INFO_CHANNEL_ID = os.environ.get("INFO_CHANNEL_ID", None)
 ITEMS_PER_PAGE = 10
 OFFLINE_MODE = os.environ.get("OFFLINE_MODE", "false").lower() in ("true", "1", "yes")
 logger = logging.getLogger("ABRAAVA")
