@@ -280,9 +280,9 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int):
                     bot, chat_id, str(mp3_path), f"{t_name}.mp3", caption
                 )
 
-                if db_msg and db_msg.message.id:
-                    await set_audio_cache(track_id, int(db_msg.message.id))
-                    await bot.forward_message(chat_id, from_chat_id=int(DB_CHANNEL_ID), message_id=db_msg.message.id)
+                if db_msg and db_msg.id:
+                    await set_audio_cache(track_id, int(db_msg.id))
+                    await bot.forward_message(chat_id, from_chat_id=int(DB_CHANNEL_ID), message_id=db_msg.id)
                     await status_msg.edit(f"✅ دانلود و پردازش با موفقیت انجام شد.{FOOTER}")
                 else:
                     raise Exception("No message ID returned from DB Channel")
