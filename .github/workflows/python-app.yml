@@ -82,8 +82,10 @@ jobs:
       # ---------- Run the bot ----------
       - name: Run bot
         env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
-          BALE_BOT_TOKEN: ${{ secrets.BALE_BOT_TOKEN }}
+          INFO_CHANNEL_ID: ${{ secrets.INFO_CHANNEL_ID }}
+          OFFLINE_MODE: ${{ secrets.OFFLINE_MODE }}
         run: |
           timeout 5h python main.py || true
 
