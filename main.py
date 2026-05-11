@@ -30,7 +30,7 @@ from config import (
     DB_CHANNEL_ID,
     logger,  # already a logger instance
 )
-from crawlers.itunes import search_itunes, lookup_itunes, get_top_chart
+from crawlers.itunes import search_itunes, lookup_itunes
 from crawlers.youtube import download_audio
 from database.config import init_db, DB_PATH
 from database.utils import (
@@ -524,49 +524,6 @@ async def handle_message(message: Message):
             f"تمامی آهنگ‌ها پیش از ارسال پردازش و تگ‌گذاری می‌شوند."
             f"{FOOTER}"
         )
-        return
-
-    elif msg_text.startswith("/trending"):
-        # rate limit
-        if not await TRENDING_LIMITER.check(user_id):
-            await message.reply("⏳ برای دیدن ترندها لطفاً کمی صبر کنید.")
-            return
-        status = await message.reply("📈 دریافت لیست برترین آهنگ‌های iTunes ...")
-        try:
-            # Using iTunes RSS feed: top 50 songs (US)
-            feed = await get_top_chart(limit=20)  # a new function added in itunes crawler
-            if not feed or not feed.get("results"):
-                await status.edit("❌ خطا در دریافت لیست.")
-                return
-
-            tracks = []
-            for item in feed["results"]:
-                if item.get("wrapperType") == "track":
-                    tracks.append(item)
-                    # store for caching
-                    await store_track(item)
-
-            if not tracks:
-                await status.edit("❌ موردی یافت نشد.")
-                return
-
-            # build a simple text list and keyboard
-            text = "🔥 *برترین آهنگ‌های iTunes (Top 20)*\n\n"
-            markup = []
-            for i, track in enumerate(tracks, 1):
-                name = track.get("trackName", "نامشخص")[:30]
-                artist = track.get("artistName", "نامشخص")[:25]
-                text += f"{i}. {name} - {artist}\n"
-                markup.append([InlineKeyboardButton(
-                    f"🎵 {name} - {artist}",
-                    callback_data=f"track:{track['trackId']}"
-                )])
-            text += FOOTER
-            await status.delete()
-            await message.reply(text, reply_markup=InlineKeyboard(*markup))
-        except Exception as e:
-            logger.exception("trending error")
-            await status.edit(f"❌ خطا: {e}")
         return
 
     # ---- free‑text search (no /search prefix needed) ----
