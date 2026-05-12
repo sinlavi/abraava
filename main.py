@@ -607,6 +607,8 @@ async def parse_search_query(text: str) -> Optional[tuple[str, str]]:
 
 @bot.on_message()
 async def handle_message(message):
+    if "abraava" in str(message.author.username):
+        return
     if message.content:
         if message.chat.id == int(INFO_CHANNEL_ID) and message.chat.type == "channel":
             await handle_channel_post(message)
