@@ -35,7 +35,7 @@ class RateLimiter:
         self.users: Dict[int, List[Union[int, float]]] = {}
         self.global_count = 0
         self.global_reset = time.time()
-        self.max_global = 3000  # Max global requests per minute
+        self.max_global = 120  # Max global requests per minute
 
     async def check_user(self, user_id: int) -> tuple[bool, int]:
         """Check if user has exceeded rate limit. Returns (allowed, wait_time)"""
