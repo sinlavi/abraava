@@ -9,10 +9,7 @@ logger = logging.getLogger("ABRAAVA:TAGEDITOR")
 def tag_mp3(file_path: Path, title: str, artist: str, album: str, cover_bytes: bytes):
     """Add ID3 metadata to the downloaded MP3 file."""
     try:
-        try:
-            audio = ID3(file_path)
-        except error:
-            audio = ID3()
+        audio = ID3(file_path)
 
         audio.add(TIT2(encoding=3, text=title))
         audio.add(TPE1(encoding=3, text=artist))
