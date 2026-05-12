@@ -40,7 +40,7 @@ class RateLimiter:
         self.users: Dict[int, List[Union[int, float]]] = {}
         self.global_count = 0
         self.global_reset = time.time()
-        self.max_global = 50
+        self.max_global = 30
 
     async def check_user(self, user_id: int) -> tuple[bool, int]:
         now = time.time()
@@ -167,8 +167,8 @@ def _delete_file_sync(path_str):
 # ============================================================================
 # iTunes Crawling (using relational DB)
 # ============================================================================
-async def crawl_artist_albums(artist_id: int, status_msg: Message = None):
-    """Fetch and store all albums for an artist from iTunes."""
+async def crawl_artist_collections(artist_id: int, status_msg: Message = None):
+    """Fetch and store all collections for an artist from iTunes."""
     if OFFLINE_MODE:
         return
 
@@ -183,22 +183,22 @@ async def crawl_artist_albums(artist_id: int, status_msg: Message = None):
         except:
             pass
 
-    data = await lookup_itunes(artist_id, "album")
+    data = await lookup_itunes(artist_id, "collection")
     if data and data.get("resultCount", 0) > 0:
         for item in data["results"]:
             if item.get("wrapperType") == "collection":
                 await insert_collection(item)
-                # Also crawl album tracks
-                asyncio.create_task(crawl_album_tracks(item["collectionId"]))
+                # Also crawl collection tracks
+                asyncio.create_task(crawl_collection_tracks(item["collectionId"]))
 
 
-async def crawl_album_tracks(album_id: int, status_msg: Message = None):
-    """Fetch and store all tracks for an album from iTunes."""
+async def crawl_collection_tracks(collection_id: int, status_msg: Message = None):
+    """Fetch and store all tracks for an collection from iTunes."""
     if OFFLINE_MODE:
         return
 
     # Check if collection already has tracks in DB
-    existing = await get_collection_tracks(album_id)
+    existing = await get_collection_tracks(collection_id)
     if existing and existing.get("resultCount", 0) > 0:
         return  # Already crawled
 
@@ -208,7 +208,7 @@ async def crawl_album_tracks(album_id: int, status_msg: Message = None):
         except:
             pass
 
-    data = await lookup_itunes(album_id, "song")
+    data = await lookup_itunes(collection_id, "song")
     if data and data.get("resultCount", 0) > 0:
         for item in data["results"]:
             if item.get("wrapperType") == "track" and item.get("kind") == "song":
@@ -219,10 +219,10 @@ async def get_artist(artist_id: int, status_msg: Message = None) -> Optional[Dic
     """Get artist cache_id from DB, or fetch from iTunes and store."""
     db_data = await get_artist_db(artist_id)
     if db_data:
-        # Trigger background crawl if no albums cached
+        # Trigger background crawl if no collections cached
         collections = await get_artist_collections(artist_id)
         if not collections or collections.get("resultCount", 0) == 0:
-            asyncio.create_task(crawl_artist_albums(artist_id, status_msg))
+            asyncio.create_task(crawl_artist_collections(artist_id, status_msg))
         return db_data
 
     if OFFLINE_MODE:
@@ -240,23 +240,23 @@ async def get_artist(artist_id: int, status_msg: Message = None) -> Optional[Dic
         for item in data["results"]:
             if item.get("wrapperType") == "artist":
                 await insert_artist(item)
-        asyncio.create_task(crawl_artist_albums(artist_id, status_msg))
+        asyncio.create_task(crawl_artist_collections(artist_id, status_msg))
         return data
     return None
 
 
-async def get_album(album_id: int, status_msg: Message = None) -> Optional[Dict[str, Any]]:
-    """Get album cache_id from DB, or fetch from iTunes and store."""
-    db_data = await get_collection_db(album_id)
+async def get_collection(collection_id: int, status_msg: Message = None) -> Optional[Dict[str, Any]]:
+    """Get collection cache_id from DB, or fetch from iTunes and store."""
+    db_data = await get_collection_db(collection_id)
     if db_data:
         # Trigger background track crawl
-        tracks = await get_collection_tracks(album_id)
+        tracks = await get_collection_tracks(collection_id)
         if not tracks or tracks.get("resultCount", 0) == 0:
-            asyncio.create_task(crawl_album_tracks(album_id, status_msg))
+            asyncio.create_task(crawl_collection_tracks(collection_id, status_msg))
         return db_data
 
     if OFFLINE_MODE:
-        logger.info(f"Offline mode: album {album_id} not in local DB")
+        logger.info(f"Offline mode: collection {collection_id} not in local DB")
         return None
 
     if status_msg:
@@ -265,12 +265,12 @@ async def get_album(album_id: int, status_msg: Message = None) -> Optional[Dict[
         except:
             pass
 
-    data = await lookup_itunes(album_id)
+    data = await lookup_itunes(collection_id)
     if data and data.get("results"):
         for item in data["results"]:
             if item.get("wrapperType") == "collection":
                 await insert_collection(item)
-        await crawl_album_tracks(album_id, status_msg)
+        await crawl_collection_tracks(collection_id, status_msg)
         return data
     return None
 
@@ -388,10 +388,10 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int):
     t_name = track.get("trackName", "Unknown Title")
     ye = track.get("releaseDate", "").split("-")[0]
     a_name = track.get("artistName", "Unknown Artist")
-    album_name = track.get("collectionName", "")
+    collection_name = track.get("collectionName", "")
     cover_url = get_high_res_artwork(track.get("artworkUrl100"), size=600)
 
-    query = f'"{t_name}" by {a_name} album {album_name} {ye}'
+    query = f'"{t_name}" by {a_name} collection {collection_name} {ye}'
     await status_msg.edit(f"🔍 جستجوی سورس باکیفیت آهنگ در یوتیوب موزیک...{FOOTER}")
 
     video_id = await search_youtube_track(query)
@@ -429,10 +429,10 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int):
                     logger.error(f"Failed to download cover: {e}")
 
             await asyncio.get_event_loop().run_in_executor(
-                None, tag_mp3, mp3_path_str, t_name, a_name, album_name, cover_bytes
+                None, tag_mp3, mp3_path_str, t_name, a_name, collection_name, cover_bytes
             )
 
-            caption = f"🎵 {t_name}\n🎤 {a_name}\n📀 {album_name}\n🔊 MP3 320 kbps | {file_size_mb:.1f} MB{FOOTER}"
+            caption = f"🎵 {t_name}\n🎤 {a_name}\n📀 {collection_name}\n🔊 MP3 320 kbps | {file_size_mb:.1f} MB{FOOTER}"
 
             if DB_CHANNEL_ID:
                 try:
@@ -587,10 +587,10 @@ async def parse_search_query(text: str) -> Optional[tuple[str, str]]:
         parts = text.split(":", 1)
         type_ = parts[0].lower()
         term = parts[1].strip()
-        if type_ in ["artist", "album", "track", "آهنگ", "آلبوم", "خواننده", "هنرمند"]:
+        if type_ in ["artist", "collection", "track", "آهنگ", "آلبوم", "خواننده", "هنرمند"]:
             persian_map = {
                 "آهنگ": "track",
-                "آلبوم": "album",
+                "آلبوم": "collection",
                 "خواننده": "artist",
                 "هنرمند": "artist"
             }
@@ -720,17 +720,15 @@ async def handle_channel_post(message):
 # Search Handler (uses new relational DB search)
 # ============================================================================
 async def handle_search_command(chat_id: int, user_id: int, type_: str, term: str, original_message: Message = None):
-    type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ", "all": "همه"}
+    type_fa_map = {"artist": "هنرمند", "collection": "آلبوم", "track": "آهنگ", "all": "همه"}
 
     status_msg = await bot.send_message(chat_id,
                                         f"🔍 *در حال جستجوی {type_fa_map.get(type_, type_)}: {term}...*{FOOTER}")
 
-    # First try local DB search
-    results = await local_search(term, type_)
-
+    results = {}
     # If no results and not offline, try iTunes
-    if (not results or results.get("resultCount", 0) == 0) and not OFFLINE_MODE:
-        entity_map = {"artist": "musicArtist", "album": "album", "track": "musicTrack"}
+    if not OFFLINE_MODE:
+        entity_map = {"artist": "musicArtist", "collection": "collection", "track": "musicTrack"}
         entity = entity_map.get(type_) if type_ != "all" else None
         itunes_results = await search_itunes(term, entity=entity, limit=50)
 
@@ -744,6 +742,8 @@ async def handle_search_command(chat_id: int, user_id: int, type_: str, term: st
                     await insert_collection(item)
                 elif item.get("wrapperType") == "track":
                     await insert_track(item)
+    else:
+        results = await local_search(term, type_)
 
     if results and results.get("resultCount", 0) > 0:
         await status_msg.delete()
@@ -763,7 +763,7 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
     end_idx = start_idx + ITEMS_PER_PAGE
     page_items = results_list[start_idx:end_idx]
 
-    type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ", "all": "همه"}
+    type_fa_map = {"artist": "هنرمند", "collection": "آلبوم", "track": "آهنگ", "all": "همه"}
     markup = []
 
     if type_ == "all":
@@ -778,7 +778,7 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
             callback = f"artist:{item['artistId']}:1"
         elif wrapper == "collection":
             btn_text = f"📀 {item.get('collectionName', 'نامشخص')[:45]} - {item.get('artistName', 'نامشخص')}"
-            callback = f"album:{item['collectionId']}:1"
+            callback = f"collection:{item['collectionId']}:1"
         elif wrapper == "track":
             btn_text = f"🎵 {item.get('trackName', 'نامشخص')[:45]} - {item.get('artistName', 'نامشخص')}"
             callback = f"track:{item['trackId']}"
@@ -792,7 +792,7 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
         markup.append(pagination_row)
 
     refine_term = term
-    markup.append([InlineKeyboardButton("🔍 آلبوم‌ها", f"refine:album:{refine_term}"),
+    markup.append([InlineKeyboardButton("🔍 آلبوم‌ها", f"refine:collection:{refine_term}"),
                    InlineKeyboardButton("🔍 هنرمندان", f"refine:artist:{refine_term}"),
                    InlineKeyboardButton("🔍 آهنگ‌ها", f"refine:track:{refine_term}")])
 
@@ -864,10 +864,10 @@ async def on_callback(callback_query: CallbackQuery):
             artist_id = int(parts[1])
             page = int(parts[2]) if len(parts) > 2 else 1
             await show_artist(chat_id, artist_id, page, callback_query.message)
-        elif data.startswith("album:"):
-            album_id = int(parts[1])
+        elif data.startswith("collection:"):
+            collection_id = int(parts[1])
             page = int(parts[2]) if len(parts) > 2 else 1
-            await show_album(chat_id, album_id, page, callback_query.message)
+            await show_collection(chat_id, collection_id, page, callback_query.message)
         elif data.startswith("track:"):
             track_id = int(parts[1])
             await show_track(chat_id, track_id, callback_query.message)
@@ -888,9 +888,9 @@ async def on_callback(callback_query: CallbackQuery):
                 # Clear collections to force re-crawl
                 await db.force_recrawl_artist(id_)
                 await show_artist(chat_id, id_, 1, callback_query.message)
-            elif type_ == "album":
+            elif type_ == "collection":
                 await db.force_recrawl_collection(id_)
-                await show_album(chat_id, id_, 1, callback_query.message)
+                await show_collection(chat_id, id_, 1, callback_query.message)
             elif type_ == "track":
                 await db.force_recrawl_track(id_)
                 await show_track(chat_id, id_, callback_query.message)
@@ -917,22 +917,22 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1, message_to_ed
 
     # Get collections from relational DB
     collections_data = await get_artist_collections(artist_id)
-    albums = collections_data["results"] if collections_data else []
+    collections = collections_data["results"] if collections_data else []
 
     markup = []
-    if albums:
-        total_items = len(albums)
+    if collections:
+        total_items = len(collections)
         total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
         page = max(1, min(page, total_pages))
         start_idx = (page - 1) * ITEMS_PER_PAGE
         end_idx = start_idx + ITEMS_PER_PAGE
-        page_items = albums[start_idx:end_idx]
+        page_items = collections[start_idx:end_idx]
         text += f"\n*📀 آلبوم‌ها ({total_items}):*\n"
-        for album in page_items:
-            btn_text = f"📀 {album.get('collectionName', 'نامشخص')[:45]}"
+        for collection in page_items:
+            btn_text = f"📀 {collection.get('collectionName', 'نامشخص')[:45]}"
             markup.append([InlineKeyboardButton(
                 text=btn_text,
-                callback_data=f"album:{album['collectionId']}:1"
+                callback_data=f"collection:{collection['collectionId']}:1"
             )])
         if total_pages > 1:
             pagination_row = create_pagination_row(f"artist:{artist_id}", page, total_pages)
@@ -947,24 +947,24 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1, message_to_ed
     await edit_or_send(bot, chat_id, message_to_edit, text, markup=InlineKeyboard(*markup), artwork_url=artwork_url)
 
 
-async def show_album(chat_id: int, album_id: int, page: int = 1, message_to_edit: Optional[Message] = None):
+async def show_collection(chat_id: int, collection_id: int, page: int = 1, message_to_edit: Optional[Message] = None):
     status_msg = await bot.send_message(chat_id, f"🔄 *در حال پردازش آلبوم...*{FOOTER}")
-    data = await get_album(album_id, status_msg)
+    data = await get_collection(collection_id, status_msg)
     if not data or not data.get("results"):
         await status_msg.edit(f"❌ *آلبوم یافت نشد.*{FOOTER}")
         return
 
-    album = data["results"][0]
-    release_date = album.get('releaseDate', 'نامشخص')[:10] if album.get('releaseDate') else 'نامشخص'
-    text = f"*📀 آلبوم:* {album.get('collectionName', 'نامشخص')}\n"
-    text += f"*🎤 هنرمند:* {album.get('artistName', 'نامشخص')}\n"
+    collection = data["results"][0]
+    release_date = collection.get('releaseDate', 'نامشخص')[:10] if collection.get('releaseDate') else 'نامشخص'
+    text = f"*📀 آلبوم:* {collection.get('collectionName', 'نامشخص')}\n"
+    text += f"*🎤 هنرمند:* {collection.get('artistName', 'نامشخص')}\n"
     text += f"*📅 انتشار:* {release_date}\n"
-    text += f"*🎭 سبک:* {album.get('primaryGenreName', 'نامشخص')}\n"
-    if album.get("collectionViewUrl"):
-        text += f"*🔗 لینک آیتونز:* [مشاهده در آیتونز]({album['collectionViewUrl']})\n"
+    text += f"*🎭 سبک:* {collection.get('primaryGenreName', 'نامشخص')}\n"
+    if collection.get("collectionViewUrl"):
+        text += f"*🔗 لینک آیتونز:* [مشاهده در آیتونز]({collection['collectionViewUrl']})\n"
 
     # Get tracks from relational DB
-    tracks_data = await get_collection_tracks(album_id)
+    tracks_data = await get_collection_tracks(collection_id)
     tracks = tracks_data["results"] if tracks_data else []
 
     markup = []
@@ -985,23 +985,24 @@ async def show_album(chat_id: int, album_id: int, page: int = 1, message_to_edit
                 callback_data=f"track:{track['trackId']}"
             )])
         if total_pages > 1:
-            pagination_row = create_pagination_row(f"album:{album_id}", page, total_pages)
+            pagination_row = create_pagination_row(f"collection:{collection_id}", page, total_pages)
             markup.append(pagination_row)
 
-    if album.get("artistId"):
+    if collection.get("artistId"):
         markup.append([InlineKeyboardButton(
             text="🎤 مشاهده هنرمند",
-            callback_data=f"artist:{album['artistId']}:1"
+            callback_data=f"artist:{collection['artistId']}:1"
         )])
-    markup.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:album:{album_id}")])
+    markup.append(
+        [InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:collection:{collection_id}")])
     markup.append([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
 
     text += FOOTER
     await status_msg.delete()
 
-    artwork_url = get_high_res_artwork(album.get("artworkUrl100"))
+    artwork_url = get_high_res_artwork(collection.get("artworkUrl100"))
     await edit_or_send(bot, chat_id, message_to_edit, text, markup=InlineKeyboard(*markup), artwork_url=artwork_url,
-                       cache_id=album['collectionId'])
+                       cache_id=collection['collectionId'])
 
 
 async def show_track(chat_id: int, track_id: int, message_to_edit: Optional[Message] = None):
@@ -1030,7 +1031,7 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Optional[Mess
     markup.append(download)
     links = []
     if track.get('collectionId'):
-        links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"album:{track['collectionId']}:1"))
+        links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{track['collectionId']}:1"))
     if track.get('artistId'):
         links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{track['artistId']}:1"))
     markup.append(links)
