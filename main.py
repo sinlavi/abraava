@@ -1095,9 +1095,6 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Optional[Mess
     await edit_or_send(bot, chat_id, message_to_edit, text, markup=InlineKeyboard(*markup), artwork_url=artwork_url)
 
 
-app = bot
-handler = bot.handle_request
-
 if __name__ == "__main__":
     logger.info(f"🎵 {BOT_NAME} Music Bot Starting (High Concurrency Mode)...")
     logger.info(f"Rate limit: {rate_limiter.max_requests} req/min per user")
