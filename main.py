@@ -23,7 +23,8 @@ from utils import tag_mp3
 YT = None  # YTMusic instance initialized later
 HTTP_SESSION: Optional[aiohttp.ClientSession] = None
 # محدود کردن تعداد دانلودهای همزمان برای جلوگیری از بن شدن IP و مصرف بیش از حد RAM
-DOWNLOAD_SEMAPHORE = asyncio.Semaphore(20) 
+DOWNLOAD_SEMAPHORE = asyncio.Semaphore(20)
+
 
 # ---------- Rate Limiting (Optimized for High Concurrency) ----------
 class RateLimiter:
@@ -39,12 +40,12 @@ class RateLimiter:
     async def check_user(self, user_id: int) -> tuple[bool, int]:
         """Check if user has exceeded rate limit. Returns (allowed, wait_time)"""
         now = time.time()
-        
+
         # بررسی گلوبال
         if now - self.global_reset > self.time_window:
             self.global_count = 0
             self.global_reset = now
-            
+
         if self.global_count >= self.max_global:
             wait_time = int(self.time_window - (now - self.global_reset))
             return False, wait_time
@@ -219,6 +220,7 @@ def _sync_search_youtube(query: str) -> Optional[str]:
         logger.error(f"YTMusic search error: {e}")
     return None
 
+
 async def search_youtube_track(query: str) -> Optional[str]:
     if OFFLINE_MODE:
         logger.info("Offline mode: skipping YouTube search")
@@ -238,7 +240,7 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
     if not exists:
         logger.error(f"File not found for upload: {abs_audio_path}")
         raise FileNotFoundError(f"File not found: {abs_audio_path}")
-        
+
     chat_to_send = DB_CHANNEL_ID
     if direct:
         chat_to_send = chat_id
@@ -265,9 +267,11 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
                 raise e
     raise last_exception
 
+
 def _get_file_size_sync(path_str):
     p = Path(path_str)
     return p.stat().st_size / (1024 * 1024) if p.exists() else 0
+
 
 def _delete_file_sync(path_str):
     try:
@@ -276,6 +280,7 @@ def _delete_file_sync(path_str):
             p.unlink()
     except Exception as e:
         logger.error(f"Failed to delete temp file {path_str}: {e}")
+
 
 async def send_cached_or_download(bot: Client, chat_id: int, track_id: int):
     status_msg = await bot.send_message(chat_id, f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*{FOOTER}")
@@ -506,6 +511,7 @@ async def on_disconnect():
     global HTTP_SESSION
     if HTTP_SESSION and not HTTP_SESSION.closed:
         await HTTP_SESSION.close()
+
 
 async def broadcast_worker():
     """Worker to send broadcast messages to all users"""
@@ -1088,8 +1094,9 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Optional[Mess
     artwork_url = get_high_res_artwork(track.get("artworkUrl100"))
     await edit_or_send(bot, chat_id, message_to_edit, text, markup=InlineKeyboard(*markup), artwork_url=artwork_url)
 
-app = bote
-handler = bot.handle_request 
+
+app = bot
+handler = bot.handle_request
 
 if __name__ == "__main__":
     logger.info(f"🎵 {BOT_NAME} Music Bot Starting (High Concurrency Mode)...")
