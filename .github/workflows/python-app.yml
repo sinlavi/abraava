@@ -1,9 +1,9 @@
-name: Test Deply
+name: Test Deploy
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 */2 * * *"  # Run every 2 hours
 
 jobs:
   run-bot:
@@ -18,7 +18,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      # ---------- WARP (Cloudflare proxy) with digest‑based Docker caching ----------
+      # ========== WARP (Cloudflare proxy) ==========
       - name: Get WARP image digest
         id: warp-digest
         run: |
@@ -55,7 +55,7 @@ jobs:
           sleep 10
           curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 5 || true
 
-      # ---------- FFmpeg caching (tool cache directory) ----------
+      # ========== FFmpeg caching ==========
       - name: Cache FFmpeg binaries
         id: cache-ffmpeg
         uses: actions/cache@v4
@@ -72,30 +72,116 @@ jobs:
           linking-type: env
           github-token: ${{ github.server_url == 'https://github.com' && github.token || '' }}
 
-      # ---------- Python & dependencies ----------
+      # ========== Python & dependencies ==========
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
+
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # ---------- Run the bot ----------
+      # ========== Run the bot ==========
       - name: Run bot
+        id: bot
+        continue-on-error: true  # Continue even if bot fails
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
           INFO_CHANNEL_ID: ${{ secrets.INFO_CHANNEL_ID }}
           OFFLINE_MODE: ${{ secrets.OFFLINE_MODE }}
-        run: |
-          timeout 5h python main.py || true
+        run: python main.py
 
-      - name: Commit & Push Updated Database
-        if: always()
+      # ========== Database commit & push (always runs) ==========
+      - name: Commit and push database changes
+        if: always()  # Run even if bot failed or was cancelled
         run: |
+          set -e  # Exit on error
+          
+          # Configure git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add abraava.db
-          git diff-index --quiet HEAD || git commit -m "Auto-update audio database"
-          git push
+          
+          # Optimize for large files
+          git config http.postBuffer 524288000  # 500MB
+          git config core.compression 0
+          
+          # Fetch latest changes to avoid conflicts
+          echo "Fetching latest changes..."
+          git fetch origin
+          git pull --no-rebase origin "${GITHUB_REF_NAME}" || true
+          
+          # Add all .db files
+          echo "Searching for .db files..."
+          DB_FILES=$(find . -name "*.db" -type f)
+          
+          if [[ -z "$DB_FILES" ]]; then
+            echo "No .db files found to commit"
+            exit 0
+          fi
+          
+          echo "Found database files:"
+          echo "$DB_FILES"
+          
+          # Stage database files
+          echo "$DB_FILES" | while read -r file; do
+            git add -f "$file"
+            echo "Staged: $file"
+          done
+          
+          # Check if there are changes to commit
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          
+          # Commit changes
+          COMMIT_MSG="Auto-update database $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          git commit -m "$COMMIT_MSG"
+          echo "Committed with message: $COMMIT_MSG"
+          
+          # Push with retry logic
+          MAX_RETRIES=3
+          RETRY_DELAY=5
+          
+          for attempt in $(seq 1 $MAX_RETRIES); do
+            echo "Push attempt $attempt of $MAX_RETRIES..."
+            if git push origin "${GITHUB_REF_NAME}"; then
+              echo "Successfully pushed to repository"
+              exit 0
+            fi
+          
+            if [[ $attempt -lt $MAX_RETRIES ]]; then
+              echo "Push failed, retrying in ${RETRY_DELAY} seconds..."
+              sleep $RETRY_DELAY
+            fi
+          done
+          
+          echo "Failed to push after $MAX_RETRIES attempts"
+          exit 1
+        shell: bash
+
+      # ========== Emergency force push (if regular push fails) ==========
+      - name: Emergency force push
+        if: failure() && steps.commit.outcome == 'failure'
+        run: |
+          echo "⚠️ Regular push failed, attempting emergency force push..."
+          
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Stage all database files
+          find . -name "*.db" -type f -exec git add -f {} \;
+          
+          # Commit if there are changes
+          if ! git diff --cached --quiet; then
+            git commit -m "Emergency auto-update $(date -u '+%Y-%m-%d %H:%M:%S UTC')" || true
+          fi
+          
+          # Force push with lease (safer than --force)
+          git push --force-with-lease origin "${GITHUB_REF_NAME}" || \
+          git push --force origin "${GITHUB_REF_NAME}"
+          
+          echo "✅ Emergency force push completed"
+        shell: bash
