@@ -348,7 +348,7 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
                     audio=audio_file,
                     caption=caption
                 )
-                await set_cache({'cacheId': 'track:' + cache_id, 'content': msg.id})
+                await set_cache({'cacheId': 'track:' + cache_id, 'content': str(msg.id)})
                 return msg
 
         except Exception as e:
