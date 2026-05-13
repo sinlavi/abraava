@@ -5,6 +5,10 @@ on:
   schedule:
     - cron: "0 */2 * * *"  # Run every 2 hours
 
+concurrency:
+  group: test-deploy
+  cancel-in-progress: true
+  
 jobs:
   run-bot:
     permissions:
