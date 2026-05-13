@@ -6,15 +6,18 @@ from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC
 logger = logging.getLogger("ABRAAVA:TAGEDITOR")
 
 
-def tag_mp3(file_path: Path, title: str, artist: str, collection: str, cover_bytes: bytes):
+def tag_mp3(file_path: Path, title: str, artist: str, album: str, cover_bytes: bytes):
     """Add ID3 metadata to the downloaded MP3 file."""
     try:
-        audio = ID3(file_path)
+        try:
+            audio = ID3(file_path)
+        except error:
+            audio = ID3()
 
         audio.add(TIT2(encoding=3, text=title))
         audio.add(TPE1(encoding=3, text=artist))
-        if collection:
-            audio.add(TALB(encoding=3, text=collection))
+        if album:
+            audio.add(TALB(encoding=3, text=album))
         if cover_bytes:
             audio.add(APIC(
                 encoding=3,

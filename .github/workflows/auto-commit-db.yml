@@ -1,0 +1,27 @@
+name: Auto Commit Database
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"  # هر ۵ دقیقه یک بار
+  workflow_dispatch:  # برای اجرای دستی
+
+jobs:
+  commit-db:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          
+      - name: Commit & Push Database if changed
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git pull origin ${{ github.ref_name }}  # اول pull می‌کنیم
+          git add abraava.db
+          git diff-index --quiet HEAD || git commit -m "Auto-update audio database (scheduled)"
+          git push

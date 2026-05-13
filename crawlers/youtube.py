@@ -12,11 +12,11 @@ import yt_dlp
 
 logger = logging.getLogger("yt_downloader")
 
-# ── Audio post‑processor ──────────────────────────────────────────
+# ── 320 kbps MP3 post‑processor ──────────────────────────────────────────
 AUDIO_POSTPROCESSOR = {
     "key": "FFmpegExtractAudio",
     "preferredcodec": "mp3",
-    "preferredquality": "320",
+    "preferredquality": "192",
 }
 
 # ── Common yt‑dlp flags (shared by all methods) ──────────────────────────
@@ -64,7 +64,7 @@ def _check_proxy() -> Optional[str]:
     return None
 
 
-def _build_opts(method: int, output_dir: str, preferred_quality: int) -> dict:
+def _build_opts(method: int, output_dir: str) -> dict:
     """
     Build yt‑dlp options dict for the given method number (1‑8).
     Matches the 8 methods from the GitHub Actions workflow.
@@ -73,7 +73,6 @@ def _build_opts(method: int, output_dir: str, preferred_quality: int) -> dict:
     opts["outtmpl"] = f"{output_dir}/%(title)s.%(ext)s"
     opts["format"] = "bestaudio/best"
     opts["cookiefile"] = "cookies.txt"
-    AUDIO_POSTPROCESSOR['preferredquality'] = str(preferred_quality)
     opts["postprocessors"] = [AUDIO_POSTPROCESSOR]
 
     has_deno = _check_deno()
@@ -160,10 +159,9 @@ def download_audio(
         output_dir: Optional[str] = None,
         *,
         max_retries_per_method: int = 1,
-        preferred_quality: int = 192,
 ) -> Optional[str]:  # 🔄 تغییر: حالا string برمی‌گرداند
     """
-    Download YouTube audio as "your entered" kbps MP3.
+    Download YouTube audio as 320 kbps MP3.
 
     Tries all 8 anti‑detection methods in sequence. Returns the path
     to the downloaded MP3 file as a string, or None if every method failed.
@@ -178,7 +176,7 @@ def download_audio(
         # اگر مسیر نسبی داده شده، آن را به مسیر مطلق در پروژه تبدیل کن
         if not os.path.isabs(output_dir):
             output_dir = os.path.join(os.getcwd(), output_dir)
-
+    
     # ایجاد پوشه اگر وجود نداشت
     os.makedirs(output_dir, exist_ok=True)
 
@@ -193,7 +191,7 @@ def download_audio(
         for attempt in range(1, max_retries_per_method + 1):
             logger.info("▶ Method %d, attempt %d", method, attempt)
             try:
-                opts = _build_opts(method, output_dir, preferred_quality)
+                opts = _build_opts(method, output_dir)
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     ydl.download([url])
             except Exception as exc:
