@@ -9,7 +9,6 @@ import os
 import time
 from collections import defaultdict
 from balethon.objects import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboard
-from ytmusicapi import YTMusic
 from balethon import Client
 
 from broadcast import broadcast_worker, handle_channel_post
@@ -25,7 +24,6 @@ from db.utils import insert_artist, insert_collection, insert_track, init_db, se
 
 from utils import tag_mp3
 
-YT = None
 HTTP_SESSION: Optional[aiohttp.ClientSession] = None
 DOWNLOAD_SEMAPHORE = asyncio.Semaphore(20)
 
@@ -171,7 +169,7 @@ async def get_artist(artist_id: int, status_msg: Message = None) -> Optional[Dic
     db_data = await get_artist_db(artist_id)
     existing = await get_artist_collections(artist_id)
     if db_data or existing.get('resultCount', 0) == 0:
-        await get_artist_collections(artist_id)
+        await crawl_artist_collections(artist_id, status_msg)
         # if not collections or collections.get("resultCount", 0) == 0:
         #   asyncio.create_task(crawl_artist_collections(artist_id, status_msg))
 
