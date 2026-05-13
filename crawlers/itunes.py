@@ -11,7 +11,7 @@ async def fetch_itunes(endpoint: str, params: dict) -> Optional[Dict[str, Any]]:
     session = await HttpClient.get_session()
     url = f"{ITUNES_BASE_URL}/{endpoint}"
     try:
-        async with session.get(url, params=params, ssl=False) as resp:
+        async with session.get(url, params=params, ssl=False,proxy='http://127.0.0.1:8085') as resp:
             if resp.status == 200:
                 text = await resp.text()
                 try:
@@ -37,7 +37,7 @@ async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50
 
 async def lookup_itunes(id: int, entity: Optional[str] = None) -> Optional[Dict[str, Any]]:
     logger.info(f"Looking up iTunes: id={id}, entity={entity}")
-    params = {"id": id, "country": "US"}
+    params = {"id": id}
     if entity:
         params["entity"] = entity
     return await fetch_itunes("lookup", params)

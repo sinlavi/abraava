@@ -11,15 +11,14 @@ BOT_NAME = "ابرآوا"
 BOT_USERNAME = "@abraava_bot"
 INFO_CHANNEL_USERNAME = "@abraava"
 FOOTER = '\n\n' + BOT_USERNAME + '\n' + INFO_CHANNEL_USERNAME
-# PROXY_URL = "http://127.0.0.1:8085"        # change if needed
-# VERIFY_SSL = False
 
 ITUNES_BASE_URL = "https://itunes.apple.com"
 BOT_TOKEN = os.environ.get("BOT_TOKEN", None)
 DB_CHANNEL_ID = os.environ.get("DB_CHANNEL_ID", None)
-INFO_CHANNEL_ID = os.environ.get("INFO_CHANNEL_ID", None)
-ITEMS_PER_PAGE = 10
-OFFLINE_MODE = os.environ.get("OFFLINE_MODE", "false").lower() in ("true", "1", "yes")
+INFO_CHANNEL_ID = '5524168471'
+BROADCAST_CHANNELS = [INFO_CHANNEL_ID, '4783738693']
+ITEMS_PER_PAGE = 7
+OFFLINE_MODE = False
 logger = logging.getLogger("ABRAAVA")
 
 
