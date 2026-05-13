@@ -9,7 +9,6 @@ import os
 import time
 from collections import defaultdict
 from balethon.objects import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboard
-from mautrix.util.background_task import catch
 from ytmusicapi import YTMusic
 from balethon import Client
 
