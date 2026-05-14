@@ -365,10 +365,34 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
                     logger.error(f"Failed to download cover: {e}")
 
             await asyncio.get_event_loop().run_in_executor(
-                None, tag_mp3, mp3_path_str, t_name, a_name, collection_name, cover_bytes
+                None, tag_mp3, mp3_path_str, track, cover_bytes
             )
 
-            caption = f"🎵 {t_name}\n🎤 {a_name}\n📀 {collection_name}\n🔊 {file_size_mb:.1f} MB{FOOTER}"
+            # Extract year from releaseDate
+            release_year = track.get("releaseDate", "").split("-")[0] if track.get("releaseDate") else ""
+
+            # Create detailed caption
+            caption_parts = [
+                f"🎵 {track.get('trackName', 'Unknown Title')}",
+                f"🎤 {track.get('artistName', 'Unknown Artist')}",
+            ]
+
+            if track.get('collectionName'):
+                caption_parts.append(f"📀 {track.get('collectionName')}")
+            if release_year:
+                caption_parts.append(f"📅 {release_year}")
+            if track.get('primaryGenreName'):
+                caption_parts.append(f"🎸 {track.get('primaryGenreName')}")
+            if track.get('trackExplicitness') == 'explicit':
+                caption_parts.append(f"🔞 Explicit")
+            if track.get('trackTimeMillis'):
+                duration_sec = track['trackTimeMillis'] // 1000
+                minutes = duration_sec // 60
+                seconds = duration_sec % 60
+                caption_parts.append(f"⏱️ {minutes}:{seconds:02d}")
+
+            caption_parts.append(f"🔊 {file_size_mb:.1f} MB{FOOTER}")
+            caption = "\n".join(caption_parts)
 
             if DB_CHANNEL_ID:
                 try:
@@ -911,7 +935,7 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1,
 
     artist_data = await get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force)
     if not artist_data:
-        await status_msg.edit(f"❌ *هنرمند یافت نشد.*{FOOTER}")
+        await status_msg.edit(f"❌ *هنرمند یافت نشد.*{FOOTER}",reply_markup=close_btn)
         return
     artist_data = artist_data['results'][0]
     text = f"*🎤 هنرمند:* {artist_data.get('artistName', 'نامشخص')}\n"
