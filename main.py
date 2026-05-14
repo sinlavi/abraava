@@ -541,11 +541,6 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
         except Exception as e:
             error_str = str(e)
             if "504" in error_str or "500" in error_str or "Time-out" in error_str:
-                await bot.send_message(
-                    chat_id=int(chat_id),
-                    text="در حال حاضر سرور های بله برای آپلود پاسخگو نیستند",
-                    reply_markup=close_btn
-                )
                 logger.warning(f"send_audio network/server error, retry {attempt}/{max_retries}: {e}")
                 last_exception = e
                 await asyncio.sleep(attempt * 2)
