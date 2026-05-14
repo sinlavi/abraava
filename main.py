@@ -475,7 +475,7 @@ async def require_membership(bot: Client, chat_id: int, user_id: int) -> bool:
 # ============================================================================
 # Group Message Validation
 # ============================================================================
-def is_valid_group_message(message) -> bool:
+def is_valid_message(message) -> bool:
     """Check if group message is valid for processing"""
     # Check text length
     if len(message.content or "") > 100:
@@ -589,10 +589,7 @@ async def handle_message(message):
             return
 
         # Check if message is valid for processing
-        if not is_valid_group_message(message):
-            await message.reply(f"⚠️ *فرمت پیام نامعتبر*\n\n"
-                                f"در گروه‌ها فقط پیام‌های متنی زیر ۱۰۰ کاراکتر قابل پردازش هستند.\n"
-                                f"لطفاً بدون عکس، ویدیو، فایل و فوروارد پیام دهید.{FOOTER}")
+        if not is_valid_message(message):
             return
 
         msg_text = msg_text.replace(bot_mention, "").strip()
@@ -601,6 +598,13 @@ async def handle_message(message):
         if len(msg_text) > 100:
             await message.reply(f"⚠️ *متن پیام خیلی طولانی است*\n\n"
                                 f"حداکثر ۱۰۰ کاراکتر مجاز است.{FOOTER}")
+            return
+    else:
+        if not is_valid_message(message):
+            await message.reply(f"⚠️ *فرمت پیام نامعتبر*\n\n"
+                                f"فقط پیام‌های متنی زیر ۱۰۰ کاراکتر قابل پردازش هستند.\n"
+                                f"لطفاً بدون عکس، ویدیو، فایل و فوروارد پیام دهید.{FOOTER}")
+
             return
 
     # Channel membership check (skip for groups)
