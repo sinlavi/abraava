@@ -434,8 +434,7 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
         artwork_cache = None
         if cache_id:
             data = get_mirror('collection', cache_id, 'artworkUrl')
-            logger.info(data["mirrors"])
-            if len(data["mirrors"]) > 0:
+            if len(data.get("mirrors", [])) > 0:
                 artwork_cache = data["mirrors"][0]
                 for mirror in data["mirrors"]:
                     if 'mirror_url' in mirror:
@@ -723,8 +722,7 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
         preview_cache = None
         if cache_id:
             data = get_mirror('track', cache_id, 'previewUrl')
-            logger.info(data["mirrors"])
-            if len(data["mirrors"]) > 0:
+            if len(data.get("mirrors", [])) > 0:
                 preview_cache = data["mirrors"][0]
                 for mirror in data["mirrors"]:
                     if 'mirror_url' in mirror:
