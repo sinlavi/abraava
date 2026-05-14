@@ -48,11 +48,13 @@ ARTWORK_CACHE_TTL = 86400  # 24 hours
 PREVIEW_CACHE_TTL = 86400  # 24 hours
 TRACK_CACHE_TTL = 604800  # 7 days
 
+
 def get_cache_file_path(cache_key: str) -> Path:
     """Get file path for a cache key"""
     # Use MD5 to create a safe filename
     safe_name = hashlib.md5(cache_key.encode()).hexdigest()
     return CACHE_DIR / f"{safe_name}.cache"
+
 
 async def save_to_file_cache(cache_key: str, data: Any, ttl: int = SEARCH_CACHE_TTL):
     """Save data to file cache with TTL"""
@@ -70,6 +72,7 @@ async def save_to_file_cache(cache_key: str, data: Any, ttl: int = SEARCH_CACHE_
     except Exception as e:
         logger.error(f"Failed to save to file cache {cache_key}: {e}")
         return False
+
 
 async def get_from_file_cache(cache_key: str) -> Optional[Any]:
     """Get data from file cache if not expired"""
@@ -91,6 +94,7 @@ async def get_from_file_cache(cache_key: str) -> Optional[Any]:
         logger.error(f"Failed to read from file cache {cache_key}: {e}")
         return None
 
+
 async def clear_expired_cache():
     """Clear all expired cache files"""
     while True:
@@ -108,6 +112,7 @@ async def clear_expired_cache():
         except Exception as e:
             logger.error(f"Cache cleanup error: {e}")
 
+
 # In-memory search cache (still needed for active sessions)
 SEARCH_CACHE = {}
 SEARCH_CACHE_MAX_ITEMS = 100
@@ -122,9 +127,11 @@ MESSAGE_OWNER_TTL = 600  # 10 minutes
 # ============================================================================
 close_btn = InlineKeyboard([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
 
+
 def create_retry_button(callback_data: str, button_text: str = "🔄 تلاش مجدد") -> InlineKeyboardButton:
     """Create a retry button for error messages"""
     return InlineKeyboardButton(text=button_text, callback_data=f"retry:{callback_data}")
+
 
 async def send_error_with_retry(bot: Client, chat_id: int, error_text: str, retry_callback: str,
                                 original_message: Optional[Message] = None):
@@ -142,12 +149,14 @@ async def send_error_with_retry(bot: Client, chat_id: int, error_text: str, retr
     else:
         await bot.send_message(chat_id, f"❌ *خطا:* {error_text}{FOOTER}", reply_markup=markup)
 
+
 async def update_status_with_close(status_msg: Message, text: str):
     """Update status message with close button"""
     try:
         await status_msg.edit(text, reply_markup=close_btn)
     except Exception as e:
         logger.error(f"Failed to update status message: {e}")
+
 
 # ============================================================================
 # Periodic cleanup tasks
@@ -165,6 +174,7 @@ async def cleanup_caches():
         for mid in expired_msgs:
             MESSAGE_OWNER.pop(mid, None)
 
+
 async def store_search_cache(search_id: str, type_: str, term: str, results: dict, owner_id: int):
     """Store search results in memory with TTL"""
     # Limit cache size
@@ -180,6 +190,7 @@ async def store_search_cache(search_id: str, type_: str, term: str, results: dic
         "timestamp": time.time()
     }
 
+
 async def get_search_cache(search_id: str) -> Optional[Dict]:
     """Retrieve search results from memory, check TTL"""
     data = SEARCH_CACHE.get(search_id)
@@ -189,9 +200,11 @@ async def get_search_cache(search_id: str) -> Optional[Dict]:
         SEARCH_CACHE.pop(search_id, None)
     return None
 
+
 def set_message_owner(message_id: int, owner_id: int):
     """Store which user owns this message (for group interactions)"""
     MESSAGE_OWNER[message_id] = (owner_id, time.time())
+
 
 def get_message_owner(message_id: int) -> Optional[int]:
     """Get owner of a message, if any"""
@@ -203,6 +216,7 @@ def get_message_owner(message_id: int) -> Optional[int]:
         else:
             MESSAGE_OWNER.pop(message_id, None)
     return None
+
 
 # ============================================================================
 # Rate Limiting
@@ -494,7 +508,7 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
     ye = track.get("releaseDate", "").split("-")[0]
     a_name = track.get("artistName", "Unknown Artist")
     collection_name = track.get("collectionName", "")
-    cover_url = get_high_res_artwork(track.get("artworkUrl100"), size=600)
+    cover_url = get_high_res_artwork(track.get("artworkUrl100", track.get("artworkUrl")), size=600)
 
     query = f'"{t_name}" by {a_name} collection {collection_name} {ye}'
     await update_status_with_close(status_msg, f"🔍 *جستجوی سورس باکیفیت آهنگ در یوتیوب موزیک...*{FOOTER}")
@@ -512,7 +526,8 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
         mp3_path_str = None
         try:
             async with DOWNLOAD_SEMAPHORE:
-                await update_status_with_close(status_msg, f"⏳ *در حال دانلود و پردازش (روش‌های پیشرفته ضدتحریم)...*{FOOTER}")
+                await update_status_with_close(status_msg,
+                                               f"⏳ *در حال دانلود و پردازش (روش‌های پیشرفته ضدتحریم)...*{FOOTER}")
                 mp3_path_str = await asyncio.get_event_loop().run_in_executor(
                     None, download_audio, video_url
                 )
@@ -567,15 +582,18 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
 
                 if DB_CHANNEL_ID:
                     try:
-                        await update_status_with_close(status_msg, f"☁️ *در حال آپلود در سرورهای ابری {BOT_NAME}...*{FOOTER}")
+                        await update_status_with_close(status_msg,
+                                                       f"☁️ *در حال آپلود در سرورهای ابری {BOT_NAME}...*{FOOTER}")
                         db_msg = await send_audio_with_retry(
                             bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, cache_id=str(track['trackId'])
                         )
 
                         if db_msg and db_msg.id:
-                            msg = await bot.forward_message(chat_id, from_chat_id=int(DB_CHANNEL_ID), message_id=db_msg.id)
+                            msg = await bot.forward_message(chat_id, from_chat_id=int(DB_CHANNEL_ID),
+                                                            message_id=db_msg.id)
                             await save_to_file_cache(f"track:{track_id}", db_msg.id, TRACK_CACHE_TTL)
-                            await update_status_with_close(status_msg, f"✅ *دانلود و پردازش با موفقیت انجام شد.*{FOOTER}")
+                            await update_status_with_close(status_msg,
+                                                           f"✅ *دانلود و پردازش با موفقیت انجام شد.*{FOOTER}")
                         else:
                             raise Exception("No message ID returned from DB Channel")
                     except Exception as e:
@@ -1015,7 +1033,8 @@ async def on_callback(callback_query: CallbackQuery):
     if is_group:
         owner = get_message_owner(message_id)
         if owner is not None and owner != user_id:
-            await bot.answer_callback_query(callback_query.id, "❌ شما اجازه تعامل با این پیام را ندارید.", show_alert=True)
+            await bot.answer_callback_query(callback_query.id, "❌ شما اجازه تعامل با این پیام را ندارید.",
+                                            show_alert=True)
             return
 
     allowed, wait_time = await rate_limiter.check_user(user_id)
@@ -1092,12 +1111,15 @@ async def on_callback(callback_query: CallbackQuery):
             cached = await get_search_cache(search_id)
             if cached:
                 if is_group and cached["owner_id"] != user_id:
-                    await bot.answer_callback_query(callback_query.id, "❌ این جستجو متعلق به شما نیست.", show_alert=True)
+                    await bot.answer_callback_query(callback_query.id, "❌ این جستجو متعلق به شما نیست.",
+                                                    show_alert=True)
                     return
                 await send_search_page(chat_id, cached["type"], cached["term"], cached["results"], page,
                                        callback_query.message, owner_id=cached["owner_id"])
             else:
-                await bot.answer_callback_query(callback_query.id, "⏳ نتایج جستجو منقضی شده‌اند. لطفاً دوباره جستجو کنید.", show_alert=True)
+                await bot.answer_callback_query(callback_query.id,
+                                                "⏳ نتایج جستجو منقضی شده‌اند. لطفاً دوباره جستجو کنید.",
+                                                show_alert=True)
         elif data.startswith("refine:"):
             entity = parts[1]
             term = parts[2]
@@ -1179,7 +1201,8 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1,
                 pagination_row = create_pagination_row(f"artist:{artist_id}", page, total_pages)
                 markup.append(pagination_row)
         random_collection = collections[random.randint(0, len(collections) - 2)] if collections else None
-        artwork_url = get_high_res_artwork(random_collection.get("artworkUrl100") if random_collection else None, size=600)
+        artwork_url = get_high_res_artwork(random_collection.get("artworkUrl100") if random_collection else None,
+                                           size=600)
         markup.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
         markup.append([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
         text += FOOTER
@@ -1206,7 +1229,8 @@ async def show_collection(chat_id: int, collection_id: int, page: int = 1,
                                         f"collection_retry:{collection_id}", status_msg)
             return
         collection_data = collection_data['results'][0]
-        release_date = collection_data.get('releaseDate', 'نامشخص')[:10] if collection_data.get('releaseDate') else 'نامشخص'
+        release_date = collection_data.get('releaseDate', 'نامشخص')[:10] if collection_data.get(
+            'releaseDate') else 'نامشخص'
         text = f"*📀 آلبوم:* {collection_data.get('collectionName', 'نامشخص')}\n"
         text += f"*🎤 هنرمند:* {collection_data.get('artistName', 'نامشخص')}\n"
         text += f"*📅 انتشار:* {release_date}\n"
@@ -1287,7 +1311,8 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Optional[Mess
         markup.append(download)
         links = []
         if track.get('collectionId'):
-            links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{track['collectionId']}:1"))
+            links.append(
+                InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{track['collectionId']}:1"))
         if track.get('artistId'):
             links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{track['artistId']}:1"))
         markup.append(links)
