@@ -563,8 +563,7 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
     audio_url = None
     if track_id:
         data = get_mirror('track', str(track_id), 'audioUrl')
-        logger.info(data["mirrors"])
-        if len(data["mirrors"]) > 0:
+        if len(data.get('audioUrl', [])) > 0:
             audio_cache = data["mirrors"][0]
             for mirror in data["mirrors"]:
                 if 'mirror_url' in mirror:
