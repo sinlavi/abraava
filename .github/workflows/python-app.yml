@@ -3,7 +3,7 @@ name: Test Deploy
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */2 * * *"  # Run every 2 hours
+    - cron: "0 */2 * * *"  # Every 2 hours
 
 concurrency:
   group: test-deploy
@@ -86,106 +86,96 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # ========== Run the bot ==========
-      - name: Run bot
-        id: bot
-        continue-on-error: true  # Continue even if bot fails
+      # ========== اجرای بات با commit خودکار در هر حالت خروج ==========
+      - name: Run bot with auto commit/push on exit
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           OFFLINE_MODE: ${{ secrets.OFFLINE_MODE }}
           DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
           INFO_CHANNEL_ID: ${{ secrets.INFO_CHANNEL_ID }}
-        run: python main.py
-
-      # ========== Database commit & push (always runs) ==========
-      - name: Commit and push database changes
-        if: always()  # Run even if bot failed or was cancelled
-        run: |
-          set -e  # Exit on error
-          
-          # Configure git
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Optimize for large files
-          git config http.postBuffer 524288000  # 500MB
-          git config core.compression 0
-          
-          # Fetch latest changes to avoid conflicts
-          echo "Fetching latest changes..."
-          git fetch origin
-          git pull --no-rebase origin "${GITHUB_REF_NAME}" || true
-          
-          # Add all .db files
-          echo "Searching for .db files..."
-          DB_FILES=$(find . -name "*.db" -type f)
-          
-          if [[ -z "$DB_FILES" ]]; then
-            echo "No .db files found to commit"
-            exit 0
-          fi
-          
-          echo "Found database files:"
-          echo "$DB_FILES"
-          
-          # Stage database files
-          echo "$DB_FILES" | while read -r file; do
-            git add -f "$file"
-            echo "Staged: $file"
-          done
-          
-          # Check if there are changes to commit
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-          
-          # Commit changes
-          COMMIT_MSG="Auto-update database $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          git commit -m "$COMMIT_MSG"
-          echo "Committed with message: $COMMIT_MSG"
-          
-          # Push with retry logic
-          MAX_RETRIES=3
-          RETRY_DELAY=5
-          
-          for attempt in $(seq 1 $MAX_RETRIES); do
-            echo "Push attempt $attempt of $MAX_RETRIES..."
-            if git push origin "${GITHUB_REF_NAME}"; then
-              echo "Successfully pushed to repository"
-              exit 0
-            fi
-          
-            if [[ $attempt -lt $MAX_RETRIES ]]; then
-              echo "Push failed, retrying in ${RETRY_DELAY} seconds..."
-              sleep $RETRY_DELAY
-            fi
-          done
-          
-          echo "Failed to push after $MAX_RETRIES attempts"
-          exit 1
         shell: bash
-
-      # ========== Emergency force push (if regular push fails) ==========
-      - name: Emergency force push
-        if: failure() && steps.commit.outcome == 'failure'
         run: |
-          echo "⚠️ Regular push failed, attempting emergency force push..."
+          # تابع commit و push با قابلیت retry و force push در صورت لزوم
+          commit_and_push() {
+            echo "🔄 Committing and pushing database changes (triggered by exit/signal)..."
+            
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git config http.postBuffer 524288000
+            git config core.compression 0
+            
+            # دریافت آخرین تغییرات برای کاهش conflict
+            git fetch origin
+            git pull --no-rebase origin "${GITHUB_REF_NAME}" || true
+            
+            # یافتن تمام فایل‌های دیتابیس
+            DB_FILES=$(find . -name "*.db" -type f)
+            if [[ -z "$DB_FILES" ]]; then
+              echo "📭 No .db files found to commit"
+              return 0
+            fi
+            
+            echo "📁 Found database files:"
+            echo "$DB_FILES"
+            
+            # stage کردن فایل‌ها
+            echo "$DB_FILES" | while read -r file; do
+              git add -f "$file"
+              echo "Staged: $file"
+            done
+            
+            # بررسی وجود تغییر
+            if git diff --cached --quiet; then
+              echo "✅ No changes to commit"
+              return 0
+            fi
+            
+            COMMIT_MSG="Auto-update database $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            git commit -m "$COMMIT_MSG"
+            echo "Committed: $COMMIT_MSG"
+            
+            # تلاش push با retry
+            MAX_RETRIES=3
+            for attempt in $(seq 1 $MAX_RETRIES); do
+              echo "Push attempt $attempt of $MAX_RETRIES..."
+              if git push origin "${GITHUB_REF_NAME}"; then
+                echo "✅ Successfully pushed to repository"
+                return 0
+              fi
+              if [[ $attempt -lt $MAX_RETRIES ]]; then
+                echo "Retrying in 5 seconds..."
+                sleep 5
+              fi
+            done
+            
+            # اگر همه تلاش‌ها failed، force push با احتیاط
+            echo "⚠️ Regular push failed, attempting force-with-lease..."
+            git push --force-with-lease origin "${GITHUB_REF_NAME}" || \
+            git push --force origin "${GITHUB_REF_NAME}"
+            echo "✅ Emergency force push completed"
+          }
           
+          # اطمینان از اجرای تابع در هر نوع خروج (normal, error, SIGTERM, SIGINT)
+          trap commit_and_push EXIT SIGTERM SIGINT
+          
+          # اجرای بات اصلی
+          python main.py
+          
+          # توجه: تابع commit_and_push به‌خودی خود به دلیل trap EXIT دوباره اجرا می‌شود.
+          # نیازی به فراخوانی اضافه نیست.
+
+      # ========== عقب‌نشینی نهایی (اختیاری) ==========
+      # اگر مرحله بالا به هر دلیلی کاملاً از بین رفت (SIGKILL یا crash شدید)،
+      # این مرحله به‌عنوان یک لایه امنیتی اضافه تلاش می‌کند.
+      - name: Emergency fallback commit
+        if: always() && failure()
+        run: |
+          echo "⚠️ Main step failed or was killed. Attempting emergency fallback..."
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Stage all database files
           find . -name "*.db" -type f -exec git add -f {} \;
-          
-          # Commit if there are changes
           if ! git diff --cached --quiet; then
-            git commit -m "Emergency auto-update $(date -u '+%Y-%m-%d %H:%M:%S UTC')" || true
+            git commit -m "Emergency fallback $(date -u '+%Y-%m-%d %H:%M:%S UTC')" || true
+            git push --force-with-lease origin "${GITHUB_REF_NAME}" || git push --force origin "${GITHUB_REF_NAME}"
           fi
-          
-          # Force push with lease (safer than --force)
-          git push --force-with-lease origin "${GITHUB_REF_NAME}" || \
-          git push --force origin "${GITHUB_REF_NAME}"
-          
-          echo "✅ Emergency force push completed"
         shell: bash
