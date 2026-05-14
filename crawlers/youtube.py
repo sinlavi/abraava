@@ -20,7 +20,7 @@ logger = logging.getLogger("yt_downloader")
 AUDIO_POSTPROCESSOR = {
     "key": "FFmpegExtractAudio",
     "preferredcodec": "mp3",
-    "preferredquality": "320",
+    "preferredquality": "128",
 }
 
 # ── Common yt‑dlp flags (shared by all methods) ──────────────────────────
@@ -189,7 +189,7 @@ def download_audio(
         output_dir: Optional[str] = None,
         *,
         max_retries_per_method: int = 1,
-        preferred_quality: int = 192,
+        preferred_quality: int = 128,
 ) -> Optional[str]:  # 🔄 تغییر: حالا string برمی‌گرداند
     """
     Download YouTube audio as "your entered" kbps MP3.
