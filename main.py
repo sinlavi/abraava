@@ -815,14 +815,6 @@ async def on_callback(callback_query: CallbackQuery):
 
     # Check ownership for group messages
     is_group = callback_query.message.chat.type in ["group", "supergroup"]
-    if is_group:
-        if not check_message_ownership(message_id, user_id):
-            await bot.answer_callback_query(
-                callback_query.id,
-                "❌ شما نمی‌توانید روی این دکمه کلیک کنید!\nفقط کاربری که ربات را صدا زده می‌تواند با این پیام تعامل داشته باشد.",
-                show_alert=True
-            )
-            return
 
     allowed, wait_time = await rate_limiter.check_user(user_id)
     if not allowed:
