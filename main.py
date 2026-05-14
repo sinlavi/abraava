@@ -19,10 +19,9 @@ from broadcast import broadcast_worker, handle_channel_post
 from config import BOT_NAME, FOOTER, OFFLINE_MODE, ITEMS_PER_PAGE, BOT_TOKEN, DB_CHANNEL_ID, INFO_CHANNEL_ID, logger, \
     BROADCAST_CHANNELS
 from crawlers.itunes import search_itunes, lookup_itunes
-from crawlers.utils import crawl_collection_tracks, crawl_artist_collections, get_or_crawl_collection, \
-    get_or_crawl_artist, get_or_crawl_artist_collections
+from crawlers.utils import get_or_crawl_collection, \
+    get_or_crawl_artist, get_track, get_or_crawl_collection_tracks, get_or_crawl_artist_collections
 from crawlers.youtube import download_audio, search_youtube_track
-from db.config import db
 from db.utils import insert_artist, get_search_cache, insert_search_cache, insert_collection, insert_track, init_db, \
     set_cache, get_cache, \
     get_collection_tracks, get_users_db, insert_user, local_search, get_artist_collections, get_all_users, \
@@ -364,46 +363,6 @@ def _delete_file_sync(path_str):
             p.unlink()
     except Exception as e:
         logger.error(f"Failed to delete temp file {path_str}: {e}")
-
-
-async def get_artist(artist_id: int, status_msg: Message = None, force: bool = False) -> Optional[Dict[str, Any]]:
-    result = await get_or_crawl_artist(artist_id, status_msg, force)
-    if result:
-        return result
-    return None
-
-
-async def get_collection(collection_id: int, status_msg: Message = None, force: bool = False) -> Optional[
-    Dict[str, Any]]:
-    result = await get_or_crawl_collection(collection_id, status_msg, force)
-    if result:
-        return result
-    return None
-
-
-async def get_track(track_id: int, status_msg: Message = None) -> Optional[Dict[str, Any]]:
-    db_data = await get_track_db(track_id)
-    if db_data:
-        collection_id = db_data.get("collectionId")
-        return db_data
-
-    if OFFLINE_MODE:
-        logger.info(f"Offline mode: track {track_id} not in local DB")
-        return None
-
-    if status_msg:
-        try:
-            await status_msg.edit(f"⏳ *در حال دریافت اطلاعات آهنگ از iTunes...*{FOOTER}", reply_markup=close_btn)
-        except Exception:
-            pass
-
-    data = await lookup_itunes(track_id)
-    if data and data.get("results"):
-        for item in data["results"]:
-            if item.get("wrapperType") == "track":
-                await insert_track(item)
-        return data
-    return None
 
 
 # ============================================================================
@@ -1177,7 +1136,7 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1,
         if artist_data.get("artistLinkUrl"):
             text += f"*🔗 لینک آیتونز:* [مشاهده در آیتونز]({artist_data['artistLinkUrl']})\n"
 
-        collections_data = await get_artist_collections(artist_id)
+        collections_data = await get_or_crawl_artist_collections(artist_id)
         collections = collections_data["results"] if collections_data else []
 
         markup = []
@@ -1191,11 +1150,12 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1,
 
             text += f"\n*📀 آلبوم‌ها ({total_items}):*\n"
             for collection in page_items:
-                btn_text = f"📀 {collection.get('collectionName', 'نامشخص')[:45]}"
-                markup.append([InlineKeyboardButton(
-                    text=btn_text,
-                    callback_data=f"collection:{collection['collectionId']}:1"
-                )])
+                if collection['wrapperType'] == 'collection':
+                    btn_text = f"📀 {collection.get('collectionName', 'نامشخص')[:45]}"
+                    markup.append([InlineKeyboardButton(
+                        text=btn_text,
+                        callback_data=f"collection:{collection['collectionId']}:1"
+                    )])
 
             if total_pages > 1:
                 pagination_row = create_pagination_row(f"artist:{artist_id}", page, total_pages)
@@ -1222,7 +1182,7 @@ async def show_collection(chat_id: int, collection_id: int, page: int = 1,
 
     try:
         collection_data = await get_or_crawl_collection(collection_id, status_msg, force)
-        tracks_data = await get_collection_tracks(collection_id)
+        tracks_data = await get_or_crawl_collection_tracks(collection_id)
         tracks = tracks_data["results"] if tracks_data else []
         if not collection_data:
             await send_error_with_retry(bot, chat_id, f"آلبوم یافت نشد.",
@@ -1253,10 +1213,11 @@ async def show_collection(chat_id: int, collection_id: int, page: int = 1,
                 text += f"{i}. {track.get('trackName', 'نامشخص')} ({duration})\n"
 
             for track in page_items:
-                markup.append([InlineKeyboardButton(
-                    text=f"🎵 {track.get('trackName', 'نامشخص')[:40]} - {track.get('artistName', 'نامشخص')[:40]}",
-                    callback_data=f"track:{track['trackId']}"
-                )])
+                if track['wrapperType'] == 'track':
+                    markup.append([InlineKeyboardButton(
+                        text=f"🎵 {track.get('trackName', 'نامشخص')[:40]} - {track.get('artistName', 'نامشخص')[:40]}",
+                        callback_data=f"track:{track['trackId']}"
+                    )])
 
             if total_pages > 1:
                 pagination_row = create_pagination_row(f"collection:{collection_id}", page, total_pages)
@@ -1319,7 +1280,7 @@ async def show_track(chat_id: int, track_id: int, message_to_edit: Optional[Mess
         markup.append([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
 
         text += FOOTER
-        artwork_url = get_high_res_artwork(track.get("artworkUrl"))
+        artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=InlineKeyboard(*markup), artwork_url=artwork_url,
                            cache_id=track.get('collectionId'), owner_id=owner_id)
         await status_msg.delete()

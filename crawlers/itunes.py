@@ -125,7 +125,7 @@ async def fetch_itunes(endpoint: str, params: dict, bypass_cache: bool = False) 
     url = f"{ITUNES_BASE_URL}/{endpoint}"
 
     try:
-        async with session.get(url, params=params, ssl=False,proxy=PROXY) as resp:
+        async with session.get(url, params=params, ssl=False, proxy=PROXY) as resp:
             if resp.status == 200:
                 text = await resp.text()
                 try:
@@ -165,10 +165,22 @@ async def lookup_itunes(id: int, entity: Optional[str] = None,
     params = {"id": id}
     if entity:
         params["entity"] = entity
-    return await fetch_itunes("lookup", params, bypass_cache=bypass_cache)
+    data = await fetch_itunes("lookup", params, bypass_cache=bypass_cache)
+    # Filter results to only include items where wrapperType matches entity
+    if data and entity and "results" in data:
+        if entity == "song":
+            entity = "track"
+        elif entity == "album":
+            entity = "collection"
+        filtered_results = [
+            item for item in data["results"]
+            if item.get("wrapperType") == entity
+        ]
+        data["results"] = filtered_results
+
+    return data
 
 
-# Optional: Utility function to manage cache
 async def clear_itunes_cache(expired_only: bool = False):
     """Clear iTunes cache (all or only expired entries)"""
     if expired_only:
