@@ -948,7 +948,7 @@ async def show_artist(chat_id: int, artist_id: int, page: int = 1,
     text += FOOTER
     logger.info(artwork_url)
     await edit_or_send(bot, chat_id, message_to_edit, text, markup=InlineKeyboard(*markup),
-                       cache_id='artwork:' + str(random_collection['collectionId']),
+                       cache_id=str(random_collection['collectionId']),
                        artwork_url=artwork_url, owner_id=owner_id)
     await status_msg.delete()
 
