@@ -1,7 +1,7 @@
 /__pycache__
 /crawlers/__pycache__
-/database/__pycache__
+/db/__pycache__
 bot.log
 /.idea
-/.env
 .env
+/cache

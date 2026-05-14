@@ -129,7 +129,7 @@ class Database:
 
     async def get_search_cache(self, search_id: str) -> Optional[dict]:
         async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute("SELECT type, term, data FROM search_cache WHERE id = ?", (search_id,)) as cursor:
+            async with db.execute("SELECT id,type, term, data FROM search_cache WHERE id = ?", (search_id,)) as cursor:
                 row = await cursor.fetchone()
                 if row:
                     return {"type": row[0], "term": row[1], "data": json.loads(row[2])}

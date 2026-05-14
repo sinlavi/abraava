@@ -18,6 +18,10 @@ get_collection_tracks = lambda collection_id: db.get_collection_tracks(collectio
 # --- Cache ---
 get_cache = lambda cache_id: db.get_cache(cache_id)
 set_cache = lambda item: db.insert("cache", item)
+# --- Cache ---
+insert_search_cache = lambda search_id, type_, term, data: db.insert_search_cache(search_id=search_id, type_=type_,
+                                                                                  term=term, data=data)
+get_search_cache = lambda search_id: db.get_search_cache(search_id=search_id)
 
 # --- Users ---
 insert_user = lambda user_id: db.insert_user(user_id)
