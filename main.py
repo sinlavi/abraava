@@ -559,25 +559,25 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
                 release_year = track.get("releaseDate", "").split("-")[0] if track.get("releaseDate") else ""
 
                 caption_parts = [
-                    f"🎵 {track.get('trackName', 'Unknown Title')}",
-                    f"🎤 {track.get('artistName', 'Unknown Artist')}",
+                    f"🎵 آهنگ: {track.get('trackName', 'Unknown Title')}",
+                    f"🎤 هنرمند: {track.get('artistName', 'Unknown Artist')}",
                 ]
 
                 if track.get('collectionName'):
-                    caption_parts.append(f"📀 {track.get('collectionName')}")
+                    caption_parts.append(f"📀 آلبوم: {track.get('collectionName')}")
                 if release_year:
-                    caption_parts.append(f"📅 {release_year}")
+                    caption_parts.append(f"📅 انتشار: {release_year}")
                 if track.get('primaryGenreName'):
-                    caption_parts.append(f"🎸 {track.get('primaryGenreName')}")
+                    caption_parts.append(f"🎸 سبک: {track.get('primaryGenreName')}")
                 if track.get('trackExplicitness') == 'explicit':
                     caption_parts.append(f"🔞 Explicit")
                 if track.get('trackTimeMillis'):
                     duration_sec = track['trackTimeMillis'] // 1000
                     minutes = duration_sec // 60
                     seconds = duration_sec % 60
-                    caption_parts.append(f"⏱️ {minutes}:{seconds:02d}")
+                    caption_parts.append(f"⏱️ مدت زمان: {minutes}:{seconds:02d}")
 
-                caption_parts.append(f"🔊 {file_size_mb:.1f} MB{FOOTER}")
+                caption_parts.append(f"🔊 حجم فایل: {file_size_mb:.1f} MB{FOOTER}")
                 caption = "\n".join(caption_parts)
 
                 if DB_CHANNEL_ID:
