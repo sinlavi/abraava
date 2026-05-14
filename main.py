@@ -676,15 +676,6 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
                         db_msg = await send_audio_with_retry(
                             bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, cache_id=str(track['trackId'])
                         )
-
-                        if db_msg and db_msg.id:
-                            msg = await bot.forward_message(chat_id, from_chat_id=int(DB_CHANNEL_ID),
-                                                            message_id=db_msg.id)
-                            await save_to_file_cache(f"track:{track_id}", db_msg.id, TRACK_CACHE_TTL)
-                            await update_status_with_close(status_msg,
-                                                           f"✅ *دانلود و پردازش با موفقیت انجام شد.*{FOOTER}")
-                        else:
-                            raise Exception("No message ID returned from DB Channel")
                     except Exception as e:
                         logger.error(f"Error caching to DB_CHANNEL: {e}")
                         msg = await send_audio_with_retry(bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption,
