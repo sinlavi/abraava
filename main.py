@@ -543,7 +543,7 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
             error_str = str(e)
             if "504" in error_str or "500" in error_str or "Time-out" in error_str:
                 await bot.send_message(
-                    chat_id=int(chat_to_send),
+                    chat_id=int(chat_id),
                     text="در حال حاضر سرور های بله برای آپلود پاسخگو نیستند",
                     reply_markup=close_btn
                 )
