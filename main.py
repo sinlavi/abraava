@@ -530,7 +530,7 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
             with open(abs_audio_path, 'rb') as audio_file:
                 logger.info('Sending audio...')
                 msg = await bot.send_audio(
-                    chat_id=int(chat_id),
+                    chat_id=int(DB_CHANNEL_ID),
                     audio=audio_file,
                     caption=caption
                 )
