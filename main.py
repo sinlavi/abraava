@@ -17,7 +17,7 @@ from balethon.objects import CallbackQuery, Message, InlineKeyboardButton, Inlin
 
 from broadcast import broadcast_worker, handle_channel_post
 from config import BOT_NAME, FOOTER, OFFLINE_MODE, ITEMS_PER_PAGE, BOT_TOKEN, DB_CHANNEL_ID, INFO_CHANNEL_ID, logger, \
-    BROADCAST_CHANNELS
+    BROADCAST_CHANNELS, ITUNES_BASE_URL
 from crawlers.itunes import search_itunes, lookup_itunes
 from crawlers.utils import get_or_crawl_collection, \
     get_or_crawl_artist, get_track, get_or_crawl_collection_tracks, get_or_crawl_artist_collections
@@ -28,6 +28,116 @@ from db.utils import insert_artist, get_search_cache, insert_search_cache, inser
     get_track_db, \
     get_collection_db, get_artist_db
 from utils import tag_mp3
+import requests
+from typing import Optional, Dict, Any
+
+
+def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url: str) -> Dict[str, Any]:
+    """
+    POST /mirror/set
+    Sets a mirror URL for a specific entity
+    """
+    url = f"{ITUNES_BASE_URL}/mirror/set"
+    payload = {
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "url_type": url_type,
+        "mirror_url": mirror_url
+    }
+    response = requests.post(url, json=payload)
+    response.raise_for_status()
+    return response.json()
+
+
+def get_mirror(entity_type: str, entity_id: str, url_type: str) -> Dict[str, Any]:
+    """
+    GET /mirror/get
+    Retrieves a mirror URL for a specific entity
+    """
+    url = f"{ITUNES_BASE_URL}/mirror/get"
+    params = {
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "url_type": url_type
+    }
+    response = requests.get(url, params=params)
+    response.raise_for_status()
+    return response.json()
+
+
+def delete_mirror(entity_type: str, entity_id: str, url_type: str, method: str = "POST") -> Dict[str, Any]:
+    """
+    DELETE or POST /mirror/delete
+    Deletes a mirror URL for a specific entity
+    method: Either "POST" or "DELETE" (default: "POST")
+    """
+    url = f"{ITUNES_BASE_URL}/mirror/delete"
+    payload = {
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "url_type": url_type
+    }
+
+    if method.upper() == "DELETE":
+        response = requests.delete(url, json=payload)
+    else:  # Default to POST
+        response = requests.post(url, json=payload)
+
+    response.raise_for_status()
+    return response.json()
+
+
+from typing import Optional, Dict, Any
+
+
+class MirrorAPI:
+    def __init__(self, base_url: str = "https://3rah.ir/music/mirror/"):
+        self.base_url = base_url.rstrip('/')
+        self.session = requests.Session()
+
+    def set_mirror(self, entity_type: str, entity_id: str, url_type: str, mirror_url: str) -> Dict[str, Any]:
+        """POST /mirror/set - Set a mirror URL"""
+        url = f"{self.base_url}/mirror/set"
+        payload = {
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "url_type": url_type,
+            "mirror_url": mirror_url
+        }
+        response = self.session.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def get_mirror(self, entity_type: str, entity_id: str, url_type: str) -> Dict[str, Any]:
+        """GET /mirror/get - Get a mirror URL"""
+        url = f"{self.base_url}/mirror/get"
+        params = {
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "url_type": url_type
+        }
+        response = self.session.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
+
+    def delete_mirror(self, entity_type: str, entity_id: str, url_type: str, use_delete_method: bool = False) -> Dict[
+        str, Any]:
+        """Delete a mirror URL - uses POST by default or DELETE if specified"""
+        url = f"{self.base_url}/mirror/delete"
+        payload = {
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "url_type": url_type
+        }
+
+        if use_delete_method:
+            response = self.session.delete(url, json=payload)
+        else:
+            response = self.session.post(url, json=payload)
+
+        response.raise_for_status()
+        return response.json()
+
 
 # ============================================================================
 # HTTP Session & Semaphores
@@ -323,13 +433,20 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
     if artwork_url:
         artwork_cache = None
         if cache_id:
-            artwork_cache = await get_from_file_cache(f"artwork:{cache_id}")
+            data = get_mirror('collection', cache_id, 'artworkUrl')
+            logger.info(data["mirrors"])
+            if len(data["mirrors"]) > 0:
+                artwork_cache = data["mirrors"][0]
+                for mirror in data["mirrors"]:
+                    if 'mirror_url' in mirror:
+                        artwork_cache = mirror["mirror_url"].split('<token>/')[1]
             if artwork_cache:
                 artwork_url = artwork_cache
         try:
             msg = await bot.send_photo(chat_id, photo=artwork_url, caption=text, reply_markup=markup)
             if cache_id and not artwork_cache and msg:
-                await save_to_file_cache(f"artwork:{cache_id}", str(msg.photo[0].id), ARTWORK_CACHE_TTL)
+                set_mirror('collection', cache_id, 'artworkUrl',
+                           'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
         except Exception as e:
             msg = await bot.send_message(chat_id, text=text, reply_markup=markup)
     else:
@@ -413,11 +530,13 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
             with open(abs_audio_path, 'rb') as audio_file:
                 logger.info('Sending audio...')
                 msg = await bot.send_audio(
-                    chat_id=int(chat_to_send),
+                    chat_id=int(chat_id),
                     audio=audio_file,
                     caption=caption
                 )
-                await save_to_file_cache(f"track:{cache_id}", str(msg.id), TRACK_CACHE_TTL)
+
+                set_mirror('track', str(cache_id), 'audioUrl',
+                           'https://tapi.bale.ai/file/bot<token>/' + str(msg.audio.id))
                 return msg
 
         except Exception as e:
@@ -437,15 +556,26 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
     raise last_exception
 
 
-async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user_id: int = None):
+async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user_id: int = None, caption=""):
     status_msg = await bot.send_message(chat_id, text=f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*{FOOTER}",
                                         reply_markup=close_btn)
+    audio_cache = None
+    audio_url = None
+    if track_id:
+        data = get_mirror('track', str(track_id), 'audioUrl')
+        logger.info(data["mirrors"])
+        if len(data["mirrors"]) > 0:
+            audio_cache = data["mirrors"][0]
+            for mirror in data["mirrors"]:
+                if 'mirror_url' in mirror:
+                    audio_cache = mirror["mirror_url"].split('<token>/')[1]
+        if audio_cache:
+            audio_url = audio_cache
 
-    channel_msg_id = await get_from_file_cache(f"track:{track_id}")
-    if channel_msg_id and DB_CHANNEL_ID:
+    if audio_url and DB_CHANNEL_ID:
         try:
             await update_status_with_close(status_msg, f"📤 *در حال ارسال فایل از حافظه کش...*{FOOTER}")
-            msg = await bot.forward_message(chat_id, from_chat_id=int(DB_CHANNEL_ID), message_id=channel_msg_id)
+            msg = await bot.send_audio(chat_id, audio=audio_url, caption=caption)
             await status_msg.delete()
             return
         except Exception as e:
@@ -600,14 +730,23 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
             return
 
         cache_id = track['trackId']
-        preview_cache = await get_from_file_cache(f"preview:{cache_id}")
-        if preview_cache:
-            preview_url = preview_cache
+        preview_cache = None
+        if cache_id:
+            data = get_mirror('track', cache_id, 'previewUrl')
+            logger.info(data["mirrors"])
+            if len(data["mirrors"]) > 0:
+                preview_cache = data["mirrors"][0]
+                for mirror in data["mirrors"]:
+                    if 'mirror_url' in mirror:
+                        preview_cache = mirror["mirror_url"].split('<token>/')[1]
+            if preview_cache:
+                preview_url = preview_cache
 
         msg = await bot.send_voice(chat_id, voice=preview_url,
                                    caption=f"🎧 *پیش‌نمایش صوتی آهنگ {track.get('trackName')}*{FOOTER}")
         if msg and not preview_cache:
-            await save_to_file_cache(f"preview:{cache_id}", str(msg.voice.id), PREVIEW_CACHE_TTL)
+            set_mirror('track', str(track_id), 'previewUrl',
+                       'https://tapi.bale.ai/file/bot<token>/' + str(msg.voice.id))
         await status_msg.delete()
 
     except Exception as e:
