@@ -12,6 +12,7 @@ import time
 from collections import defaultdict
 from balethon.objects import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboard
 from balethon import Client
+from pyrogram.filters import reply
 
 from broadcast import broadcast_worker, handle_channel_post
 from config import BOT_NAME, FOOTER, OFFLINE_MODE, ITEMS_PER_PAGE, BOT_TOKEN, DB_CHANNEL_ID, INFO_CHANNEL_ID, logger, \
@@ -272,6 +273,11 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
         except Exception as e:
             error_str = str(e)
             if "504" in error_str or "500" in error_str or "Time-out" in error_str:
+                await bot.send_message(
+                    chat_id=int(chat_to_send),
+                    text="در حال حاضر سرور های بله برای آپلود پاسخگو نیستند",
+                    reply_markup=close_btn
+                )
                 logger.warning(f"send_audio network/server error, retry {attempt}/{max_retries}: {e}")
                 last_exception = e
                 await asyncio.sleep(attempt * 2)
