@@ -20,6 +20,46 @@ from db.utils import (
 )
 
 
+async def get_artist(artist_id: int, status_msg: Message = None, force: bool = False) -> Optional[Dict[str, Any]]:
+    result = await get_or_crawl_artist(artist_id, status_msg, force)
+    if result:
+        return result
+    return None
+
+
+async def get_collection(collection_id: int, status_msg: Message = None, force: bool = False) -> Optional[
+    Dict[str, Any]]:
+    result = await get_or_crawl_collection(collection_id, status_msg, force)
+    if result:
+        return result
+    return None
+
+
+async def get_track(track_id: int, status_msg: Message = None) -> Optional[Dict[str, Any]]:
+    db_data = await get_track_db(track_id)
+    if db_data:
+        collection_id = db_data.get("collectionId")
+        return db_data
+
+    if OFFLINE_MODE:
+        logger.info(f"Offline mode: track {track_id} not in local DB")
+        return None
+
+    if status_msg:
+        try:
+            await status_msg.edit(f"⏳ *در حال دریافت اطلاعات آهنگ از iTunes...*{FOOTER}")
+        except Exception:
+            pass
+
+    data = await lookup_itunes(track_id)
+    if data and data.get("results"):
+        for item in data["results"]:
+            if item.get("wrapperType") == "track":
+                await insert_track(item)
+        return data
+    return None
+
+
 async def should_crawl_artist(artist_id: int, force: bool = False) -> bool:
     if OFFLINE_MODE:
         return False
@@ -83,7 +123,7 @@ async def crawl_artist_collections(artist_id):
         for item in data["results"]:
             if item.get("wrapperType") == "collection":
                 await insert_collection(item)
-                #asyncio.create_task(crawl_collection_tracks(item["collectionId"]))
+                # asyncio.create_task(crawl_collection_tracks(item["collectionId"]))
         logger.info(f"Crawled {data['resultCount']} collections for artist {artist_id}")
     else:
         logger.warning(f"No collections found for artist {artist_id}")

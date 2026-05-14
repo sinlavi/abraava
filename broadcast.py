@@ -18,7 +18,7 @@ async def handle_channel_post(message):
             logger.info(f"Broadcast queued for {len(users)} users")
 
 
-async def broadcast_worker():
+async def broadcast_worker(bot):
     logger.info("Broadcast worker started")
     while True:
         try:
