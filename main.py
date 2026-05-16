@@ -15,7 +15,6 @@ import aiosqlite
 from balethon import Client
 from balethon.objects import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboard
 
-from broadcast import broadcast_worker, handle_channel_post
 from config import BOT_NAME, FOOTER, OFFLINE_MODE, ITEMS_PER_PAGE, BOT_TOKEN, DB_CHANNEL_ID, INFO_CHANNEL_ID, logger, \
     BROADCAST_CHANNELS, ITUNES_BASE_URL
 from crawlers.itunes import search_itunes, lookup_itunes
@@ -30,7 +29,6 @@ from db.utils import insert_artist, get_search_cache, insert_search_cache, inser
 from utils import tag_mp3
 import requests
 from typing import Optional, Dict, Any
-
 
 def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url: str) -> Dict[str, Any]:
     """
@@ -660,6 +658,7 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
                     caption_parts.append(f"⏱️ مدت زمان: {minutes}:{seconds:02d}")
 
                 caption_parts.append(f"🔊 حجم فایل: {file_size_mb:.1f} MB{FOOTER}")
+                caption_parts.append(f"🔗 لینک نمایش: https://3rah.ir/music/ui?id={track_id}")
                 caption = "\n".join(caption_parts)
 
                 if DB_CHANNEL_ID:
@@ -741,6 +740,59 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
 # ============================================================================
 # Channel Membership Check
 # ============================================================================
+
+broadcast_queue = asyncio.Queue()
+
+async def handle_channel_post(message):
+    content = message.content
+    should_broadcast = "#تبلیغ" in content or "#اطلاع_رسانی" in content
+
+    if should_broadcast:
+        logger.info(f"Broadcasting message from channel: {content[:100]}...")
+        users = await get_all_users()
+        if users:
+            await broadcast_queue.put({"users": users, "message": message})
+            logger.info(f"Broadcast queued for {len(users)} users")
+
+async def broadcast_worker():
+    logger.info("Broadcast worker started")
+
+    while True:
+        try:
+            data = await broadcast_queue.get()
+
+            users = data["users"]
+            from_chat = data["from_chat"]
+            message_id = data["message_id"]
+
+            success = 0
+            failed = 0
+
+            for user_id in users:
+                try:
+                    await bot.forward_message(
+                        chat_id=user_id,
+                        from_chat_id=from_chat,
+                        message_id=message_id
+                    )
+
+                    success += 1
+                    await asyncio.sleep(0.05)
+
+                except Exception as e:
+                    failed += 1
+                    logger.debug(f"Broadcast fail {user_id}: {e}")
+
+            logger.info(
+                f"Broadcast finished | success={success} failed={failed}"
+            )
+
+            broadcast_queue.task_done()
+
+        except Exception as e:
+            logger.error(f"Broadcast worker crashed: {e}")
+            await asyncio.sleep(5)
+
 async def check_channel_membership(bot: Client, user_id: int) -> bool:
     is_registered = await get_users_db(user_id)
     if not is_registered:
@@ -817,7 +869,7 @@ async def on_initialize():
     await init_db()
     logger.info("Database initialized successfully (relational tables ready).")
     logger.info(f"Bot started with rate limiting: {rate_limiter.max_requests} req/min per user")
-    asyncio.create_task(broadcast_worker(bot))
+    asyncio.create_task(broadcast_worker())
     asyncio.create_task(cleanup_caches())
     asyncio.create_task(clear_expired_cache())
 
@@ -1089,7 +1141,7 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
         markup.append(pagination_row)
 
     refine_term = term
-    markup.append([InlineKeyboardButton("🔍 آلبوم‌ها", f"refine:collection:{refine_term}"),
+    markup.append([InlineKeyboardButton("🔍 آلبوم‌ها", f"refine:album:{refine_term}"),
                    InlineKeyboardButton("🔍 هنرمندان", f"refine:artist:{refine_term}"),
                    InlineKeyboardButton("🔍 آهنگ‌ها", f"refine:track:{refine_term}")])
 
