@@ -1,7 +1,8 @@
+import asyncio
 import json
 import hashlib
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Literal
 from pathlib import Path
 
 from config import ITUNES_BASE_URL, HttpClient, OFFLINE_MODE, logger, PROXY
@@ -117,11 +118,18 @@ def _has_results(data: Dict[str, Any]) -> bool:
 
 
 async def fetch_itunes(
-        endpoint: str, params: dict, bypass_cache: bool = False
+        endpoint: str,
+        params: dict = None,
+        bypass_cache: bool = False,
+        method: Literal["GET", "POST", "PUT", "DELETE"] = "GET",
+        payload: dict = None
 ) -> Optional[Dict[str, Any]]:
-    """Fetch from iTunes API with caching"""
+    """Fetch from iTunes API with caching support for multiple HTTP methods"""
 
-    if not bypass_cache and not OFFLINE_MODE:
+    params = params or {}
+
+    # Only use cache for GET requests
+    if method == "GET" and not bypass_cache and not OFFLINE_MODE:
         cached_response = _itunes_cache.get(endpoint, params)
         if cached_response is not None:
             return cached_response
@@ -134,23 +142,51 @@ async def fetch_itunes(
     url = f"{ITUNES_BASE_URL}/{endpoint}"
 
     try:
-        async with session.get(url, params=params, ssl=False, proxy=PROXY) as resp:
-            if resp.status == 200:
-                text = await resp.text()
-                try:
-                    response_data = json.loads(text)
+        # Handle different HTTP methods
+        if method == "GET":
+            async with session.get(url, params=params, ssl=False, proxy=PROXY) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    try:
+                        response_data = json.loads(text)
 
-                    # Only cache responses that contain items
-                    if not OFFLINE_MODE and _has_results(response_data):
-                        _itunes_cache.set(endpoint, params, response_data)
+                        # Only cache responses that contain items
+                        if not OFFLINE_MODE and _has_results(response_data):
+                            _itunes_cache.set(endpoint, params, response_data)
 
+                        return response_data
+                    except json.JSONDecodeError:
+                        logger.error(f"Failed to parse JSON from {url}")
+                        return None
+                else:
+                    logger.warning(f"iTunes API returned status {resp.status} for {url}")
+
+        elif method == "POST":
+            async with session.post(url, params=params, json=payload, ssl=False, proxy=PROXY) as resp:
+                if resp.status == 200:
+                    response_data = await resp.json()
                     return response_data
-
-                except json.JSONDecodeError:
-                    logger.error(f"Failed to parse JSON from {url}")
+                else:
+                    logger.warning(f"POST to {url} returned status {resp.status}")
                     return None
-            else:
-                logger.warning(f"iTunes API returned status {resp.status} for {url}")
+
+        elif method == "PUT":
+            async with session.put(url, params=params, json=payload, ssl=False, proxy=PROXY) as resp:
+                if resp.status == 200:
+                    response_data = await resp.json()
+                    return response_data
+                else:
+                    logger.warning(f"PUT to {url} returned status {resp.status}")
+                    return None
+
+        elif method == "DELETE":
+            async with session.delete(url, params=params, json=payload, ssl=False, proxy=PROXY) as resp:
+                if resp.status == 200:
+                    response_data = await resp.json()
+                    return response_data
+                else:
+                    logger.warning(f"DELETE to {url} returned status {resp.status}")
+                    return None
 
     except Exception as e:
         logger.error(f"Error fetching from iTunes API ({endpoint}): {e}")
@@ -242,7 +278,6 @@ async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url
     """
     POST /mirror/set
     Sets a mirror URL for a specific entity
-    :rtype: object
     """
     payload = {
         "entity_type": entity_type,
@@ -250,7 +285,8 @@ async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url
         "url_type": url_type,
         "mirror_url": mirror_url
     }
-    return await fetch_itunes("mirror/set", payload)
+    # Use POST method with payload
+    return await fetch_itunes("mirror/set", method="POST", payload=payload)
 
 
 async def get_mirror(entity_type: str, entity_id: str, url_type: str) -> Optional[Dict[str, Any]]:
@@ -263,46 +299,20 @@ async def get_mirror(entity_type: str, entity_id: str, url_type: str) -> Optiona
         "entity_id": entity_id,
         "url_type": url_type
     }
-    return await fetch_itunes("mirror/get", params)
+    return await fetch_itunes("mirror/get", params=params, method="GET")
 
 
-async def delete_mirror(entity_type: str, entity_id: str, url_type: str, method: str = "POST") -> Optional[
-    Dict[str, Any]]:
+async def delete_mirror(entity_type: str, entity_id: str, url_type: str, method: Literal["POST", "DELETE"] = "POST") -> Optional[Dict[str, Any]]:
     """
     DELETE or POST /mirror/delete
     Deletes a mirror URL for a specific entity
     method: Either "POST" or "DELETE" (default: "POST")
     """
-    # Note: fetch_itunes currently only supports GET requests
-    # You may need to extend it to support different HTTP methods
-    # For now, I'll implement a direct approach
-
-    from aiohttp import ClientSession
-
-    url = f"{ITUNES_BASE_URL}/mirror/delete"
     payload = {
         "entity_type": entity_type,
         "entity_id": entity_id,
         "url_type": url_type
     }
 
-    session = await HttpClient.get_session()
-
-    try:
-        if method.upper() == "DELETE":
-            async with session.delete(url, json=payload, ssl=False, proxy=PROXY) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-                else:
-                    logger.warning(f"Delete mirror API returned status {resp.status}")
-                    return None
-        else:  # Default to POST
-            async with session.post(url, json=payload, ssl=False, proxy=PROXY) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-                else:
-                    logger.warning(f"Post delete mirror API returned status {resp.status}")
-                    return None
-    except Exception as e:
-        logger.error(f"Error in delete_mirror: {e}")
-        return None
+    # Use the unified fetch_itunes function with appropriate method
+    return await fetch_itunes("mirror/delete", method=method, payload=payload)

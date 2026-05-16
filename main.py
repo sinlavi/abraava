@@ -567,22 +567,11 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
                 await asyncio.get_event_loop().run_in_executor(
                     None, tag_mp3, mp3_path_str, track, cover_bytes
                 )
-                if DB_CHANNEL_ID:
-                    try:
-                        await update_status_with_close(status_msg,
-                                                       f"☁️ *در حال آپلود در سرورهای ابری {BOT_NAME}...*{FOOTER}")
-                        db_msg = await send_audio_with_retry(
-                            bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, cache_id=str(track['trackId'])
-                        )
-                    except Exception as e:
-                        logger.error(f"Error caching to DB_CHANNEL: {e}")
-                        msg = await send_audio_with_retry(bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption,
-                                                          cache_id=str(track['trackId']))
-                        await update_status_with_close(status_msg, f"✅ *آهنگ مستقیما ارسال شد.*{FOOTER}")
-                else:
-                    msg = await send_audio_with_retry(bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption,
-                                                      cache_id=str(track['trackId']))
-                    await update_status_with_close(status_msg, f"✅ *دانلود و ارسال با موفقیت انجام شد.*{FOOTER}")
+                await update_status_with_close(status_msg,
+                                               f"☁️ *در حال آپلود در سرورهای ابری {BOT_NAME}...*{FOOTER}")
+                await send_audio_with_retry(
+                    bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, cache_id=str(track['trackId'])
+                )
 
                 await status_msg.delete()
 
@@ -633,8 +622,8 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
         msg = await bot.send_voice(chat_id, voice=preview_url,
                                    caption=f"🎧 *پیش‌نمایش صوتی آهنگ {track.get('trackName')}*{FOOTER}")
         if msg and not preview_cache:
-            set_mirror('track', str(track_id), 'previewUrl',
-                       'https://tapi.bale.ai/file/bot<token>/' + str(msg.voice.id))
+            await set_mirror('track', str(track_id), 'previewUrl',
+                             'https://tapi.bale.ai/file/bot<token>/' + str(msg.voice.id))
         await status_msg.delete()
 
     except Exception as e:
