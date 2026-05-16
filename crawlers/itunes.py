@@ -117,6 +117,11 @@ def _has_results(data: Dict[str, Any]) -> bool:
     return isinstance(results, list) and len(results) > 0
 
 
+def _is_mirror_request(endpoint: str) -> bool:
+    """Check if the request is related to mirror operations"""
+    return endpoint.startswith("mirror/")
+
+
 async def fetch_itunes(
         endpoint: str,
         params: dict = None,
@@ -128,8 +133,13 @@ async def fetch_itunes(
 
     params = params or {}
 
-    # Only use cache for GET requests
-    if method == "GET" and not bypass_cache and not OFFLINE_MODE:
+    # Mirror requests should never use cache
+    is_mirror = _is_mirror_request(endpoint)
+    if is_mirror:
+        bypass_cache = True
+
+    # Only use cache for GET requests and non-mirror endpoints
+    if method == "GET" and not bypass_cache and not OFFLINE_MODE and not is_mirror:
         cached_response = _itunes_cache.get(endpoint, params)
         if cached_response is not None:
             return cached_response
@@ -150,8 +160,8 @@ async def fetch_itunes(
                     try:
                         response_data = json.loads(text)
 
-                        # Only cache responses that contain items
-                        if not OFFLINE_MODE and _has_results(response_data):
+                        # Only cache responses that contain items and are not mirror requests
+                        if not OFFLINE_MODE and not is_mirror and _has_results(response_data):
                             _itunes_cache.set(endpoint, params, response_data)
 
                         return response_data
@@ -302,7 +312,8 @@ async def get_mirror(entity_type: str, entity_id: str, url_type: str) -> Optiona
     return await fetch_itunes("mirror/get", params=params, method="GET")
 
 
-async def delete_mirror(entity_type: str, entity_id: str, url_type: str, method: Literal["POST", "DELETE"] = "POST") -> Optional[Dict[str, Any]]:
+async def delete_mirror(entity_type: str, entity_id: str, url_type: str, method: Literal["POST", "DELETE"] = "POST") -> \
+Optional[Dict[str, Any]]:
     """
     DELETE or POST /mirror/delete
     Deletes a mirror URL for a specific entity
@@ -316,4 +327,3 @@ async def delete_mirror(entity_type: str, entity_id: str, url_type: str, method:
 
     # Use the unified fetch_itunes function with appropriate method
     return await fetch_itunes("mirror/delete", method=method, payload=payload)
-
