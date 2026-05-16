@@ -17,7 +17,7 @@ from balethon.objects import CallbackQuery, Message, InlineKeyboardButton, Inlin
 
 from config import BOT_NAME, FOOTER, OFFLINE_MODE, ITEMS_PER_PAGE, BOT_TOKEN, DB_CHANNEL_ID, INFO_CHANNEL_ID, logger, \
     BROADCAST_CHANNELS, ITUNES_BASE_URL
-from crawlers.itunes import search_itunes, lookup_itunes
+from crawlers.itunes import search_itunes, lookup_itunes, fetch_itunes, set_mirror, get_mirror
 from crawlers.utils import get_or_crawl_collection, \
     get_or_crawl_artist, get_track, get_or_crawl_collection_tracks, get_or_crawl_artist_collections
 from crawlers.youtube import download_audio, search_youtube_track
@@ -30,112 +30,7 @@ from utils import tag_mp3
 import requests
 from typing import Optional, Dict, Any
 
-def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url: str) -> Dict[str, Any]:
-    """
-    POST /mirror/set
-    Sets a mirror URL for a specific entity
-    """
-    url = f"{ITUNES_BASE_URL}/mirror/set"
-    payload = {
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "url_type": url_type,
-        "mirror_url": mirror_url
-    }
-    response = requests.post(url, json=payload)
-    response.raise_for_status()
-    return response.json()
-
-
-def get_mirror(entity_type: str, entity_id: str, url_type: str) -> Dict[str, Any]:
-    """
-    GET /mirror/get
-    Retrieves a mirror URL for a specific entity
-    """
-    url = f"{ITUNES_BASE_URL}/mirror/get"
-    params = {
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "url_type": url_type
-    }
-    response = requests.get(url, params=params)
-    response.raise_for_status()
-    return response.json()
-
-
-def delete_mirror(entity_type: str, entity_id: str, url_type: str, method: str = "POST") -> Dict[str, Any]:
-    """
-    DELETE or POST /mirror/delete
-    Deletes a mirror URL for a specific entity
-    method: Either "POST" or "DELETE" (default: "POST")
-    """
-    url = f"{ITUNES_BASE_URL}/mirror/delete"
-    payload = {
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "url_type": url_type
-    }
-
-    if method.upper() == "DELETE":
-        response = requests.delete(url, json=payload)
-    else:  # Default to POST
-        response = requests.post(url, json=payload)
-
-    response.raise_for_status()
-    return response.json()
-
-
 from typing import Optional, Dict, Any
-
-
-class MirrorAPI:
-    def __init__(self, base_url: str = "https://3rah.ir/music/mirror/"):
-        self.base_url = base_url.rstrip('/')
-        self.session = requests.Session()
-
-    def set_mirror(self, entity_type: str, entity_id: str, url_type: str, mirror_url: str) -> Dict[str, Any]:
-        """POST /mirror/set - Set a mirror URL"""
-        url = f"{self.base_url}/mirror/set"
-        payload = {
-            "entity_type": entity_type,
-            "entity_id": entity_id,
-            "url_type": url_type,
-            "mirror_url": mirror_url
-        }
-        response = self.session.post(url, json=payload)
-        response.raise_for_status()
-        return response.json()
-
-    def get_mirror(self, entity_type: str, entity_id: str, url_type: str) -> Dict[str, Any]:
-        """GET /mirror/get - Get a mirror URL"""
-        url = f"{self.base_url}/mirror/get"
-        params = {
-            "entity_type": entity_type,
-            "entity_id": entity_id,
-            "url_type": url_type
-        }
-        response = self.session.get(url, params=params)
-        response.raise_for_status()
-        return response.json()
-
-    def delete_mirror(self, entity_type: str, entity_id: str, url_type: str, use_delete_method: bool = False) -> Dict[
-        str, Any]:
-        """Delete a mirror URL - uses POST by default or DELETE if specified"""
-        url = f"{self.base_url}/mirror/delete"
-        payload = {
-            "entity_type": entity_type,
-            "entity_id": entity_id,
-            "url_type": url_type
-        }
-
-        if use_delete_method:
-            response = self.session.delete(url, json=payload)
-        else:
-            response = self.session.post(url, json=payload)
-
-        response.raise_for_status()
-        return response.json()
-
 
 # ============================================================================
 # HTTP Session & Semaphores
@@ -431,7 +326,7 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
     if artwork_url:
         artwork_cache = None
         if cache_id:
-            data = get_mirror('collection', cache_id, 'artworkUrl')
+            data = await get_mirror('collection', cache_id, 'artworkUrl')
             if len(data.get("mirrors", [])) > 0:
                 artwork_cache = data["mirrors"][0]
                 for mirror in data["mirrors"]:
@@ -442,8 +337,8 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
         try:
             msg = await bot.send_photo(chat_id, photo=artwork_url, caption=text, reply_markup=markup)
             if cache_id and not artwork_cache and msg:
-                set_mirror('collection', cache_id, 'artworkUrl',
-                           'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
+                await set_mirror('collection', cache_id, 'artworkUrl',
+                                 'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
         except Exception as e:
             msg = await bot.send_message(chat_id, text=text, reply_markup=markup)
     else:
@@ -526,14 +421,22 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
         try:
             with open(abs_audio_path, 'rb') as audio_file:
                 logger.info('Sending audio...')
+                markup = [[InlineKeyboardButton(
+                    text="نمایش در مینی اپ",
+                    web_app="https://3rah.ir/music/ui?id=" + cache_id
+                )],
+                    [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
+
+                ]
                 msg = await bot.send_audio(
-                    chat_id=int(DB_CHANNEL_ID),
+                    chat_id=chat_id,
                     audio=audio_file,
-                    caption=caption
+                    caption=caption,
+                    reply_markup=InlineKeyboard(*markup),
                 )
 
-                set_mirror('track', str(cache_id), 'audioUrl',
-                           'https://tapi.bale.ai/file/bot<token>/' + str(msg.audio.id))
+                await set_mirror('track', str(cache_id), 'audioUrl',
+                                 'https://tapi.bale.ai/file/bot<token>/' + str(msg.audio.id))
                 return msg
 
         except Exception as e:
@@ -551,22 +454,58 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
 async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user_id: int = None, caption=""):
     status_msg = await bot.send_message(chat_id, text=f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*{FOOTER}",
                                         reply_markup=close_btn)
+
+    track_data = await get_track(track_id, status_msg)
+    if not track_data or not track_data.get("results"):
+        await send_error_with_retry(bot, chat_id, f"خطا در دریافت اطلاعات آهنگ.",
+                                    f"download_retry:{track_id}", status_msg)
+        return
+
+    track = track_data["results"][0]
+    release_year = track.get("releaseDate", "").split("-")[0] if track.get("releaseDate") else ""
+
+    caption_parts = [
+        f"🎵 آهنگ: {track.get('trackName', 'Unknown Title')}",
+        f"🎤 هنرمند: {track.get('artistName', 'Unknown Artist')}",
+    ]
+
+    if track.get('collectionName'):
+        caption_parts.append(f"📀 آلبوم: {track.get('collectionName')}")
+    if release_year:
+        caption_parts.append(f"📅 انتشار: {release_year}")
+    if track.get('primaryGenreName'):
+        caption_parts.append(f"🎸 سبک: {track.get('primaryGenreName')}")
+    if track.get('trackExplicitness') == 'explicit':
+        caption_parts.append(f"🔞 Explicit")
+    if track.get('trackTimeMillis'):
+        duration_sec = track['trackTimeMillis'] // 1000
+        minutes = duration_sec // 60
+        seconds = duration_sec % 60
+        caption_parts.append(f"⏱️ مدت زمان: {minutes}:{seconds:02d}")
+
+    # caption_parts.append(f"🔊 حجم فایل: {file_size_mb:.1f} MB{FOOTER}")
+    # caption_parts.append(f"🔗 لینک نمایش: https://3rah.ir/music/ui?id={track_id}")
+    caption = "\n".join(caption_parts)
+    markup = [[InlineKeyboardButton(
+        text="نمایش در مینی اپ",
+        web_app="https://3rah.ir/music/ui?id=" + str(track_id)
+    )],
+        [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
+    ]
     audio_cache = None
     audio_url = None
     if track_id:
-        data = get_mirror('track', str(track_id), 'audioUrl')
-        if len(data.get('audioUrl', [])) > 0:
-            audio_cache = data["mirrors"][0]
+        data = await get_mirror('track', str(track_id), 'audioUrl')
+        if len(data.get('mirrors', [])) > 0:
             for mirror in data["mirrors"]:
-                if 'mirror_url' in mirror:
+                if mirror.get('url_type') == 'audioUrl':
                     audio_cache = mirror["mirror_url"].split('<token>/')[1]
         if audio_cache:
             audio_url = audio_cache
-
-    if audio_url and DB_CHANNEL_ID:
+    if audio_url:
         try:
             await update_status_with_close(status_msg, f"📤 *در حال ارسال فایل از حافظه کش...*{FOOTER}")
-            msg = await bot.send_audio(chat_id, audio=audio_url, caption=caption)
+            await bot.send_audio(chat_id, audio=audio_url, caption=caption, reply_markup=InlineKeyboard(*markup))
             await status_msg.delete()
             return
         except Exception as e:
@@ -577,13 +516,6 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
                                     f"download_retry:{track_id}", status_msg)
         return
 
-    track_data = await get_track(track_id, status_msg)
-    if not track_data or not track_data.get("results"):
-        await send_error_with_retry(bot, chat_id, f"خطا در دریافت اطلاعات آهنگ.",
-                                    f"download_retry:{track_id}", status_msg)
-        return
-
-    track = track_data["results"][0]
     t_name = track.get("trackName", "Unknown Title")
     ye = track.get("releaseDate", "").split("-")[0]
     a_name = track.get("artistName", "Unknown Artist")
@@ -635,32 +567,6 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
                 await asyncio.get_event_loop().run_in_executor(
                     None, tag_mp3, mp3_path_str, track, cover_bytes
                 )
-
-                release_year = track.get("releaseDate", "").split("-")[0] if track.get("releaseDate") else ""
-
-                caption_parts = [
-                    f"🎵 آهنگ: {track.get('trackName', 'Unknown Title')}",
-                    f"🎤 هنرمند: {track.get('artistName', 'Unknown Artist')}",
-                ]
-
-                if track.get('collectionName'):
-                    caption_parts.append(f"📀 آلبوم: {track.get('collectionName')}")
-                if release_year:
-                    caption_parts.append(f"📅 انتشار: {release_year}")
-                if track.get('primaryGenreName'):
-                    caption_parts.append(f"🎸 سبک: {track.get('primaryGenreName')}")
-                if track.get('trackExplicitness') == 'explicit':
-                    caption_parts.append(f"🔞 Explicit")
-                if track.get('trackTimeMillis'):
-                    duration_sec = track['trackTimeMillis'] // 1000
-                    minutes = duration_sec // 60
-                    seconds = duration_sec % 60
-                    caption_parts.append(f"⏱️ مدت زمان: {minutes}:{seconds:02d}")
-
-                caption_parts.append(f"🔊 حجم فایل: {file_size_mb:.1f} MB{FOOTER}")
-                caption_parts.append(f"🔗 لینک نمایش: https://3rah.ir/music/ui?id={track_id}")
-                caption = "\n".join(caption_parts)
-
                 if DB_CHANNEL_ID:
                     try:
                         await update_status_with_close(status_msg,
@@ -715,7 +621,7 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
         cache_id = track['trackId']
         preview_cache = None
         if cache_id:
-            data = get_mirror('track', cache_id, 'previewUrl')
+            data = await get_mirror('track', cache_id, 'previewUrl')
             if len(data.get("mirrors", [])) > 0:
                 preview_cache = data["mirrors"][0]
                 for mirror in data["mirrors"]:
@@ -743,6 +649,7 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
 
 broadcast_queue = asyncio.Queue()
 
+
 async def handle_channel_post(message):
     content = message.content
     should_broadcast = "#تبلیغ" in content or "#اطلاع_رسانی" in content
@@ -753,6 +660,7 @@ async def handle_channel_post(message):
         if users:
             await broadcast_queue.put({"users": users, "message": message})
             logger.info(f"Broadcast queued for {len(users)} users")
+
 
 async def broadcast_worker():
     logger.info("Broadcast worker started")
@@ -792,6 +700,7 @@ async def broadcast_worker():
         except Exception as e:
             logger.error(f"Broadcast worker crashed: {e}")
             await asyncio.sleep(5)
+
 
 async def check_channel_membership(bot: Client, user_id: int) -> bool:
     is_registered = await get_users_db(user_id)
@@ -866,6 +775,7 @@ bot = Client(token=BOT_TOKEN)
 async def on_initialize():
     global HTTP_SESSION
     HTTP_SESSION = aiohttp.ClientSession()
+
     await init_db()
     logger.info("Database initialized successfully (relational tables ready).")
     logger.info(f"Bot started with rate limiting: {rate_limiter.max_requests} req/min per user")

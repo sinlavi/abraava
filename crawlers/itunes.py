@@ -236,3 +236,73 @@ def get_cache_stats() -> Dict[str, Any]:
         "cache_directory": str(_itunes_cache.cache_dir),
         "ttl_hours": _itunes_cache.ttl_seconds / 3600,
     }
+
+
+async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url: str) -> Optional[Dict[str, Any]]:
+    """
+    POST /mirror/set
+    Sets a mirror URL for a specific entity
+    :rtype: object
+    """
+    payload = {
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "url_type": url_type,
+        "mirror_url": mirror_url
+    }
+    return await fetch_itunes("mirror/set", payload)
+
+
+async def get_mirror(entity_type: str, entity_id: str, url_type: str) -> Optional[Dict[str, Any]]:
+    """
+    GET /mirror/get
+    Retrieves a mirror URL for a specific entity
+    """
+    params = {
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "url_type": url_type
+    }
+    return await fetch_itunes("mirror/get", params)
+
+
+async def delete_mirror(entity_type: str, entity_id: str, url_type: str, method: str = "POST") -> Optional[
+    Dict[str, Any]]:
+    """
+    DELETE or POST /mirror/delete
+    Deletes a mirror URL for a specific entity
+    method: Either "POST" or "DELETE" (default: "POST")
+    """
+    # Note: fetch_itunes currently only supports GET requests
+    # You may need to extend it to support different HTTP methods
+    # For now, I'll implement a direct approach
+
+    from aiohttp import ClientSession
+
+    url = f"{ITUNES_BASE_URL}/mirror/delete"
+    payload = {
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "url_type": url_type
+    }
+
+    session = await HttpClient.get_session()
+
+    try:
+        if method.upper() == "DELETE":
+            async with session.delete(url, json=payload, ssl=False, proxy=PROXY) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    logger.warning(f"Delete mirror API returned status {resp.status}")
+                    return None
+        else:  # Default to POST
+            async with session.post(url, json=payload, ssl=False, proxy=PROXY) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                else:
+                    logger.warning(f"Post delete mirror API returned status {resp.status}")
+                    return None
+    except Exception as e:
+        logger.error(f"Error in delete_mirror: {e}")
+        return None
