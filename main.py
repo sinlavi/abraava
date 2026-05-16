@@ -138,7 +138,7 @@ def create_retry_button(callback_data: str, button_text: str = "🔄 تلاش م
 async def send_error_with_retry(bot: Client, chat_id: int, error_text: str, retry_callback: str,
                                 original_message: Optional[Message] = None):
     """Send an error message with retry button"""
-    markup = InlineKeyboard([
+    markup = InlineKeyboard(*[
         [create_retry_button(retry_callback)],
         [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
     ])
@@ -424,6 +424,9 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
                 markup = [[InlineKeyboardButton(
                     text="نمایش در مینی اپ",
                     web_app="https://3rah.ir/music/ui?id=" + cache_id
+                )], [InlineKeyboardButton(
+                    text="کپی پیوند",
+                    copy_text="https://3rah.ir/music/ui?id=" + cache_id
                 )],
                     [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
 
@@ -489,6 +492,9 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
     markup = [[InlineKeyboardButton(
         text="نمایش در مینی اپ",
         web_app="https://3rah.ir/music/ui?id=" + str(track_id)
+    )], [InlineKeyboardButton(
+        text="کپی پیوند",
+        copy_text="https://3rah.ir/music/ui?id=" + str(track_id)
     )],
         [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
     ]
