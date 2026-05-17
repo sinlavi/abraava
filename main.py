@@ -14,7 +14,10 @@ import aiohttp
 import aiosqlite
 from balethon import Client
 from balethon.objects import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboard
+from ytmusicapi import ytmusic
 
+from cache import SEARCH_CACHE_TTL, clear_expired_cache, SEARCH_CACHE, SEARCH_CACHE_MAX_ITEMS, store_search_cache, \
+    CACHE_DIR
 from config import BOT_NAME, FOOTER, OFFLINE_MODE, ITEMS_PER_PAGE, BOT_TOKEN, DB_CHANNEL_ID, INFO_CHANNEL_ID, logger, \
     BROADCAST_CHANNELS, ITUNES_BASE_URL
 from crawlers.itunes import search_itunes, lookup_itunes, fetch_itunes, set_mirror, get_mirror
@@ -26,7 +29,9 @@ from db.utils import insert_artist, get_search_cache, insert_search_cache, inser
     get_collection_tracks, get_users_db, insert_user, local_search, get_artist_collections, get_all_users, \
     get_track_db, \
     get_collection_db, get_artist_db
-from utils import tag_mp3
+from utils import tag_mp3, send_error_with_retry, send_message, send_photo, send_audio, send_voice, \
+    update_status_with_close, \
+    reply_message
 import requests
 from typing import Optional, Dict, Any
 
@@ -41,123 +46,16 @@ DOWNLOAD_SEMAPHORE = asyncio.Semaphore(20)
 # ============================================================================
 # File-based Cache System
 # ============================================================================
-CACHE_DIR = Path("cache")
-CACHE_DIR.mkdir(exist_ok=True)
-
-# Cache TTLs
-SEARCH_CACHE_TTL = 600  # 10 minutes
-ARTWORK_CACHE_TTL = 86400  # 24 hours
-PREVIEW_CACHE_TTL = 86400  # 24 hours
-TRACK_CACHE_TTL = 604800  # 7 days
-
-
-def get_cache_file_path(cache_key: str) -> Path:
-    """Get file path for a cache key"""
-    # Use MD5 to create a safe filename
-    safe_name = hashlib.md5(cache_key.encode()).hexdigest()
-    return CACHE_DIR / f"{safe_name}.cache"
-
-
-async def save_to_file_cache(cache_key: str, data: Any, ttl: int = SEARCH_CACHE_TTL):
-    """Save data to file cache with TTL"""
-    try:
-        cache_path = get_cache_file_path(cache_key)
-        cache_data = {
-            "data": data,
-            "timestamp": time.time(),
-            "ttl": ttl
-        }
-        # Use pickle for complex objects
-        with open(cache_path, 'wb') as f:
-            pickle.dump(cache_data, f)
-        return True
-    except Exception as e:
-        logger.error(f"Failed to save to file cache {cache_key}: {e}")
-        return False
-
-
-async def get_from_file_cache(cache_key: str) -> Optional[Any]:
-    """Get data from file cache if not expired"""
-    try:
-        cache_path = get_cache_file_path(cache_key)
-        if not cache_path.exists():
-            return None
-
-        with open(cache_path, 'rb') as f:
-            cache_data = pickle.load(f)
-
-        # Check if expired
-        if time.time() - cache_data["timestamp"] > cache_data["ttl"]:
-            cache_path.unlink(missing_ok=True)
-            return None
-
-        return cache_data["data"]
-    except Exception as e:
-        logger.error(f"Failed to read from file cache {cache_key}: {e}")
-        return None
-
-
-async def clear_expired_cache():
-    """Clear all expired cache files"""
-    while True:
-        await asyncio.sleep(3600)  # every hour
-        try:
-            now = time.time()
-            for cache_file in CACHE_DIR.glob("*.cache"):
-                try:
-                    with open(cache_file, 'rb') as f:
-                        cache_data = pickle.load(f)
-                    if now - cache_data["timestamp"] > cache_data["ttl"]:
-                        cache_file.unlink()
-                except:
-                    cache_file.unlink()  # Remove corrupted files
-        except Exception as e:
-            logger.error(f"Cache cleanup error: {e}")
-
-
-# In-memory search cache (still needed for active sessions)
-SEARCH_CACHE = {}
-SEARCH_CACHE_MAX_ITEMS = 100
 
 # Message ownership mapping for group interactions
 # { message_id: (owner_user_id, timestamp) }
 MESSAGE_OWNER = {}
 MESSAGE_OWNER_TTL = 600  # 10 minutes
 
+
 # ============================================================================
 # Retry Button Helper
 # ============================================================================
-close_btn = InlineKeyboard([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
-
-
-def create_retry_button(callback_data: str, button_text: str = "🔄 تلاش مجدد") -> InlineKeyboardButton:
-    """Create a retry button for error messages"""
-    return InlineKeyboardButton(text=button_text, callback_data=f"retry:{callback_data}")
-
-
-async def send_error_with_retry(bot: Client, chat_id: int, error_text: str, retry_callback: str,
-                                original_message: Optional[Message] = None):
-    """Send an error message with retry button"""
-    markup = InlineKeyboard(*[
-        [create_retry_button(retry_callback)],
-        [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
-    ])
-
-    if original_message:
-        try:
-            await original_message.edit(f"❌ *خطا:* {error_text}{FOOTER}", reply_markup=markup)
-        except:
-            await bot.send_message(chat_id, f"❌ *خطا:* {error_text}{FOOTER}", reply_markup=markup)
-    else:
-        await bot.send_message(chat_id, f"❌ *خطا:* {error_text}{FOOTER}", reply_markup=markup)
-
-
-async def update_status_with_close(status_msg: Message, text: str):
-    """Update status message with close button"""
-    try:
-        await status_msg.edit(text, reply_markup=close_btn)
-    except Exception as e:
-        logger.error(f"Failed to update status message: {e}")
 
 
 # ============================================================================
@@ -175,32 +73,6 @@ async def cleanup_caches():
         expired_msgs = [mid for mid, (_, ts) in MESSAGE_OWNER.items() if now - ts > MESSAGE_OWNER_TTL]
         for mid in expired_msgs:
             MESSAGE_OWNER.pop(mid, None)
-
-
-async def store_search_cache(search_id: str, type_: str, term: str, results: dict, owner_id: int):
-    """Store search results in memory with TTL"""
-    # Limit cache size
-    if len(SEARCH_CACHE) >= SEARCH_CACHE_MAX_ITEMS:
-        # Remove oldest entry
-        oldest = min(SEARCH_CACHE.items(), key=lambda x: x[1]["timestamp"])
-        SEARCH_CACHE.pop(oldest[0])
-    SEARCH_CACHE[search_id] = {
-        "type": type_,
-        "term": term,
-        "results": results,
-        "owner_id": owner_id,
-        "timestamp": time.time()
-    }
-
-
-async def get_search_cache(search_id: str) -> Optional[Dict]:
-    """Retrieve search results from memory, check TTL"""
-    data = SEARCH_CACHE.get(search_id)
-    if data and time.time() - data["timestamp"] <= SEARCH_CACHE_TTL:
-        return data
-    if data:
-        SEARCH_CACHE.pop(search_id, None)
-    return None
 
 
 def set_message_owner(message_id: int, owner_id: int):
@@ -320,6 +192,26 @@ def generate_search_hash(type_: str, term: str) -> str:
     return hashlib.md5(f"{type_}:{term}:{time.time()}".encode()).hexdigest()[:10]  # include time to avoid collisions
 
 
+def get_artist_image(artist_name):
+    # Search for the artist
+    search_results = ytmusic.YTMusic.search(artist_name, filter="artists")
+
+    if search_results:
+        # Get first artist result
+        artist_id = search_results[0]['browseId']
+
+        # Get artist details
+        artist_info = ytmusic.YTMusic.get_artist(artist_id)
+
+        # Get the thumbnails
+        if 'thumbnails' in artist_info:
+            thumbnails = artist_info['thumbnails']
+            highest_quality = thumbnails[-1]['url']
+            return highest_quality
+
+    return None
+
+
 async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
                        markup, artwork_url: str = None, cache_id=None, owner_id=None):
     """Send a new message or edit an existing one, and store message owner for groups."""
@@ -335,14 +227,14 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
             if artwork_cache:
                 artwork_url = artwork_cache
         try:
-            msg = await bot.send_photo(chat_id, photo=artwork_url, caption=text, reply_markup=markup)
+            msg = await send_photo(bot, chat_id, photo=artwork_url, caption=text, reply_markup=markup)
             if cache_id and not artwork_cache and msg:
                 await set_mirror('collection', cache_id, 'artworkUrl',
                                  'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
         except Exception as e:
-            msg = await bot.send_message(chat_id, text=text, reply_markup=markup)
+            msg = await send_message(bot, chat_id, text=text, reply_markup=markup)
     else:
-        msg = await bot.send_message(chat_id, text, reply_markup=markup)
+        msg = await send_message(bot, chat_id, text, reply_markup=markup)
 
     # Store owner for the new message
     if owner_id and msg and msg.chat.type in ["group", "supergroup"]:
@@ -354,7 +246,7 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
             if message_to_edit.id in MESSAGE_OWNER:
                 MESSAGE_OWNER.pop(message_to_edit.id, None)
             await message_to_edit.delete()
-        except:
+        except Exception as e:
             pass
 
     return msg
@@ -379,7 +271,7 @@ def _delete_file_sync(path_str):
 # ============================================================================
 async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: str, original_message: Message = None):
     """Search for track and automatically send the first result"""
-    status_msg = await bot.send_message(chat_id, f"⚡ *حالت سریع: جستجوی {term}...*{FOOTER}", reply_markup=close_btn)
+    status_msg = await send_message(bot, chat_id, f"⚡ *حالت سریع: جستجوی {term}...*")
 
     try:
         results = await search_itunes(term, entity="musicTrack", limit=1)
@@ -388,7 +280,7 @@ async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: s
             track = results["results"][0]
             track_id = track.get('trackId')
             if track_id:
-                await show_track(chat_id, track_id, original_message, user_id)
+                await show_track_page(chat_id, track_id, original_message, user_id)
                 await status_msg.delete()
             else:
                 await send_error_with_retry(bot, chat_id, f"نتیجه‌ای برای '{term}' یافت نشد.",
@@ -422,20 +314,19 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
             with open(abs_audio_path, 'rb') as audio_file:
                 logger.info('Sending audio...')
                 markup = [[InlineKeyboardButton(
-                    text="نمایش در مینی اپ",
-                    web_app="https://3rah.ir/music/ui?id=" + cache_id
+                    text="📂 نمایش در مینی اپ",
+                    web_app="https://player.abraava.ir?id=" + cache_id
                 )], [InlineKeyboardButton(
-                    text="کپی پیوند",
-                    copy_text="https://3rah.ir/music/ui?id=" + cache_id
-                )],
-                    [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
-
+                    text="📋 کپی پیوند",
+                    copy_text="https://player.abraava.ir?id=" + cache_id
+                )]
                 ]
-                msg = await bot.send_audio(
+                msg = await send_audio(
+                    bot,
                     chat_id=chat_id,
                     audio=audio_file,
                     caption=caption,
-                    reply_markup=InlineKeyboard(*markup),
+                    reply_markup=markup,
                 )
 
                 await set_mirror('track', str(cache_id), 'audioUrl',
@@ -455,8 +346,7 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
 
 
 async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user_id: int = None, caption=""):
-    status_msg = await bot.send_message(chat_id, text=f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*{FOOTER}",
-                                        reply_markup=close_btn)
+    status_msg = await send_message(bot, chat_id, text=f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*")
 
     track_data = await get_track(track_id, status_msg)
     if not track_data or not track_data.get("results"):
@@ -490,13 +380,12 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
     # caption_parts.append(f"🔗 لینک نمایش: https://3rah.ir/music/ui?id={track_id}")
     caption = "\n".join(caption_parts)
     markup = [[InlineKeyboardButton(
-        text="نمایش در مینی اپ",
-        web_app="https://3rah.ir/music/ui?id=" + str(track_id)
+        text="📂 نمایش در مینی اپ",
+        web_app="https://player.abraava.ir?id=" + str(track_id)
     )], [InlineKeyboardButton(
-        text="کپی پیوند",
-        copy_text="https://3rah.ir/music/ui?id=" + str(track_id)
-    )],
-        [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
+        text="📋 کپی پیوند",
+        copy_text="https://player.abraava.ir?id=" + str(track_id)
+    )]
     ]
     audio_cache = None
     audio_url = None
@@ -510,8 +399,8 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
             audio_url = audio_cache
     if audio_url:
         try:
-            await update_status_with_close(status_msg, f"📤 *در حال ارسال فایل از حافظه کش...*{FOOTER}")
-            await bot.send_audio(chat_id, audio=audio_url, caption=caption, reply_markup=InlineKeyboard(*markup))
+            await update_status_with_close(status_msg, f"📤 *در حال ارسال فایل از حافظه کش...*")
+            await send_audio(bot,chat_id, audio=audio_url, caption=caption, reply_markup=markup)
             await status_msg.delete()
             return
         except Exception as e:
@@ -529,7 +418,7 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
     cover_url = get_high_res_artwork(track.get("artworkUrl100", track.get("artworkUrl")), size=600)
 
     query = f'"{t_name}" by {a_name} collection {collection_name} {ye}'
-    await update_status_with_close(status_msg, f"🔍 *جستجوی سورس باکیفیت آهنگ در یوتیوب موزیک...*{FOOTER}")
+    await update_status_with_close(status_msg, f"🔍 *جستجوی سورس باکیفیت آهنگ در یوتیوب موزیک...*")
 
     try:
         video_id = await search_youtube_track(query)
@@ -539,13 +428,13 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
             return
         video_url = f"https://music.youtube.com/watch?v={video_id}"
 
-        await update_status_with_close(status_msg, f"⏳ *در صف دانلود و آماده‌سازی...*{FOOTER}")
+        await update_status_with_close(status_msg, f"⏳ *در صف دانلود و آماده‌سازی...*")
 
         mp3_path_str = None
         try:
             async with DOWNLOAD_SEMAPHORE:
                 await update_status_with_close(status_msg,
-                                               f"⏳ *در حال دانلود و پردازش (روش‌های پیشرفته ضدتحریم)...*{FOOTER}")
+                                               f"⏳ *در حال دانلود و پردازش (روش‌های پیشرفته ضدتحریم)...*")
                 mp3_path_str = await asyncio.get_event_loop().run_in_executor(
                     None, download_audio, video_url
                 )
@@ -574,7 +463,7 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
                     None, tag_mp3, mp3_path_str, track, cover_bytes
                 )
                 await update_status_with_close(status_msg,
-                                               f"☁️ *در حال آپلود در سرورهای ابری {BOT_NAME}...*{FOOTER}")
+                                               f"☁️ *در حال آپلود در سرورهای ابری {BOT_NAME}...*")
                 await send_audio_with_retry(
                     bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, cache_id=str(track['trackId'])
                 )
@@ -595,8 +484,7 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
 
 
 async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None):
-    status_msg = await bot.send_message(chat_id, f"⏳ *در حال دریافت پیش‌نمایش...*{FOOTER}",
-                                        reply_markup=close_btn)
+    status_msg = await send_message(bot, chat_id, f"⏳ *در حال دریافت پیش‌نمایش...*")
 
     try:
         track_data = await get_track(track_id)
@@ -625,8 +513,8 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
             if preview_cache:
                 preview_url = preview_cache
 
-        msg = await bot.send_voice(chat_id, voice=preview_url,
-                                   caption=f"🎧 *پیش‌نمایش صوتی آهنگ {track.get('trackName')}*{FOOTER}")
+        msg = await send_voice(bot, chat_id, voice=preview_url,
+                               caption=f"🎧 *پیش‌نمایش صوتی آهنگ {track.get('trackName')}*")
         if msg and not preview_cache:
             await set_mirror('track', str(track_id), 'previewUrl',
                              'https://tapi.bale.ai/file/bot<token>/' + str(msg.voice.id))
@@ -718,15 +606,15 @@ async def check_channel_membership(bot: Client, user_id: int) -> bool:
 async def require_membership(bot: Client, chat_id: int, user_id: int) -> bool:
     is_member = await check_channel_membership(bot, user_id)
     if not is_member:
-        markup = InlineKeyboard(*[
+        markup = [
             [InlineKeyboardButton(text="🔗 عضویت در کانال", url=f"https://ble.ir/abraava")],
             [InlineKeyboardButton(text="✅ تایید عضویت", callback_data="verify_membership")],
             [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
-        ])
-        await bot.send_message(
+        ]
+        await send_message(
             chat_id,
             f"⚠️ *برای استفاده از {BOT_NAME}، ابتدا باید در کانال ما عضو شوید.*\n\n"
-            f"پس از عضویت، روی دکمه «تایید عضویت» کلیک کنید.{FOOTER}",
+            f"پس از عضویت، روی دکمه «تایید عضویت» کلیک کنید.",
             reply_markup=markup
         )
         return False
@@ -835,12 +723,11 @@ async def handle_message(message):
     if not allowed:
         if is_group:
             return
-        await message.reply(
-            f"⚠️ *محدودیت نرخ درخواست*\n\n"
-            f"شما حداکثر {rate_limiter.max_requests} درخواست در دقیقه مجاز هستید.\n"
-            f"لطفاً {wait_time} ثانیه صبر کنید.{FOOTER}",
-            reply_markup=close_btn
-        )
+        await reply_message(message,
+                            f"⚠️ *محدودیت نرخ درخواست*\n\n"
+                            f"شما حداکثر {rate_limiter.max_requests} درخواست در دقیقه مجاز هستید.\n"
+                            f"لطفاً {wait_time} ثانیه صبر کنید."
+                            )
         return
 
     if is_group:
@@ -854,16 +741,16 @@ async def handle_message(message):
         msg_text = msg_text.replace(bot_mention, "").strip()
 
         if len(msg_text) > 100:
-            await message.reply(f"⚠️ *متن پیام خیلی طولانی است*\n\n"
-                                f"حداکثر ۱۰۰ کاراکتر مجاز است.{FOOTER}",
-                                reply_markup=close_btn)
+            await reply_message(message, f"⚠️ *متن پیام خیلی طولانی است*\n\n"
+                                         f"حداکثر ۱۰۰ کاراکتر مجاز است."
+                                )
             return
     else:
         if not is_valid_message(message):
-            await message.reply(f"⚠️ *فرمت پیام نامعتبر*\n\n"
-                                f"فقط پیام‌های متنی زیر ۱۰۰ کاراکتر قابل پردازش هستند.\n"
-                                f"لطفاً بدون عکس، ویدیو، فایل و فوروارد پیام دهید.{FOOTER}",
-                                reply_markup=close_btn)
+            await reply_message(message, f"⚠️ *فرمت پیام نامعتبر*\n\n"
+                                         f"فقط پیام‌های متنی زیر ۱۰۰ کاراکتر قابل پردازش هستند.\n"
+                                         f"لطفاً بدون عکس، ویدیو، فایل و فوروارد پیام دهید.",
+                                )
             return
 
     if not is_group and INFO_CHANNEL_ID and not msg_text.startswith('/start'):
@@ -883,75 +770,64 @@ async def handle_message(message):
         if INFO_CHANNEL_ID:
             welcome_text += f"\n\n📢 *برای اطلاع از آخرین اخبار در کانال ما عضو شوید:* \n\nble.ir/join/4T95Zt7P5X"
 
-        welcome_text += FOOTER
-
-        markup = InlineKeyboard([
-            [InlineKeyboardButton(text="📢 کانال اطلاع‌رسانی", url=f"ble.ir/join/4T95Zt7P5X")],
-            [InlineKeyboardButton(text="⚡ حالت سریع", callback_data="toggle_quick_mode")],
-            [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
-        ])
-
-        await message.reply(welcome_text, reply_markup=markup)
+        await reply_message(message, welcome_text)
 
     elif msg_text.startswith("/help"):
-        await message.reply(
-            f"🛠 *راهنمای استفاده از {BOT_NAME}*\n\n"
-            "برای جستجوی موزیک کافیست نام آن را (به انگلیسی) بنویسید یا از دستور /search استفاده کنید.\n"
-            "مثال: `Mohsen Namjoo`\n\n"
-            "⚡ *حالت سریع:*\n"
-            "`/quick نام آهنگ` - به صورت خودکار اولین نتیجه را دانلود می‌کند\n\n"
-            "🎵 *دستورات اختصاصی:*\n"
-            "`/track نام آهنگ` - جستجوی دقیق آهنگ\n"
-            "`/album نام آلبوم` - جستجوی آلبوم\n"
-            "`/artist نام هنرمند` - جستجوی هنرمند\n\n"
-            "⚠️ اگر می‌خواهید ربات را در گروه‌ها استفاده کنید، حتما باید آیدی ربات را تگ کنید:\n"
-            f"@{bot.user.username} Mohsen Namjoo\n\n"
-            f"📝 *نکات گروه:*\n"
-            f"• فقط پیام‌های متنی زیر ۱۰۰ کاراکتر پردازش می‌شوند\n"
-            f"• بدون عکس، ویدیو، فایل یا پیام فوروارد شده\n"
-            f"• فقط کاربری که ربات را صدا زده می‌تواند روی دکمه‌ها کلیک کند\n\n"
-            f"🔒 محدودیت: {rate_limiter.max_requests} درخواست در دقیقه"
-            f"{FOOTER}",
-            reply_markup=close_btn
-        )
+        await reply_message(message,
+                            f"🛠 *راهنمای استفاده از {BOT_NAME}*\n\n"
+                            "برای جستجوی موزیک کافیست نام آن را (به انگلیسی) بنویسید یا از دستور /search استفاده کنید.\n"
+                            "مثال: `Mohsen Namjoo`\n\n"
+                            "⚡ *حالت سریع:*\n"
+                            "`/quick نام آهنگ` - به صورت خودکار اولین نتیجه را دانلود می‌کند\n\n"
+                            "🎵 *دستورات اختصاصی:*\n"
+                            "`/track نام آهنگ` - جستجوی دقیق آهنگ\n"
+                            "`/album نام آلبوم` - جستجوی آلبوم\n"
+                            "`/artist نام هنرمند` - جستجوی هنرمند\n\n"
+                            "⚠️ اگر می‌خواهید ربات را در گروه‌ها استفاده کنید، حتما باید آیدی ربات را تگ کنید:\n"
+                            f"@{bot.user.username} Mohsen Namjoo\n\n"
+                            f"📝 *نکات گروه:*\n"
+                            f"• فقط پیام‌های متنی زیر ۱۰۰ کاراکتر پردازش می‌شوند\n"
+                            f"• بدون عکس، ویدیو، فایل یا پیام فوروارد شده\n"
+                            f"• فقط کاربری که ربات را صدا زده می‌تواند روی دکمه‌ها کلیک کند\n\n"
+                            f"🔒 محدودیت: {rate_limiter.max_requests} درخواست در دقیقه"
+                            f"",
+                            )
 
     elif msg_text.startswith("/about"):
-        await message.reply(
-            f"ℹ️ *درباره ربات {BOT_NAME}*\n\n"
-            f"این ربات یک دستیار هوشمند برای جستجو در دیتابیس عظیم iTunes و دانلود باکیفیت‌ترین سورس موجود از YouTube Music به صورت ضدتحریم می‌باشد.\n"
-            f"تمامی آهنگ‌ها پیش از ارسال توسط سرورهای ما پردازش و تگ‌گذاری (کاور و اطلاعات) می‌شوند.\n\n"
-            f"⚡ *حالت سریع:* دانلود خودکار اولین نتیجه جستجو\n\n"
-            f"🔒 *Rate Limit:* {rate_limiter.max_requests} req/min per user"
-            f"{FOOTER}",
-            reply_markup=close_btn
-        )
+
+        await reply_message(message,
+                            f"ℹ️ *درباره ربات {BOT_NAME}*\n\n"
+                            f"این ربات یک دستیار هوشمند برای جستجو در دیتابیس عظیم iTunes و دانلود باکیفیت‌ترین سورس موجود از YouTube Music به صورت ضدتحریم می‌باشد.\n"
+                            f"تمامی آهنگ‌ها پیش از ارسال توسط سرورهای ما پردازش و تگ‌گذاری (کاور و اطلاعات) می‌شوند.\n\n"
+                            f"⚡ *حالت سریع:* دانلود خودکار اولین نتیجه جستجو\n\n"
+                            f"🔒 *Rate Limit:* {rate_limiter.max_requests} req/min per user"
+                            f"",
+                            )
 
     elif msg_text.startswith("/settings"):
         current_mode = user_quick_mode.get(user_id, False)
         mode_status = "✅ فعال" if current_mode else "❌ غیرفعال"
-        markup = InlineKeyboard([
+        markup = [
             [InlineKeyboardButton(text="⚡ تغییر حالت سریع", callback_data="toggle_quick_mode")],
-            [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
-        ])
-        await message.reply(
-            f"⚙️ *تنظیمات ربات {BOT_NAME}*\n\n"
-            f"• حالت سریع: {mode_status}\n"
-            f"• در حالت سریع، با ارسال نام آهنگ به صورت خودکار اولین نتیجه دانلود می‌شود.\n\n"
-            f"برای فعال/غیرفعال کردن روی دکمه زیر کلیک کنید.{FOOTER}",
-            reply_markup=markup
-        )
+        ]
+        await reply_message(message,
+                            f"⚙️ *تنظیمات ربات {BOT_NAME}*\n\n"
+                            f"• حالت سریع: {mode_status}\n"
+                            f"• در حالت سریع، با ارسال نام آهنگ به صورت خودکار اولین نتیجه دانلود می‌شود.\n\n"
+                            f"برای فعال/غیرفعال کردن روی دکمه زیر کلیک کنید.",
+                            reply_markup=markup
+                            )
 
     elif msg_text.startswith("/stats"):
         remaining = rate_limiter.get_user_remaining(user_id)
         quick_mode = user_quick_mode.get(user_id, False)
-        await message.reply(
+        await reply_message(
+            message,
             f"📊 *آمار شما*\n\n"
             f"• درخواست‌های باقی‌مانده: {remaining}/{rate_limiter.max_requests}\n"
             f"• پنجره زمانی: {rate_limiter.time_window} ثانیه\n"
             f"• حالت سریع: {'✅ فعال' if quick_mode else '❌ غیرفعال'}\n"
             f"• وضعیت: {'✅ فعال' if remaining > 0 else '⛔ محدود شده'}"
-            f"{FOOTER}",
-            reply_markup=close_btn
         )
 
     else:
@@ -964,6 +840,162 @@ async def handle_message(message):
                 await handle_search_command(chat_id, user_id, type_, term, message, user_id)
 
 
+async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
+                           message_to_edit: Optional[Message] = None, owner_id: int = None, force=False):
+    status_msg = await send_message(bot, chat_id, f"🔄 *در حال پردازش هنرمند...*")
+
+    try:
+        artist_data = await get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force)
+        if not artist_data:
+            await send_error_with_retry(bot, chat_id, f"هنرمند یافت نشد.",
+                                        f"artist_retry:{artist_id}", status_msg)
+            return
+        artist_data = artist_data['results'][0]
+        text = f"*🎤 هنرمند:* {artist_data.get('artistName', 'نامشخص')}\n"
+        text += f"*🎭 سبک:* {artist_data.get('primaryGenreName', 'نامشخص')}\n"
+        if artist_data.get("artistLinkUrl"):
+            text += f"*🔗 لینک آیتونز:* [مشاهده در آیتونز]({artist_data['artistLinkUrl']})\n"
+
+        collections_data = await get_or_crawl_artist_collections(artist_id)
+        collections = collections_data["results"] if collections_data else []
+
+        markup = []
+        if collections:
+            total_items = len(collections)
+            total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+            page = max(1, min(page, total_pages))
+            start_idx = (page - 1) * ITEMS_PER_PAGE
+            end_idx = start_idx + ITEMS_PER_PAGE
+            page_items = collections[start_idx:end_idx]
+
+            text += f"\n*📀 آلبوم‌ها ({total_items}):*\n"
+            for collection in page_items:
+                if collection['wrapperType'] == 'collection':
+                    btn_text = f"📀 {collection.get('collectionName', 'نامشخص')[:45]}"
+                    markup.append([InlineKeyboardButton(
+                        text=btn_text,
+                        callback_data=f"collection:{collection['collectionId']}:1"
+                    )])
+
+            if total_pages > 1:
+                pagination_row = create_pagination_row(f"artist:{artist_id}", page, total_pages)
+                markup.append(pagination_row)
+        markup.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
+        await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
+                           owner_id=owner_id)
+        await status_msg.delete()
+
+    except Exception as e:
+        await send_error_with_retry(bot, chat_id, f"خطا در نمایش هنرمند: {str(e)[:100]}",
+                                    f"artist_retry:{artist_id}", status_msg)
+
+
+async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
+                               message_to_edit: Optional[Message] = None, owner_id: int = None, force=False):
+    status_msg = await send_message(bot, chat_id, f"🔄 *در حال پردازش آلبوم...*")
+    try:
+        collection_data = await get_or_crawl_collection(collection_id, status_msg, force)
+        tracks_data = await get_or_crawl_collection_tracks(collection_id)
+        tracks = tracks_data["results"] if tracks_data else []
+        if not collection_data:
+            await send_error_with_retry(bot, chat_id, f"آلبوم یافت نشد.",
+                                        f"collection_retry:{collection_id}", status_msg)
+            return
+        collection_data = collection_data['results'][0]
+        release_date = collection_data.get('releaseDate', 'نامشخص')[:10] if collection_data.get(
+            'releaseDate') else 'نامشخص'
+        text = f"*📀 آلبوم:* {collection_data.get('collectionName', 'نامشخص')}\n"
+        text += f"*🎤 هنرمند:* {collection_data.get('artistName', 'نامشخص')}\n"
+        text += f"*📅 انتشار:* {release_date}\n"
+        text += f"*🎭 سبک:* {collection_data.get('primaryGenreName', 'نامشخص')}\n"
+        if collection_data.get("collectionViewUrl"):
+            text += f"*🔗 لینک آیتونز:* [مشاهده در آیتونز]({collection_data['collectionViewUrl']})\n"
+
+        markup = []
+        if tracks:
+            total_items = len(tracks)
+            total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+            page = max(1, min(page, total_pages))
+            start_idx = (page - 1) * ITEMS_PER_PAGE
+            end_idx = start_idx + ITEMS_PER_PAGE
+            page_items = tracks[start_idx:end_idx]
+
+            text += f"\n*🎵 قطعات ({total_items}):*\n"
+            for i, track in enumerate(page_items, start_idx + 1):
+                duration = format_duration(track.get('trackTimeMillis', 0))
+                text += f"{i}. {track.get('trackName', 'نامشخص')} ({duration})\n"
+
+            for track in page_items:
+                if track['wrapperType'] == 'track':
+                    markup.append([InlineKeyboardButton(
+                        text=f"🎵 {track.get('trackName', 'نامشخص')[:40]} - {track.get('artistName', 'نامشخص')[:40]}",
+                        callback_data=f"track:{track['trackId']}"
+                    )])
+
+            if total_pages > 1:
+                pagination_row = create_pagination_row(f"collection:{collection_id}", page, total_pages)
+                markup.append(pagination_row)
+
+        if collection_data.get("artistId"):
+            markup.append([InlineKeyboardButton(
+                text="🎤 مشاهده هنرمند",
+                callback_data=f"artist:{collection_data['artistId']}:1"
+            )])
+        markup.append(
+            [InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:collection:{collection_id}")])
+        artwork_url = get_high_res_artwork(collection_data.get("artworkUrl100"))
+        await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
+                           artwork_url=artwork_url, cache_id=collection_id, owner_id=owner_id)
+        await status_msg.delete()
+
+    except Exception as e:
+        await send_error_with_retry(bot, chat_id, f"خطا در نمایش آلبوم: {str(e)[:100]}",
+                                    f"collection_retry:{collection_id}", status_msg)
+
+
+async def show_track_page(chat_id: int, track_id: int, message_to_edit: Optional[Message] = None, owner_id: int = None):
+    status_msg = await send_message(bot, chat_id, f"🔄 *در حال بارگذاری اطلاعات آهنگ...*")
+
+    try:
+        data = await get_track(track_id, status_msg)
+        if not data or not data.get("results"):
+            await send_error_with_retry(bot, chat_id, f"آهنگ یافت نشد.",
+                                        f"track_retry:{track_id}", status_msg)
+            return
+        track = data["results"][0]
+        duration = format_duration(track.get('trackTimeMillis', 0))
+        release_date = track.get('releaseDate', 'نامشخص')[:10] if track.get('releaseDate') else 'نامشخص'
+        text = f"*🎵 آهنگ:* {track.get('trackName', 'نامشخص')}\n"
+        text += f"*🎤 هنرمند:* {track.get('artistName', 'نامشخص')}\n"
+        text += f"*📀 آلبوم:* {track.get('collectionName', 'نامشخص')}\n"
+        text += f"*⏱️ مدت زمان:* {duration}\n"
+        text += f"*🎭 سبک:* {track.get('primaryGenreName', 'نامشخص')}\n"
+        text += f"*📅 انتشار:* {release_date}\n"
+        if track.get("trackViewUrl"):
+            text += f"*🔗 لینک آیتونز:* [مشاهده در آیتونز]({track['trackViewUrl']})\n"
+
+        markup = []
+        download = [InlineKeyboardButton(text="⬇️ دانلود", callback_data=f"download:{track_id}")]
+        if track.get("previewUrl"):
+            download.append(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}"))
+        markup.append(download)
+        links = []
+        if track.get('collectionId'):
+            links.append(
+                InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{track['collectionId']}:1"))
+        if track.get('artistId'):
+            links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{track['artistId']}:1"))
+        markup.append(links)
+        artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
+        await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup, artwork_url=artwork_url,
+                           cache_id=track.get('collectionId'), owner_id=owner_id)
+        await status_msg.delete()
+
+    except Exception as e:
+        await send_error_with_retry(bot, chat_id, f"خطا در نمایش آهنگ: {str(e)[:100]}",
+                                    f"track_retry:{track_id}", status_msg)
+
+
 # ============================================================================
 # Search Handler (in-memory pagination, no DB for search cache)
 # ============================================================================
@@ -971,9 +1003,8 @@ async def handle_search_command(chat_id: int, user_id: int, type_: str, term: st
                                 owner_id: int = None):
     type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ", "quick": "سریع"}
 
-    status_msg = await bot.send_message(chat_id,
-                                        f"🔍 *در حال جستجوی {type_fa_map.get(type_)}: {term}...*{FOOTER}",
-                                        reply_markup=close_btn)
+    status_msg = await send_message(bot, chat_id,
+                                    f"🔍 *در حال جستجوی {type_fa_map.get(type_)}: {term}...*")
 
     try:
         results = {}
@@ -1050,11 +1081,9 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
                    InlineKeyboardButton("🔍 هنرمندان", f"refine:artist:{refine_term}"),
                    InlineKeyboardButton("🔍 آهنگ‌ها", f"refine:track:{refine_term}")])
 
-    markup.append([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
+    text = header
 
-    text = header + FOOTER
-
-    msg = await edit_or_send(bot, chat_id, message_to_edit, text, markup=InlineKeyboard(*markup), owner_id=owner_id)
+    msg = await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup, owner_id=owner_id)
 
 
 # ============================================================================
@@ -1096,12 +1125,12 @@ async def on_callback(callback_query: CallbackQuery):
             is_member = await check_channel_membership(bot, user_id)
             if is_member:
                 await bot.answer_callback_query(callback_query.id, "✅ عضویت شما تایید شد!", show_alert=True)
-                await bot.send_message(
+                await send_message(
+                    bot,
                     chat_id,
                     f"✅ *عضویت شما با موفقیت تایید شد!*\n\n"
                     f"حالا می‌توانید از {BOT_NAME} استفاده کنید.\n"
-                    f"کافیست نام آهنگ مورد نظر خود را بنویسید.{FOOTER}",
-                    reply_markup=close_btn
+                    f"کافیست نام آهنگ مورد نظر خود را بنویسید."
                 )
                 await callback_query.message.delete()
             else:
@@ -1112,7 +1141,6 @@ async def on_callback(callback_query: CallbackQuery):
         user_quick_mode[user_id] = not current
         status = "فعال" if not current else "غیرفعال"
         await bot.answer_callback_query(callback_query.id, f"⚡ حالت سریع {status} شد!", show_alert=True)
-        await callback_query.message.edit_reply_markup(reply_markup=close_btn)
         return
 
     # Handle retry callbacks
@@ -1165,14 +1193,14 @@ async def on_callback(callback_query: CallbackQuery):
         elif data.startswith("artist:"):
             artist_id = int(parts[1])
             page = int(parts[2]) if len(parts) > 2 else 1
-            await show_artist(chat_id, artist_id, page, callback_query.message, user_id)
+            await show_artist_page(chat_id, artist_id, page, callback_query.message, user_id)
         elif data.startswith("collection:"):
             collection_id = int(parts[1])
             page = int(parts[2]) if len(parts) > 2 else 1
-            await show_collection(chat_id, collection_id, page, callback_query.message, user_id)
+            await show_collection_page(chat_id, collection_id, page, callback_query.message, user_id)
         elif data.startswith("track:"):
             track_id = int(parts[1])
-            await show_track(chat_id, track_id, callback_query.message, user_id)
+            await show_track_page(chat_id, track_id, callback_query.message, user_id)
         elif data.startswith("download:"):
             track_id = int(parts[1])
             await bot.answer_callback_query(callback_query.id, "در حال پردازش دانلود...")
@@ -1186,9 +1214,9 @@ async def on_callback(callback_query: CallbackQuery):
             id_ = int(parts[2])
             await bot.answer_callback_query(callback_query.id, "در حال بروزرسانی اطلاعات...")
             if type_ == "artist":
-                await show_artist(chat_id, id_, 1, callback_query.message, user_id, force=True)
+                await show_artist_page(chat_id, id_, 1, callback_query.message, user_id, force=True)
             elif type_ == "collection":
-                await show_collection(chat_id, id_, 1, callback_query.message, user_id, force=True)
+                await show_collection_page(chat_id, id_, 1, callback_query.message, user_id, force=True)
 
     except Exception as e:
         logger.error(f"Error handling callback {data}: {e}")
@@ -1198,175 +1226,6 @@ async def on_callback(callback_query: CallbackQuery):
 # ============================================================================
 # Show Functions (using relational DB)
 # ============================================================================
-
-async def show_artist(chat_id: int, artist_id: int, page: int = 1,
-                      message_to_edit: Optional[Message] = None, owner_id: int = None, force=False):
-    status_msg = await bot.send_message(chat_id, f"🔄 *در حال پردازش هنرمند...*{FOOTER}", reply_markup=close_btn)
-
-    try:
-        artist_data = await get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force)
-        if not artist_data:
-            await send_error_with_retry(bot, chat_id, f"هنرمند یافت نشد.",
-                                        f"artist_retry:{artist_id}", status_msg)
-            return
-        artist_data = artist_data['results'][0]
-        text = f"*🎤 هنرمند:* {artist_data.get('artistName', 'نامشخص')}\n"
-        text += f"*🎭 سبک:* {artist_data.get('primaryGenreName', 'نامشخص')}\n"
-        if artist_data.get("artistLinkUrl"):
-            text += f"*🔗 لینک آیتونز:* [مشاهده در آیتونز]({artist_data['artistLinkUrl']})\n"
-
-        collections_data = await get_or_crawl_artist_collections(artist_id)
-        collections = collections_data["results"] if collections_data else []
-
-        markup = []
-        if collections:
-            total_items = len(collections)
-            total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-            page = max(1, min(page, total_pages))
-            start_idx = (page - 1) * ITEMS_PER_PAGE
-            end_idx = start_idx + ITEMS_PER_PAGE
-            page_items = collections[start_idx:end_idx]
-
-            text += f"\n*📀 آلبوم‌ها ({total_items}):*\n"
-            for collection in page_items:
-                if collection['wrapperType'] == 'collection':
-                    btn_text = f"📀 {collection.get('collectionName', 'نامشخص')[:45]}"
-                    markup.append([InlineKeyboardButton(
-                        text=btn_text,
-                        callback_data=f"collection:{collection['collectionId']}:1"
-                    )])
-
-            if total_pages > 1:
-                pagination_row = create_pagination_row(f"artist:{artist_id}", page, total_pages)
-                markup.append(pagination_row)
-        random_collection = collections[random.randint(0, len(collections) - 2)] if collections else None
-        artwork_url = get_high_res_artwork(random_collection.get("artworkUrl100") if random_collection else None,
-                                           size=600)
-        markup.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
-        markup.append([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
-        text += FOOTER
-        await edit_or_send(bot, chat_id, message_to_edit, text, markup=InlineKeyboard(*markup),
-                           cache_id=str(random_collection['collectionId']) if random_collection else None,
-                           artwork_url=artwork_url, owner_id=owner_id)
-        await status_msg.delete()
-
-    except Exception as e:
-        await send_error_with_retry(bot, chat_id, f"خطا در نمایش هنرمند: {str(e)[:100]}",
-                                    f"artist_retry:{artist_id}", status_msg)
-
-
-async def show_collection(chat_id: int, collection_id: int, page: int = 1,
-                          message_to_edit: Optional[Message] = None, owner_id: int = None, force=False):
-    status_msg = await bot.send_message(chat_id, f"🔄 *در حال پردازش آلبوم...*{FOOTER}", reply_markup=close_btn)
-
-    try:
-        collection_data = await get_or_crawl_collection(collection_id, status_msg, force)
-        tracks_data = await get_or_crawl_collection_tracks(collection_id)
-        tracks = tracks_data["results"] if tracks_data else []
-        if not collection_data:
-            await send_error_with_retry(bot, chat_id, f"آلبوم یافت نشد.",
-                                        f"collection_retry:{collection_id}", status_msg)
-            return
-        collection_data = collection_data['results'][0]
-        release_date = collection_data.get('releaseDate', 'نامشخص')[:10] if collection_data.get(
-            'releaseDate') else 'نامشخص'
-        text = f"*📀 آلبوم:* {collection_data.get('collectionName', 'نامشخص')}\n"
-        text += f"*🎤 هنرمند:* {collection_data.get('artistName', 'نامشخص')}\n"
-        text += f"*📅 انتشار:* {release_date}\n"
-        text += f"*🎭 سبک:* {collection_data.get('primaryGenreName', 'نامشخص')}\n"
-        if collection_data.get("collectionViewUrl"):
-            text += f"*🔗 لینک آیتونز:* [مشاهده در آیتونز]({collection_data['collectionViewUrl']})\n"
-
-        markup = []
-        if tracks:
-            total_items = len(tracks)
-            total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-            page = max(1, min(page, total_pages))
-            start_idx = (page - 1) * ITEMS_PER_PAGE
-            end_idx = start_idx + ITEMS_PER_PAGE
-            page_items = tracks[start_idx:end_idx]
-
-            text += f"\n*🎵 قطعات ({total_items}):*\n"
-            for i, track in enumerate(page_items, start_idx + 1):
-                duration = format_duration(track.get('trackTimeMillis', 0))
-                text += f"{i}. {track.get('trackName', 'نامشخص')} ({duration})\n"
-
-            for track in page_items:
-                if track['wrapperType'] == 'track':
-                    markup.append([InlineKeyboardButton(
-                        text=f"🎵 {track.get('trackName', 'نامشخص')[:40]} - {track.get('artistName', 'نامشخص')[:40]}",
-                        callback_data=f"track:{track['trackId']}"
-                    )])
-
-            if total_pages > 1:
-                pagination_row = create_pagination_row(f"collection:{collection_id}", page, total_pages)
-                markup.append(pagination_row)
-
-        if collection_data.get("artistId"):
-            markup.append([InlineKeyboardButton(
-                text="🎤 مشاهده هنرمند",
-                callback_data=f"artist:{collection_data['artistId']}:1"
-            )])
-        markup.append(
-            [InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:collection:{collection_id}")])
-        markup.append([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
-
-        text += FOOTER
-
-        artwork_url = get_high_res_artwork(collection_data.get("artworkUrl100"))
-        await edit_or_send(bot, chat_id, message_to_edit, text, markup=InlineKeyboard(*markup),
-                           artwork_url=artwork_url, cache_id=collection_id, owner_id=owner_id)
-        await status_msg.delete()
-
-    except Exception as e:
-        await send_error_with_retry(bot, chat_id, f"خطا در نمایش آلبوم: {str(e)[:100]}",
-                                    f"collection_retry:{collection_id}", status_msg)
-
-
-async def show_track(chat_id: int, track_id: int, message_to_edit: Optional[Message] = None, owner_id: int = None):
-    status_msg = await bot.send_message(chat_id, f"🔄 *در حال بارگذاری اطلاعات آهنگ...*{FOOTER}", reply_markup=close_btn)
-
-    try:
-        data = await get_track(track_id, status_msg)
-        if not data or not data.get("results"):
-            await send_error_with_retry(bot, chat_id, f"آهنگ یافت نشد.",
-                                        f"track_retry:{track_id}", status_msg)
-            return
-        track = data["results"][0]
-        duration = format_duration(track.get('trackTimeMillis', 0))
-        release_date = track.get('releaseDate', 'نامشخص')[:10] if track.get('releaseDate') else 'نامشخص'
-        text = f"*🎵 آهنگ:* {track.get('trackName', 'نامشخص')}\n"
-        text += f"*🎤 هنرمند:* {track.get('artistName', 'نامشخص')}\n"
-        text += f"*📀 آلبوم:* {track.get('collectionName', 'نامشخص')}\n"
-        text += f"*⏱️ مدت زمان:* {duration}\n"
-        text += f"*🎭 سبک:* {track.get('primaryGenreName', 'نامشخص')}\n"
-        text += f"*📅 انتشار:* {release_date}\n"
-        if track.get("trackViewUrl"):
-            text += f"*🔗 لینک آیتونز:* [مشاهده در آیتونز]({track['trackViewUrl']})\n"
-
-        markup = []
-        download = [InlineKeyboardButton(text="⬇️ دانلود", callback_data=f"download:{track_id}")]
-        if track.get("previewUrl"):
-            download.append(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}"))
-        markup.append(download)
-        links = []
-        if track.get('collectionId'):
-            links.append(
-                InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{track['collectionId']}:1"))
-        if track.get('artistId'):
-            links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{track['artistId']}:1"))
-        markup.append(links)
-        markup.append([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
-
-        text += FOOTER
-        artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
-        await edit_or_send(bot, chat_id, message_to_edit, text, markup=InlineKeyboard(*markup), artwork_url=artwork_url,
-                           cache_id=track.get('collectionId'), owner_id=owner_id)
-        await status_msg.delete()
-
-    except Exception as e:
-        await send_error_with_retry(bot, chat_id, f"خطا در نمایش آهنگ: {str(e)[:100]}",
-                                    f"track_retry:{track_id}", status_msg)
 
 
 # ============================================================================

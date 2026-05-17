@@ -8,6 +8,7 @@ from pathlib import Path
 from config import ITUNES_BASE_URL, HttpClient, OFFLINE_MODE, logger, PROXY
 
 
+
 class iTunesCache:
     """Cache manager for iTunes API responses"""
 
@@ -313,7 +314,7 @@ async def get_mirror(entity_type: str, entity_id: str, url_type: str) -> Optiona
 
 
 async def delete_mirror(entity_type: str, entity_id: str, url_type: str, method: Literal["POST", "DELETE"] = "POST") -> \
-Optional[Dict[str, Any]]:
+        Optional[Dict[str, Any]]:
     """
     DELETE or POST /mirror/delete
     Deletes a mirror URL for a specific entity

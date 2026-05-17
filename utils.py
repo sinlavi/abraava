@@ -1,11 +1,15 @@
 import logging
 from pathlib import Path
+from typing import Optional
 
+from balethon import Client
+from balethon.objects import InlineKeyboard, Message, InlineKeyboardButton
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, TCOM, TCON, TDRC, TPOS, TRCK, COMM, TLEN, TXXX, TCOP, TPUB
+from ytmusicapi import ytmusic
+
+from config import FOOTER
 
 logger = logging.getLogger("ABRAAVA:TAGEDITOR")
-
-
 
 
 def tag_mp3(file_path: Path, track_data: dict, cover_bytes: bytes = None):
@@ -92,3 +96,90 @@ def tag_mp3(file_path: Path, track_data: dict, cover_bytes: bytes = None):
 
     except Exception as e:
         logger.error(f"Failed to tag MP3 {file_path}: {e}")
+
+
+def create_retry_button(callback_data: str, button_text: str = "🔄 تلاش مجدد") -> InlineKeyboardButton:
+    return InlineKeyboardButton(text=button_text, callback_data=f"retry:{callback_data}")
+
+
+def create_close_button() -> InlineKeyboardButton:
+    return InlineKeyboardButton(text="❌ بستن", callback_data="close")
+
+
+async def send_error_with_retry(bot: Client, chat_id: int, error_text: str, retry_callback: str,
+                                original_message: Optional[Message] = None):
+    markup = [
+        [create_retry_button(retry_callback)],
+    ]
+
+    if original_message:
+        try:
+            await send_message(bot, chat_id, f"❌ *خطا:* {error_text}", reply_markup=markup)
+        except Exception as e:
+            await send_message(chat_id, f"❌ *خطا:* {error_text}", reply_markup=markup)
+    else:
+        await send_message(bot, chat_id, f"❌ *خطا:* {error_text}", reply_markup=markup)
+    await original_message.delete()
+
+
+async def update_status_with_close(status_msg: Message, text: str):
+    try:
+        await edit_message(status_msg, text)
+    except Exception as e:
+        logger.error(f"Failed to update status message: {e}")
+
+
+async def send_message(bot: Client, chat_id: int, text: str, reply_markup=None):
+    if reply_markup is None:
+        reply_markup = []
+    reply_markup.append([create_close_button()])
+    try:
+        message = await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*reply_markup))
+        return message
+    except Exception as e:
+        logger.error(f"Failed to send message: {e}")
+        return
+
+
+async def send_photo(bot: Client, chat_id: int, photo, caption: str, reply_markup=None):
+    if reply_markup is None:
+        reply_markup = []
+    reply_markup.append([create_close_button()])
+    logger.info(photo)
+    message = await bot.send_photo(chat_id, caption=f"{caption}{FOOTER}", photo=photo,
+                                   reply_markup=InlineKeyboard(*reply_markup))
+    return message
+
+
+async def send_voice(bot: Client, chat_id: int, voice, caption: str, reply_markup=None):
+    if reply_markup is None:
+        reply_markup = []
+    reply_markup.append([create_close_button()])
+    message = await bot.send_voice(chat_id, caption=f"{caption}{FOOTER}", voice=voice,
+                                   reply_markup=InlineKeyboard(*reply_markup))
+    return message
+
+
+async def send_audio(bot: Client, chat_id: int, audio, caption: str, reply_markup=None):
+    if reply_markup is None:
+        reply_markup = []
+    reply_markup.append([create_close_button()])
+    message = await bot.send_audio(chat_id, caption=f"{caption}{FOOTER}", audio=audio,
+                                   reply_markup=InlineKeyboard(*reply_markup))
+    return message
+
+
+async def edit_message(message: Message, text: str, reply_markup=None):
+    if reply_markup is None:
+        reply_markup = []
+    reply_markup.append([create_close_button()])
+    message = await message.edit(text=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*reply_markup))
+    return message
+
+
+async def reply_message(message: Message, text: str, reply_markup=None):
+    if reply_markup is None:
+        reply_markup = []
+    reply_markup.append([create_close_button()])
+    message = await message.reply(text=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*reply_markup))
+    return message
