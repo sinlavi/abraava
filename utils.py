@@ -119,7 +119,8 @@ async def send_error_with_retry(bot: Client, chat_id: int, error_text: str, retr
             await send_message(chat_id, f"❌ *خطا:* {error_text}", reply_markup=markup)
     else:
         await send_message(bot, chat_id, f"❌ *خطا:* {error_text}", reply_markup=markup)
-    await original_message.delete()
+    if original_message:
+        await original_message.delete()
 
 
 async def update_status_with_close(status_msg: Message, text: str):
