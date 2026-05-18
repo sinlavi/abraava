@@ -182,7 +182,7 @@ def get_message_owner(message_id: int) -> Optional[int]:
 
 
 # ============================================================================
-# Rate Limiting
+# Rate Limiting for Search
 # ============================================================================
 class RateLimiter:
     def __init__(self, max_requests: int = 30, time_window: int = 60):
@@ -223,6 +223,60 @@ class RateLimiter:
 
 
 rate_limiter = RateLimiter(max_requests=30, time_window=60)
+
+
+# ============================================================================
+# Download Rate Limiter (20 downloads per 2 hours)
+# ============================================================================
+class DownloadRateLimiter:
+    def __init__(self, max_downloads: int = 20, time_window: int = 7200):
+        self.max_downloads = max_downloads
+        self.time_window = time_window
+        self.users: Dict[int, List[float]] = defaultdict(list)
+
+    async def can_download(self, user_id: int) -> tuple[bool, int]:
+        now = time.time()
+        # Clean old entries
+        self.users[user_id] = [ts for ts in self.users[user_id] if now - ts < self.time_window]
+        if len(self.users[user_id]) >= self.max_downloads:
+            oldest = min(self.users[user_id])
+            wait_seconds = int(self.time_window - (now - oldest))
+            return False, wait_seconds
+        return True, 0
+
+    def record_download(self, user_id: int):
+        now = time.time()
+        self.users[user_id].append(now)
+
+    def get_remaining(self, user_id: int) -> int:
+        now = time.time()
+        self.users[user_id] = [ts for ts in self.users[user_id] if now - ts < self.time_window]
+        return max(0, self.max_downloads - len(self.users[user_id]))
+
+
+download_rate_limiter = DownloadRateLimiter(max_downloads=20, time_window=7200)
+
+# ============================================================================
+# User Task Lock (prevent multiple concurrent downloads per user)
+# ============================================================================
+user_active_downloads = set()  # user_id of users currently downloading
+user_download_lock = asyncio.Lock()
+
+
+async def acquire_user_download_lock(user_id: int) -> bool:
+    """Try to acquire download lock for user. Returns True if acquired."""
+    async with user_download_lock:
+        if user_id in user_active_downloads:
+            return False
+        user_active_downloads.add(user_id)
+        return True
+
+
+def release_user_download_lock(user_id: int):
+    """Release download lock for user."""
+    if user_id in user_active_downloads:
+        user_active_downloads.remove(user_id)
+
 
 # ============================================================================
 # User State Management
@@ -302,7 +356,7 @@ def get_artist_image(artist_name):
 
 
 async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
-                       markup, artwork_url: str = None, cache_id=None, owner_id=None):
+                       markup=[], artwork_url: str = None, cache_id=None, owner_id=None):
     """Send a new message or edit an existing one, and store message owner for groups."""
     if artwork_url:
         artwork_cache = None
@@ -356,7 +410,7 @@ def _delete_file_sync(path_str):
 
 
 # ============================================================================
-# Album Download Tracker with Enhanced Progress
+# Album Download Tracker with Enhanced Progress (PER USER)
 # ============================================================================
 @dataclass
 class TrackDownloadStatus:
@@ -368,10 +422,12 @@ class TrackDownloadStatus:
 
 class AlbumDownloadTracker:
     def __init__(self):
-        self.active_downloads = {}  # collection_id -> dict
+        # Key: (user_id, collection_id) -> data
+        self.active_downloads = {}
 
-    def start_download(self, collection_id: int, status_msg, total_tracks: int, collection_name: str):
-        self.active_downloads[collection_id] = {
+    def start_download(self, user_id: int, collection_id: int, status_msg, total_tracks: int, collection_name: str):
+        key = (user_id, collection_id)
+        self.active_downloads[key] = {
             "status_msg": status_msg,
             "tracks": [],
             "current_idx": 0,
@@ -381,17 +437,20 @@ class AlbumDownloadTracker:
             "start_time": time.time()
         }
 
-    def add_track(self, collection_id: int, track_name: str, order: int):
-        if collection_id not in self.active_downloads:
+    def add_track(self, user_id: int, collection_id: int, track_name: str, order: int):
+        key = (user_id, collection_id)
+        if key not in self.active_downloads:
             return
-        self.active_downloads[collection_id]["tracks"].append(
+        self.active_downloads[key]["tracks"].append(
             TrackDownloadStatus(name=track_name, order=order)
         )
 
-    def update_track_result(self, collection_id: int, track_name: str, success: bool, error_msg: str = None):
-        if collection_id not in self.active_downloads:
+    def update_track_result(self, user_id: int, collection_id: int, track_name: str, success: bool,
+                            error_msg: str = None):
+        key = (user_id, collection_id)
+        if key not in self.active_downloads:
             return
-        tracker = self.active_downloads[collection_id]
+        tracker = self.active_downloads[key]
         for track in tracker["tracks"]:
             if track.name == track_name:
                 track.success = success
@@ -399,10 +458,11 @@ class AlbumDownloadTracker:
                 break
         tracker["current_idx"] += 1
 
-    def get_progress_text(self, collection_id: int) -> str:
-        if collection_id not in self.active_downloads:
+    def get_progress_text(self, user_id: int, collection_id: int) -> str:
+        key = (user_id, collection_id)
+        if key not in self.active_downloads:
             return ""
-        t = self.active_downloads[collection_id]
+        t = self.active_downloads[key]
         completed = sum(1 for tr in t["tracks"] if tr.success)
         failed = sum(1 for tr in t["tracks"] if not tr.success and tr.error is not None)
         elapsed = time.time() - t["start_time"]
@@ -429,18 +489,21 @@ class AlbumDownloadTracker:
             text += f"{eta}\n"
         return text
 
-    def finish_download(self, collection_id: int):
-        if collection_id in self.active_downloads:
-            del self.active_downloads[collection_id]
+    def finish_download(self, user_id: int, collection_id: int):
+        key = (user_id, collection_id)
+        if key in self.active_downloads:
+            del self.active_downloads[key]
 
-    def is_cancelled(self, collection_id: int) -> bool:
-        if collection_id not in self.active_downloads:
+    def is_cancelled(self, user_id: int, collection_id: int) -> bool:
+        key = (user_id, collection_id)
+        if key not in self.active_downloads:
             return True
-        return self.active_downloads[collection_id].get("cancelled", False)
+        return self.active_downloads[key].get("cancelled", False)
 
-    def cancel_download(self, collection_id: int):
-        if collection_id in self.active_downloads:
-            self.active_downloads[collection_id]["cancelled"] = True
+    def cancel_download(self, user_id: int, collection_id: int):
+        key = (user_id, collection_id)
+        if key in self.active_downloads:
+            self.active_downloads[key]["cancelled"] = True
 
 
 album_tracker = AlbumDownloadTracker()
@@ -450,44 +513,59 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
                                   collection_name: str, tracks: List[dict], status_msg: Message):
     """Download all tracks of an album and send them batchly with detailed progress"""
 
-    album_tracker.start_download(collection_id, status_msg, len(tracks), collection_name)
+    album_tracker.start_download(user_id, collection_id, status_msg, len(tracks), collection_name)
 
     # Add all tracks to tracker first
     for idx, track in enumerate(tracks, 1):
-        album_tracker.add_track(collection_id, track.get('trackName', 'Unknown'), idx)
+        album_tracker.add_track(user_id, collection_id, track.get('trackName', 'Unknown'), idx)
 
-    # Add cancel button to status message
-    cancel_markup = [[InlineKeyboardButton(text="❌ لغو دانلود آلبوم", callback_data=f"cancel_album:{collection_id}")]]
-    await update_status_with_close(status_msg, album_tracker.get_progress_text(collection_id),
-                                   reply_markup=cancel_markup)
+    # Add cancel button to status message (only owner can cancel)
+    cancel_markup = [
+        [InlineKeyboardButton(text="❌ لغو دانلود آلبوم", callback_data=f"cancel_album:{user_id}:{collection_id}")],
+    ]
+    await update_status_with_close(status_msg, album_tracker.get_progress_text(user_id, collection_id),
+                                   reply_markup=cancel_markup, no=True)
 
     success_count = 0
     failed_tracks = []
+    stopped_by_rate_limit = False
 
     for idx, track in enumerate(tracks, 1):
-        if album_tracker.is_cancelled(collection_id):
+        if album_tracker.is_cancelled(user_id, collection_id):
             await update_status_with_close(status_msg,
-                                           f"⏹️ *دانلود آلبوم لغو شد*\n{album_tracker.get_progress_text(collection_id)}")
-            album_tracker.finish_download(collection_id)
+                                           f"⏹️ *دانلود آلبوم لغو شد*\n{album_tracker.get_progress_text(user_id, collection_id)}")
+            album_tracker.finish_download(user_id, collection_id)
+            release_user_download_lock(user_id)
             return
 
         track_id = track.get('trackId')
         track_name = track.get('trackName', 'Unknown')
 
+        # Check download rate limit before each track
+        can_dl, wait_sec = await download_rate_limiter.can_download(user_id)
+        if not can_dl:
+            stopped_by_rate_limit = True
+            error_msg = f"محدودیت دانلود: {wait_sec} ثانیه تا مجوز بعدی صبر کنید"
+            album_tracker.update_track_result(user_id, collection_id, track_name, False, error_msg)
+            failed_tracks.append({"name": track_name, "error": error_msg})
+            # Stop the album download
+            break
+
         try:
             # Download and send the track with batch mode
             await download_and_send_single_track(bot, chat_id, track_id, user_id, status_msg, is_batch=True)
-            album_tracker.update_track_result(collection_id, track_name, True)
+            download_rate_limiter.record_download(user_id)  # count this download
+            album_tracker.update_track_result(user_id, collection_id, track_name, True)
             success_count += 1
         except Exception as e:
             error_msg = str(e)[:100]
             logger.error(f"Failed to download track {track_name}: {error_msg}")
-            album_tracker.update_track_result(collection_id, track_name, False, error_msg)
+            album_tracker.update_track_result(user_id, collection_id, track_name, False, error_msg)
             failed_tracks.append({"name": track_name, "error": error_msg})
 
         # Update progress message after each track
-        await update_status_with_close(status_msg, album_tracker.get_progress_text(collection_id),
-                                       reply_markup=cancel_markup)
+        await update_status_with_close(status_msg, album_tracker.get_progress_text(user_id, collection_id),
+                                       reply_markup=cancel_markup, no=True)
 
         # Add delay between downloads to avoid rate limiting
         await asyncio.sleep(2)
@@ -499,16 +577,16 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
     if failed_tracks:
         final_text += f"❌ ناموفق: {len(failed_tracks)}\n\n"
         final_text += "⚠️ *قطعات ناموفق:*\n"
-        for ft in failed_tracks[:10]:  # Show first 10 failed tracks
-            final_text += f"• {ft['name']}\n"
+        for ft in failed_tracks[:10]:
+            final_text += f"{ft['name']}\n"
         if len(failed_tracks) > 10:
             final_text += f"... و {len(failed_tracks) - 10} قطعه دیگر\n"
-        # Add retry button for failed tracks
-    else:
-        markup = None
+    if stopped_by_rate_limit:
+        final_text += "\n🚫 *توقف به دلیل محدودیت ۲۰ دانلود در دو ساعت.*"
 
-    await edit_or_send(bot, chat_id, status_msg, final_text, markup=markup, owner_id=user_id)
-    album_tracker.finish_download(collection_id)
+    await edit_or_send(bot, chat_id, status_msg, final_text, owner_id=user_id)
+    album_tracker.finish_download(user_id, collection_id)
+    release_user_download_lock(user_id)
 
 
 # ============================================================================
@@ -576,8 +654,7 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
     )], [InlineKeyboardButton(
         text="📋 کپی پیوند",
         copy_text="https://player.abraava.ir?id=" + str(track_id)
-    )]
-    ]
+    )]]
     audio_cache = None
     audio_url = None
     if track_id:
@@ -1016,6 +1093,7 @@ async def on_initialize():
     await init_db()
     logger.info("Database initialized successfully (relational tables ready).")
     logger.info(f"Bot started with rate limiting: {rate_limiter.max_requests} req/min per user")
+    logger.info(f"Download rate limit: 20 downloads per 2 hours per user")
     asyncio.create_task(broadcast_worker())
     asyncio.create_task(cleanup_caches())
     asyncio.create_task(clear_expired_cache())
@@ -1143,10 +1221,11 @@ async def handle_message(message):
                             "⚠️ اگر می‌خواهید ربات را در گروه‌ها استفاده کنید، حتما باید آیدی ربات را تگ کنید:\n"
                             f"@{bot.user.username} Mohsen Namjoo\n\n"
                             f"📝 *نکات گروه:*\n"
-                            f"• فقط پیام‌های متنی زیر ۱۰۰ کاراکتر پردازش می‌شوند\n"
-                            f"• بدون عکس، ویدیو، فایل یا پیام فوروارد شده\n"
-                            f"• فقط کاربری که ربات را صدا زده می‌تواند روی دکمه‌ها کلیک کند\n\n"
-                            f"🔒 محدودیت: {rate_limiter.max_requests} درخواست در دقیقه"
+                            f"فقط پیام‌های متنی زیر ۱۰۰ کاراکتر پردازش می‌شوند\n"
+                            f"بدون عکس، ویدیو، فایل یا پیام فوروارد شده\n"
+                            f"فقط کاربری که ربات را صدا زده می‌تواند روی دکمه‌ها کلیک کند\n\n"
+                            f"🔒 محدودیت جستجو: {rate_limiter.max_requests} درخواست در دقیقه\n"
+                            f"⬇️ محدودیت دانلود: ۲۰ فایل در هر دو ساعت"
                             f"",
                             )
 
@@ -1158,7 +1237,8 @@ async def handle_message(message):
                             f"تمامی آهنگ‌ها پیش از ارسال توسط سرورهای ما پردازش و تگ‌گذاری (کاور و اطلاعات) می‌شوند.\n\n"
                             f"⚡ *حالت سریع:* دانلود خودکار اولین نتیجه جستجو\n"
                             f"📀 *دانلود آلبوم:* قابلیت دانلود تمام قطعات یک آلبوم به صورت یکجا\n\n"
-                            f"🔒 *Rate Limit:* {rate_limiter.max_requests} req/min per user"
+                            f"🔒 محدودیت جستجو: {rate_limiter.max_requests} req/min per user\n"
+                            f"⬇️ محدودیت دانلود: ۲۰ فایل در هر دو ساعت"
                             f"",
                             )
 
@@ -1170,8 +1250,8 @@ async def handle_message(message):
         ]
         await reply_message(message,
                             f"⚙️ *تنظیمات ربات {BOT_NAME}*\n\n"
-                            f"• حالت سریع: {mode_status}\n"
-                            f"• در حالت سریع، با ارسال نام آهنگ به صورت خودکار اولین نتیجه دانلود می‌شود.\n\n"
+                            f"حالت سریع: {mode_status}\n"
+                            f"در حالت سریع، با ارسال نام آهنگ به صورت خودکار اولین نتیجه دانلود می‌شود.\n\n"
                             f"برای فعال/غیرفعال کردن روی دکمه زیر کلیک کنید.",
                             reply_markup=markup
                             )
@@ -1179,13 +1259,15 @@ async def handle_message(message):
     elif msg_text.startswith("/stats"):
         remaining = rate_limiter.get_user_remaining(user_id)
         quick_mode = user_quick_mode.get(user_id, False)
+        downloads_remaining = download_rate_limiter.get_remaining(user_id)
         await reply_message(
             message,
             f"📊 *آمار شما*\n\n"
-            f"• درخواست‌های باقی‌مانده: {remaining}/{rate_limiter.max_requests}\n"
-            f"• پنجره زمانی: {rate_limiter.time_window} ثانیه\n"
-            f"• حالت سریع: {'✅ فعال' if quick_mode else '❌ غیرفعال'}\n"
-            f"• وضعیت: {'✅ فعال' if remaining > 0 else '⛔ محدود شده'}"
+            f"درخواست‌های جستجوی باقی‌مانده: {remaining}/{rate_limiter.max_requests}\n"
+            f"دانلودهای باقی‌مانده (۲ ساعته): {downloads_remaining}/{download_rate_limiter.max_downloads}\n"
+            f"پنجره زمانی جستجو: {rate_limiter.time_window} ثانیه\n"
+            f"حالت سریع: {'✅ فعال' if quick_mode else '❌ غیرفعال'}\n"
+            f"وضعیت جستجو: {'✅ فعال' if remaining > 0 else '⛔ محدود شده'}"
         )
 
     else:
@@ -1294,12 +1376,15 @@ async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
                 pagination_row = create_pagination_row(f"collection:{collection_id}", page, total_pages)
                 markup.append(pagination_row)
 
-            # Add "Download Full Album" button
-            if tracks and len(tracks) > 0:
-                markup.append([InlineKeyboardButton(
-                    text="⬇️ دانلود کل آلبوم",
-                    callback_data=f"download_album:{collection_id}"
-                )])
+            # Add "Download Full Album" button ONLY if chat is NOT a group
+            # (allow in private and channels)
+            chat = await bot.get_chat(chat_id)
+            if chat.type != "group" and chat.type != "supergroup":
+                if tracks and len(tracks) > 0:
+                    markup.append([InlineKeyboardButton(
+                        text="⬇️ دانلود کل آلبوم",
+                        callback_data=f"download_album:{collection_id}"
+                    )])
 
         if collection_data.get("artistId"):
             markup.append([InlineKeyboardButton(
@@ -1477,6 +1562,7 @@ async def on_callback(callback_query: CallbackQuery):
         await bot.answer_callback_query(callback_query.id)
         return
     if data == "close":
+        # Only owner can close (already checked above for groups)
         try:
             if message_id in MESSAGE_OWNER:
                 MESSAGE_OWNER.pop(message_id, None)
@@ -1532,11 +1618,20 @@ async def on_callback(callback_query: CallbackQuery):
             pass
         return
 
-    # Handle album download cancellation
+    # Handle album download cancellation (only owner)
     if data.startswith("cancel_album:"):
-        collection_id = int(data.split(":")[1])
-        album_tracker.cancel_download(collection_id)
-        await bot.answer_callback_query(callback_query.id, "⏹️ لغو دانلود آلبوم در حال انجام...", show_alert=True)
+        parts = data.split(":")
+        if len(parts) >= 3:
+            owner_id_from_cb = int(parts[1])
+            collection_id = int(parts[2])
+            # Only allow if the user who clicked is the owner of the download
+            if user_id != owner_id_from_cb:
+                await bot.answer_callback_query(callback_query.id, "❌ شما مالک این دانلود نیستید.", show_alert=True)
+                return
+            album_tracker.cancel_download(owner_id_from_cb, collection_id)
+            await bot.answer_callback_query(callback_query.id, "⏹️ لغو دانلود آلبوم در حال انجام...", show_alert=True)
+        else:
+            await bot.answer_callback_query(callback_query.id, "❌ خطا در اطلاعات لغو", show_alert=True)
         return
 
     try:
@@ -1574,10 +1669,47 @@ async def on_callback(callback_query: CallbackQuery):
             await show_track_page(chat_id, track_id, callback_query.message, user_id)
         elif data.startswith("download:"):
             track_id = int(parts[1])
+            # Check if user already has active download
+            """if not await acquire_user_download_lock(user_id):
+                await bot.answer_callback_query(callback_query.id,
+                                                "❌ شما در حال حاضر یک دانلود فعال دارید. ابتدا آن را تمام یا لغو کنید.",
+                                                show_alert=True)
+                return
+            """
+            # Check download rate limit
+            can_dl, wait_sec = await download_rate_limiter.can_download(user_id)
+            if not can_dl:
+                release_user_download_lock(user_id)
+                await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت دانلود: {wait_sec} ثانیه صبر کنید",
+                                                show_alert=True)
+                return
             await bot.answer_callback_query(callback_query.id, "در حال پردازش دانلود...")
-            asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
+            try:
+                await send_cached_or_download(bot, chat_id, track_id, user_id)
+                download_rate_limiter.record_download(user_id)
+            finally:
+                release_user_download_lock(user_id)
         elif data.startswith("download_album:"):
             collection_id = int(parts[1])
+            # Prevent album download in groups
+            chat = await bot.get_chat(chat_id)
+            if chat.type == "group" or chat.type == "supergroup":
+                await bot.answer_callback_query(callback_query.id, "❌ دانلود آلبوم در گروه‌ها مجاز نیست.",
+                                                show_alert=True)
+                return
+            # Check if user already has active download
+            """if not await acquire_user_download_lock(user_id):
+                await bot.answer_callback_query(callback_query.id,
+                                                "❌ شما در حال حاضر یک دانلود فعال دارید. ابتدا آن را تمام یا لغو کنید.",
+                                                show_alert=True)
+                return"""
+            # Check download rate limit for first track only (subsequent tracks checked inside loop)
+            can_dl, wait_sec = await download_rate_limiter.can_download(user_id)
+            if not can_dl:
+                release_user_download_lock(user_id)
+                await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت دانلود: {wait_sec} ثانیه صبر کنید",
+                                                show_alert=True)
+                return
             await bot.answer_callback_query(callback_query.id, "📀 در حال آماده‌سازی دانلود آلبوم...")
 
             # Get collection info and tracks
@@ -1586,6 +1718,7 @@ async def on_callback(callback_query: CallbackQuery):
             tracks = tracks_data["results"] if tracks_data else []
 
             if not tracks:
+                release_user_download_lock(user_id)
                 await bot.answer_callback_query(callback_query.id, "❌ هیچ قطعه‌ای در این آلبوم یافت نشد.",
                                                 show_alert=True)
                 return
@@ -1629,6 +1762,7 @@ if __name__ == "__main__":
     logger.info(f"🎵 {BOT_NAME} Music Bot Starting (High Concurrency Mode)...")
     logger.info(f"Rate limit: {rate_limiter.max_requests} req/min per user")
     logger.info(f"Global rate limit: {rate_limiter.max_global} req/min")
+    logger.info(f"Download rate limit: 20 downloads per 2 hours per user")
     logger.info(f"File cache directory: {CACHE_DIR.absolute()}")
-    logger.info(f"Album batch download feature enabled with progress tracking")
+    logger.info(f"Album batch download feature enabled with progress tracking (per user)")
     bot.run()
