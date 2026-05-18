@@ -229,7 +229,7 @@ rate_limiter = RateLimiter(max_requests=30, time_window=60)
 # Download Rate Limiter (20 downloads per 2 hours)
 # ============================================================================
 class DownloadRateLimiter:
-    def __init__(self, max_downloads: int = 20, time_window: int = 7200):
+    def __init__(self, max_downloads: int = 80, time_window: int = 7200):
         self.max_downloads = max_downloads
         self.time_window = time_window
         self.users: Dict[int, List[float]] = defaultdict(list)

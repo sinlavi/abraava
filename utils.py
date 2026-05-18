@@ -123,7 +123,7 @@ async def send_error_with_retry(bot: Client, chat_id: int, error_text: str, retr
         await original_message.delete()
 
 
-async def update_status_with_close(status_msg: Message, text: str, reply_markup=[], no=False):
+async def update_status_with_close(status_msg: Message, text: str, reply_markup=None, no=False):
     try:
         await edit_message(status_msg, text, reply_markup=reply_markup, no=no)
     except Exception as e:
@@ -169,9 +169,8 @@ async def send_audio(bot: Client, chat_id: int, audio, caption: str, reply_marku
 async def edit_message(message: Message, text: str, reply_markup=None, no=False):
     if reply_markup is None:
         reply_markup = []
-    if no == False:
         reply_markup.append([create_close_button()])
-    message = await message.edit(text=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*reply_markup))
+    await message.edit(text=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*reply_markup))
     return message
 
 
