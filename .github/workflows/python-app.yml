@@ -3,7 +3,7 @@ name: Test Deploy
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */2 * * *"  # Run every 2 hours
+    - cron: "0 */3 * * *"  # Run every 2 hours
 
 concurrency:
   group: test-deploy
@@ -13,6 +13,7 @@ jobs:
   run-bot:
     permissions:
       contents: write
+      actions: write  # Required to trigger a workflow restart via GH CLI
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -25,6 +26,7 @@ jobs:
       # ========== WARP (Cloudflare proxy) ==========
       - name: Get WARP image digest
         id: warp-digest
+        continue-on-error: true
         run: |
           docker pull --quiet caomingjun/warp
           DIGEST=$(docker inspect caomingjun/warp --format='{{.Id}}')
@@ -33,11 +35,14 @@ jobs:
       - name: Cache WARP Docker image
         id: cache-warp
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: /tmp/warp-image.tar
           key: warp-image-${{ steps.warp-digest.outputs.digest }}
 
       - name: Load or pull WARP container
+        id: warp-pull
+        continue-on-error: true
         run: |
           if [[ -f /tmp/warp-image.tar ]]; then
             docker load < /tmp/warp-image.tar
@@ -47,6 +52,8 @@ jobs:
           fi
 
       - name: Start Cloudflare WARP proxy
+        id: warp-start
+        continue-on-error: true
         run: |
           docker network inspect warp-net >/dev/null 2>&1 || docker network create warp-net
           docker rm -f warp 2>/dev/null || true
@@ -63,18 +70,39 @@ jobs:
       - name: Cache FFmpeg binaries
         id: cache-ffmpeg
         uses: actions/cache@v4
+        continue-on-error: true
         with:
           path: ~/tool_cache/ffmpeg
           key: ffmpeg-release-${{ runner.os }}
 
       - name: Set up FFmpeg
+        id: ffmpeg-setup
         uses: FedericoCarboni/setup-ffmpeg@v3
+        continue-on-error: true
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         with:
           ffmpeg-version: release
           architecture: ''
           linking-type: env
           github-token: ${{ github.server_url == 'https://github.com' && github.token || '' }}
+
+      # ========== Auto-Restart Check ==========
+      - name: Restart job if WARP or FFmpeg failed
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ "${{ steps.warp-digest.outcome }}" == "failure" ]] || \
+             [[ "${{ steps.cache-warp.outcome }}" == "failure" ]] || \
+             [[ "${{ steps.warp-pull.outcome }}" == "failure" ]] || \
+             [[ "${{ steps.warp-start.outcome }}" == "failure" ]] || \
+             [[ "${{ steps.cache-ffmpeg.outcome }}" == "failure" ]] || \
+             [[ "${{ steps.ffmpeg-setup.outcome }}" == "failure" ]]; then
+          
+            echo "WARP or FFmpeg related action failed! Triggering a restart..."
+            gh workflow run "${{ github.workflow }}" --ref "${{ github.ref_name }}"
+            exit 1
+          fi
 
       # ========== Python & dependencies ==========
       - name: Set up Python
