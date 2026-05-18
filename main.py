@@ -617,8 +617,6 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
         if len(failed_tracks) > 10:
             final_text += f"... و {len(failed_tracks) - 10} قطعه دیگر\n"
 
-    markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد برای قطعات ناموفق",
-                                    callback_data=f"retry_album_failed:{collection_id}")]]
     await edit_or_send(bot, chat_id, status_msg, final_text, markup=markup, owner_id=user_id)
     album_tracker.finish_download(collection_id)
 
