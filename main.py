@@ -356,8 +356,10 @@ def get_artist_image(artist_name):
 
 
 async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
-                       markup=[], artwork_url: str = None, cache_id=None, owner_id=None):
+                       markup=None, artwork_url: str = None, cache_id=None, owner_id=None):
     """Send a new message or edit an existing one, and store message owner for groups."""
+    if markup is None:
+        markup = []
     if artwork_url:
         artwork_cache = None
         if cache_id:
