@@ -50,7 +50,6 @@ DOWNLOAD_SEMAPHORE = asyncio.Semaphore(20)
 MESSAGE_OWNER = {}
 MESSAGE_OWNER_TTL = 600  # 10 minutes
 
-
 # ============================================================================
 # Retry Button Helper
 # ============================================================================
@@ -150,6 +149,7 @@ async def store_search_cache(search_id: str, type_: str, term: str, results: dic
 
 SEARCH_CACHE = {}
 SEARCH_CACHE_MAX_ITEMS = 100
+
 
 async def cleanup_caches():
     while True:
@@ -490,7 +490,7 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
     if audio_url:
         try:
             await update_status_with_close(status_msg, f"📤 *در حال ارسال فایل از حافظه کش...*")
-            await send_audio(bot,chat_id, audio=audio_url, caption=caption, reply_markup=markup)
+            await send_audio(bot, chat_id, audio=audio_url, caption=caption, reply_markup=markup)
             await status_msg.delete()
             return
         except Exception as e:
@@ -702,7 +702,7 @@ async def require_membership(bot: Client, chat_id: int, user_id: int) -> bool:
             [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
         ]
         await send_message(
-            chat_id,
+            bot, chat_id,
             f"⚠️ *برای استفاده از {BOT_NAME}، ابتدا باید در کانال ما عضو شوید.*\n\n"
             f"پس از عضویت، روی دکمه «تایید عضویت» کلیک کنید.",
             reply_markup=markup
