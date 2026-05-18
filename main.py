@@ -384,65 +384,116 @@ async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: s
 
 
 # ============================================================================
-# Download & Caching Logic
+# Album Batch Download
 # ============================================================================
-async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file_name: str, caption: str,
-                                max_retries=3, direct=False, cache_id=None):
-    last_exception = None
-    abs_audio_path = os.path.abspath(str(audio_path))
+class AlbumDownloadTracker:
+    def __init__(self):
+        self.active_downloads = {}  # collection_id -> {"status_msg": msg, "downloaded": [], "failed": [], "current": 0, "total": 0}
 
-    exists = await asyncio.to_thread(os.path.exists, abs_audio_path)
-    if not exists:
-        logger.error(f"File not found for upload: {abs_audio_path}")
-        raise FileNotFoundError(f"File not found: {abs_audio_path}")
+    def start_download(self, collection_id: int, status_msg, total_tracks: int):
+        self.active_downloads[collection_id] = {
+            "status_msg": status_msg,
+            "downloaded": [],
+            "failed": [],
+            "current": 0,
+            "total": total_tracks,
+            "cancelled": False
+        }
 
-    chat_to_send = DB_CHANNEL_ID
-    logger.info(f"Sending audio: {abs_audio_path} to chat {chat_to_send}")
+    def update_progress(self, collection_id: int, track_name: str, success: bool, error_msg: str = None):
+        if collection_id not in self.active_downloads:
+            return
+        tracker = self.active_downloads[collection_id]
+        tracker["current"] += 1
+        if success:
+            tracker["downloaded"].append(track_name)
+        else:
+            tracker["failed"].append({"name": track_name, "error": error_msg})
 
-    for attempt in range(1, max_retries + 1):
+    def get_progress_text(self, collection_id: int) -> str:
+        if collection_id not in self.active_downloads:
+            return ""
+        t = self.active_downloads[collection_id]
+        return f"📊 دانلود شده: {len(t['downloaded'])}/{t['total']}\n✅ موفق: {len(t['downloaded'])}\n❌ ناموفق: {len(t['failed'])}"
+
+    def finish_download(self, collection_id: int):
+        if collection_id in self.active_downloads:
+            del self.active_downloads[collection_id]
+
+    def is_cancelled(self, collection_id: int) -> bool:
+        if collection_id not in self.active_downloads:
+            return True
+        return self.active_downloads[collection_id].get("cancelled", False)
+
+
+album_tracker = AlbumDownloadTracker()
+
+
+async def download_and_send_album(bot: Client, chat_id: int, collection_id: int, user_id: int,
+                                  collection_name: str, tracks: List[dict], status_msg: Message):
+    """Download all tracks of an album and send them batchly"""
+
+    album_tracker.start_download(collection_id, status_msg, len(tracks))
+
+    success_count = 0
+    failed_tracks = []
+
+    for idx, track in enumerate(tracks, 1):
+        if album_tracker.is_cancelled(collection_id):
+            await update_status_with_close(status_msg,
+                                           f"⏹️ *دانلود آلبوم لغو شد*\n{album_tracker.get_progress_text(collection_id)}")
+            album_tracker.finish_download(collection_id)
+            return
+
+        track_id = track.get('trackId')
+        track_name = track.get('trackName', 'Unknown')
+
+        # Update progress message
+        progress_text = f"🎵 *در حال دانلود آلبوم: {collection_name}*\n"
+        progress_text += f"📀 قطعه {idx} از {len(tracks)}: {track_name}\n"
+        progress_text += album_tracker.get_progress_text(collection_id)
+        await update_status_with_close(status_msg, progress_text)
+
         try:
-            with open(abs_audio_path, 'rb') as audio_file:
-                logger.info('Sending audio...')
-                markup = [[InlineKeyboardButton(
-                    text="📂 نمایش در مینی اپ",
-                    web_app="https://player.abraava.ir?id=" + cache_id
-                )], [InlineKeyboardButton(
-                    text="📋 کپی پیوند",
-                    copy_text="https://player.abraava.ir?id=" + cache_id
-                )]
-                ]
-                msg = await send_audio(
-                    bot,
-                    chat_id=chat_id,
-                    audio=audio_file,
-                    caption=caption,
-                    reply_markup=markup,
-                )
+            # Download and send the track
+            await download_and_send_single_track(bot, chat_id, track_id, user_id, status_msg, is_batch=True)
+            album_tracker.update_progress(collection_id, track_name, True)
+            success_count += 1
 
-                await set_mirror('track', str(cache_id), 'audioUrl',
-                                 'https://tapi.bale.ai/file/bot<token>/' + str(msg.audio.id))
-                return msg
+            # Add delay between downloads to avoid rate limiting
+            await asyncio.sleep(2)
 
         except Exception as e:
-            error_str = str(e)
-            if "504" in error_str or "500" in error_str or "Time-out" in error_str:
-                logger.warning(f"send_audio network/server error, retry {attempt}/{max_retries}: {e}")
-                last_exception = e
-                await asyncio.sleep(attempt * 2)
-            else:
-                logger.error(f"Upload failed fatally: {e}")
-                raise e
-    raise last_exception
+            error_msg = str(e)[:100]
+            logger.error(f"Failed to download track {track_name}: {error_msg}")
+            album_tracker.update_progress(collection_id, track_name, False, error_msg)
+            failed_tracks.append({"name": track_name, "error": error_msg})
+
+    # Send final summary
+    final_text = f"✅ *دانلود آلبوم {collection_name} به پایان رسید*\n\n"
+    final_text += f"📊 جمع کل: {len(tracks)} قطعه\n"
+    final_text += f"✅ موفق: {success_count}\n"
+    if failed_tracks:
+        final_text += f"❌ ناموفق: {len(failed_tracks)}\n\n"
+        final_text += "⚠️ *قطعات ناموفق:*\n"
+        for ft in failed_tracks[:10]:  # Show first 10 failed tracks
+            final_text += f"• {ft['name']}\n"
+        if len(failed_tracks) > 10:
+            final_text += f"... و {len(failed_tracks) - 10} قطعه دیگر\n"
+
+    markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد برای قطعات ناموفق",
+                                    callback_data=f"retry_album_failed:{collection_id}")]]
+    await edit_or_send(bot, chat_id, status_msg, final_text, markup=markup, owner_id=user_id)
+    album_tracker.finish_download(collection_id)
 
 
-async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user_id: int = None, caption=""):
-    status_msg = await send_message(bot, chat_id, text=f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*")
+async def download_and_send_single_track(bot: Client, chat_id: int, track_id: int, user_id: int,
+                                         status_msg: Message = None, is_batch: bool = False):
+    """Download and send a single track, with batch mode support"""
 
     track_data = await get_track(track_id, status_msg)
     if not track_data or not track_data.get("results"):
-        await send_error_with_retry(bot, chat_id, f"خطا در دریافت اطلاعات آهنگ.",
-                                    f"download_retry:{track_id}", status_msg)
-        return
+        raise Exception("اطلاعات آهنگ یافت نشد")
 
     track = track_data["results"][0]
     release_year = track.get("releaseDate", "").split("-")[0] if track.get("releaseDate") else ""
@@ -466,8 +517,6 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
         seconds = duration_sec % 60
         caption_parts.append(f"⏱️ مدت زمان: {minutes}:{seconds:02d}")
 
-    # caption_parts.append(f"🔊 حجم فایل: {file_size_mb:.1f} MB{FOOTER}")
-    # caption_parts.append(f"🔗 لینک نمایش: https://3rah.ir/music/ui?id={track_id}")
     caption = "\n".join(caption_parts)
     markup = [[InlineKeyboardButton(
         text="📂 نمایش در مینی اپ",
@@ -475,31 +524,26 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
     )], [InlineKeyboardButton(
         text="📋 کپی پیوند",
         copy_text="https://player.abraava.ir?id=" + str(track_id)
-    )]
-    ]
+    )]]
+
+    # Check cache
     audio_cache = None
-    audio_url = None
     if track_id:
         data = await get_mirror('track', str(track_id), 'audioUrl')
         if len(data.get('mirrors', [])) > 0:
             for mirror in data["mirrors"]:
                 if mirror.get('url_type') == 'audioUrl':
                     audio_cache = mirror["mirror_url"].split('<token>/')[1]
-        if audio_cache:
-            audio_url = audio_cache
-    if audio_url:
+
+    if audio_cache:
         try:
-            await update_status_with_close(status_msg, f"📤 *در حال ارسال فایل از حافظه کش...*")
-            await send_audio(bot, chat_id, audio=audio_url, caption=caption, reply_markup=markup)
-            await status_msg.delete()
+            await send_audio(bot, chat_id, audio=audio_cache, caption=caption, reply_markup=markup)
             return
         except Exception as e:
-            logger.error(f"Forward failed: {e}, will re-download")
+            logger.error(f"Cache send failed: {e}, will re-download")
 
     if OFFLINE_MODE:
-        await send_error_with_retry(bot, chat_id, f"آهنگ در دیتابیس محلی یافت نشد و بات در حالت آفلاین است.",
-                                    f"download_retry:{track_id}", status_msg)
-        return
+        raise Exception("بات در حالت آفلاین است و آهنگ در کش موجود نیست")
 
     t_name = track.get("trackName", "Unknown Title")
     ye = track.get("releaseDate", "").split("-")[0]
@@ -508,69 +552,101 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
     cover_url = get_high_res_artwork(track.get("artworkUrl100", track.get("artworkUrl")), size=600)
 
     query = f'"{t_name}" by {a_name} collection {collection_name} {ye}'
-    await update_status_with_close(status_msg, f"🔍 *جستجوی سورس باکیفیت آهنگ در یوتیوب موزیک...*")
 
+    if not is_batch and status_msg:
+        await update_status_with_close(status_msg, f"🔍 *جستجوی سورس باکیفیت آهنگ در یوتیوب موزیک...*")
+
+    video_id = await search_youtube_track(query)
+    if not video_id:
+        raise Exception("نتوانستیم لینک یوتیوب موزیک را برای این آهنگ پیدا کنیم")
+
+    video_url = f"https://music.youtube.com/watch?v={video_id}"
+
+    mp3_path_str = None
     try:
-        video_id = await search_youtube_track(query)
-        if not video_id:
-            await send_error_with_retry(bot, chat_id, f"نتوانستیم لینک یوتیوب موزیک را برای این آهنگ پیدا کنیم.",
-                                        f"download_retry:{track_id}", status_msg)
-            return
-        video_url = f"https://music.youtube.com/watch?v={video_id}"
+        async with DOWNLOAD_SEMAPHORE:
+            mp3_path_str = await asyncio.get_event_loop().run_in_executor(
+                None, download_audio, video_url
+            )
 
-        await update_status_with_close(status_msg, f"⏳ *در صف دانلود و آماده‌سازی...*")
+            if not mp3_path_str:
+                raise Exception("دانلود با شکست مواجه شد — همه روش‌ها ناموفق بودند")
 
-        mp3_path_str = None
+            file_size_mb = await asyncio.to_thread(_get_file_size_sync, mp3_path_str)
+            if file_size_mb == 0:
+                raise Exception("فایل دانلود شده یافت نشد")
+
+            cover_bytes = None
+            if cover_url and HTTP_SESSION:
+                try:
+                    async with HTTP_SESSION.get(cover_url) as resp:
+                        if resp.status == 200:
+                            cover_bytes = await resp.read()
+                except Exception as e:
+                    logger.error(f"Failed to download cover: {e}")
+
+            await asyncio.get_event_loop().run_in_executor(
+                None, tag_mp3, mp3_path_str, track, cover_bytes
+            )
+
+            # Send with retry logic for upload failures
+            await send_audio_with_retry(
+                bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, cache_id=str(track['trackId'])
+            )
+
+    finally:
+        if mp3_path_str:
+            await asyncio.to_thread(_delete_file_sync, mp3_path_str)
+
+
+async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file_name: str, caption: str,
+                                max_retries=3, direct=False, cache_id=None):
+    """Send audio with retry logic and Persian error message on failure"""
+    last_exception = None
+    abs_audio_path = os.path.abspath(str(audio_path))
+
+    exists = await asyncio.to_thread(os.path.exists, abs_audio_path)
+    if not exists:
+        logger.error(f"File not found for upload: {abs_audio_path}")
+        raise FileNotFoundError(f"File not found: {abs_audio_path}")
+
+    for attempt in range(1, max_retries + 1):
         try:
-            async with DOWNLOAD_SEMAPHORE:
-                await update_status_with_close(status_msg,
-                                               f"⏳ *در حال دانلود و پردازش (روش‌های پیشرفته ضدتحریم)...*")
-                mp3_path_str = await asyncio.get_event_loop().run_in_executor(
-                    None, download_audio, video_url
+            with open(abs_audio_path, 'rb') as audio_file:
+                logger.info(f'Sending audio, attempt {attempt}/{max_retries}...')
+                markup = [[InlineKeyboardButton(
+                    text="📂 نمایش در مینی اپ",
+                    web_app="https://player.abraava.ir?id=" + cache_id
+                )], [InlineKeyboardButton(
+                    text="📋 کپی پیوند",
+                    copy_text="https://player.abraava.ir?id=" + cache_id
+                )]]
+                msg = await send_audio(
+                    bot,
+                    chat_id=chat_id,
+                    audio=audio_file,
+                    caption=caption,
+                    reply_markup=markup,
                 )
 
-                if not mp3_path_str:
-                    await send_error_with_retry(bot, chat_id, f"دانلود با شکست مواجه شد — همه ۸ روش ناموفق بودند.",
-                                                f"download_retry:{track_id}", status_msg)
-                    return
-
-                file_size_mb = await asyncio.to_thread(_get_file_size_sync, mp3_path_str)
-                if file_size_mb == 0:
-                    await send_error_with_retry(bot, chat_id, f"خطای داخلی: فایل دانلود شده یافت نشد.",
-                                                f"download_retry:{track_id}", status_msg)
-                    return
-
-                cover_bytes = None
-                if cover_url and HTTP_SESSION:
-                    try:
-                        async with HTTP_SESSION.get(cover_url) as resp:
-                            if resp.status == 200:
-                                cover_bytes = await resp.read()
-                    except Exception as e:
-                        logger.error(f"Failed to download cover: {e}")
-
-                await asyncio.get_event_loop().run_in_executor(
-                    None, tag_mp3, mp3_path_str, track, cover_bytes
-                )
-                await update_status_with_close(status_msg,
-                                               f"☁️ *در حال آپلود در سرورهای ابری {BOT_NAME}...*")
-                await send_audio_with_retry(
-                    bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, cache_id=str(track['trackId'])
-                )
-
-                await status_msg.delete()
+                await set_mirror('track', str(cache_id), 'audioUrl',
+                                 'https://tapi.bale.ai/file/bot<token>/' + str(msg.audio.id))
+                return msg
 
         except Exception as e:
-            logger.exception("Download error")
-            await send_error_with_retry(bot, chat_id, f"خطا در عملیات: {str(e)[:100]}",
-                                        f"download_retry:{track_id}", status_msg)
-        finally:
-            if mp3_path_str:
-                await asyncio.to_thread(_delete_file_sync, mp3_path_str)
+            error_str = str(e)
+            last_exception = e
+            logger.warning(f"send_audio attempt {attempt}/{max_retries} failed: {error_str}")
 
-    except Exception as e:
-        await send_error_with_retry(bot, chat_id, f"خطا در جستجوی یوتیوب: {str(e)[:100]}",
-                                    f"download_retry:{track_id}", status_msg)
+            if attempt < max_retries:
+                wait_time = attempt * 3
+                logger.info(f"Retrying in {wait_time} seconds...")
+                await asyncio.sleep(wait_time)
+            else:
+                # All retries failed - raise Persian error
+                raise Exception("آپلود در بله به مشکل مواجه شد. لطفاً بعداً تلاش کنید یا آهنگ دیگری انتخاب کنید.")
+
+    raise last_exception if last_exception else Exception("آپلود در بله به مشکل مواجه شد")
 
 
 async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None):
@@ -699,7 +775,6 @@ async def require_membership(bot: Client, chat_id: int, user_id: int) -> bool:
         markup = [
             [InlineKeyboardButton(text="🔗 عضویت در کانال", url=f"https://ble.ir/abraava")],
             [InlineKeyboardButton(text="✅ تایید عضویت", callback_data="verify_membership")],
-            [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
         ]
         await send_message(
             bot, chat_id,
@@ -855,6 +930,7 @@ async def handle_message(message):
             f"من اینجام تا آهنگ‌های مورد علاقت رو برات پیدا کنم و بفرستم.\n"
             f"فقط کافیه اسم آهنگ رو بگی، خودم بلدم چیکار کنم 😉\n\n"
             f"⚡ *حالت سریع:* برای دانلود خودکار اولین نتیجه، از `/quick [نام آهنگ]` استفاده کنید.\n"
+            f"📀 *دانلود آلبوم:* برای دانلود تمام آهنگ‌های یک آلبوم، از گزینه «دانلود کل آلبوم» در صفحه آلبوم استفاده کنید.\n"
             f"🔧 *تنظیمات:* برای فعال/غیرفعال کردن حالت سریع از `/settings` استفاده کنید."
         )
         if INFO_CHANNEL_ID:
@@ -873,6 +949,8 @@ async def handle_message(message):
                             "`/track نام آهنگ` - جستجوی دقیق آهنگ\n"
                             "`/album نام آلبوم` - جستجوی آلبوم\n"
                             "`/artist نام هنرمند` - جستجوی هنرمند\n\n"
+                            "📀 *دانلود آلبوم:*\n"
+                            "پس از جستجوی یک آلبوم، می‌توانید با کلیک روی دکمه «دانلود کل آلبوم» تمام قطعات را دانلود کنید.\n\n"
                             "⚠️ اگر می‌خواهید ربات را در گروه‌ها استفاده کنید، حتما باید آیدی ربات را تگ کنید:\n"
                             f"@{bot.user.username} Mohsen Namjoo\n\n"
                             f"📝 *نکات گروه:*\n"
@@ -889,7 +967,8 @@ async def handle_message(message):
                             f"ℹ️ *درباره ربات {BOT_NAME}*\n\n"
                             f"این ربات یک دستیار هوشمند برای جستجو در دیتابیس عظیم iTunes و دانلود باکیفیت‌ترین سورس موجود از YouTube Music به صورت ضدتحریم می‌باشد.\n"
                             f"تمامی آهنگ‌ها پیش از ارسال توسط سرورهای ما پردازش و تگ‌گذاری (کاور و اطلاعات) می‌شوند.\n\n"
-                            f"⚡ *حالت سریع:* دانلود خودکار اولین نتیجه جستجو\n\n"
+                            f"⚡ *حالت سریع:* دانلود خودکار اولین نتیجه جستجو\n"
+                            f"📀 *دانلود آلبوم:* قابلیت دانلود تمام قطعات یک آلبوم به صورت یکجا\n\n"
                             f"🔒 *Rate Limit:* {rate_limiter.max_requests} req/min per user"
                             f"",
                             )
@@ -1025,6 +1104,13 @@ async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
             if total_pages > 1:
                 pagination_row = create_pagination_row(f"collection:{collection_id}", page, total_pages)
                 markup.append(pagination_row)
+
+            # Add "Download Full Album" button
+            if tracks and len(tracks) > 0:
+                markup.append([InlineKeyboardButton(
+                    text="⬇️ دانلود کل آلبوم",
+                    callback_data=f"download_album:{collection_id}"
+                )])
 
         if collection_data.get("artistId"):
             markup.append([InlineKeyboardButton(
@@ -1293,7 +1379,29 @@ async def on_callback(callback_query: CallbackQuery):
         elif data.startswith("download:"):
             track_id = int(parts[1])
             await bot.answer_callback_query(callback_query.id, "در حال پردازش دانلود...")
-            asyncio.create_task(send_cached_or_download(bot, chat_id, track_id, user_id))
+            asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
+        elif data.startswith("download_album:"):
+            collection_id = int(parts[1])
+            await bot.answer_callback_query(callback_query.id, "📀 در حال آماده‌سازی دانلود آلبوم...")
+
+            # Get collection info and tracks
+            collection_data = await get_or_crawl_collection(collection_id, None, False)
+            tracks_data = await get_or_crawl_collection_tracks(collection_id)
+            tracks = tracks_data["results"] if tracks_data else []
+
+            if not tracks:
+                await bot.answer_callback_query(callback_query.id, "❌ هیچ قطعه‌ای در این آلبوم یافت نشد.",
+                                                show_alert=True)
+                return
+
+            collection_name = collection_data['results'][0].get('collectionName',
+                                                                'آلبوم') if collection_data else 'آلبوم'
+
+            status_msg = await send_message(bot, chat_id,
+                                            f"🎵 *شروع دانلود آلبوم: {collection_name}*\nدر حال آماده‌سازی...")
+            asyncio.create_task(
+                download_and_send_album(bot, chat_id, collection_id, user_id, collection_name, tracks, status_msg))
+
         elif data.startswith("preview:"):
             track_id = int(parts[1])
             await bot.answer_callback_query(callback_query.id, "در حال دریافت پیش‌نمایش...")
@@ -1306,6 +1414,12 @@ async def on_callback(callback_query: CallbackQuery):
                 await show_artist_page(chat_id, id_, 1, callback_query.message, user_id, force=True)
             elif type_ == "collection":
                 await show_collection_page(chat_id, id_, 1, callback_query.message, user_id, force=True)
+        elif data.startswith("retry_album_failed:"):
+            collection_id = int(parts[1])
+            await bot.answer_callback_query(callback_query.id, "در حال تلاش مجدد برای قطعات ناموفق...")
+            # This would need to track failed tracks per album - simplified version
+            await send_message(bot, chat_id,
+                               "⚠️ این قابلیت در حال توسعه است. لطفاً تک تک آهنگ‌های ناموفق را دانلود کنید.")
 
     except Exception as e:
         logger.error(f"Error handling callback {data}: {e}")
@@ -1325,4 +1439,5 @@ if __name__ == "__main__":
     logger.info(f"Rate limit: {rate_limiter.max_requests} req/min per user")
     logger.info(f"Global rate limit: {rate_limiter.max_global} req/min")
     logger.info(f"File cache directory: {CACHE_DIR.absolute()}")
+    logger.info(f"Album batch download feature enabled")
     bot.run()

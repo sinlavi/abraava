@@ -2,7 +2,7 @@ import asyncio
 import json
 import hashlib
 import time
-from typing import Optional, Dict, Any, Literal
+from typing import Optional, Dict, Any, Literal, List
 from pathlib import Path
 
 from config import ITUNES_BASE_URL, HttpClient, OFFLINE_MODE, logger, PROXY
@@ -118,9 +118,78 @@ def _has_results(data: Dict[str, Any]) -> bool:
     return isinstance(results, list) and len(results) > 0
 
 
+def _has_collection_tracks(data: Dict[str, Any]) -> bool:
+    """Check if response contains collection tracks (for caching)"""
+    if not data:
+        return False
+    results = data.get("results", [])
+    if not isinstance(results, list) or len(results) == 0:
+        return False
+
+    # Check if this is a collection tracks response
+    # Collection tracks have wrapperType "track" and collectionId
+    track_count = 0
+    for item in results:
+        if item.get("wrapperType") == "track" and item.get("collectionId"):
+            track_count += 1
+
+    return track_count > 0
+
+
+def _has_artist_collections(data: Dict[str, Any]) -> bool:
+    """Check if response contains artist collections (for caching)"""
+    if not data:
+        return False
+    results = data.get("results", [])
+    if not isinstance(results, list) or len(results) == 0:
+        return False
+
+    # Check if this is an artist collections response
+    # Artist collections have wrapperType "collection" and artistId
+    collection_count = 0
+    for item in results:
+        if item.get("wrapperType") == "collection" and item.get("artistId"):
+            collection_count += 1
+
+    return collection_count > 0
+
+
 def _is_mirror_request(endpoint: str) -> bool:
     """Check if the request is related to mirror operations"""
     return endpoint.startswith("mirror/")
+
+
+def _should_cache_response(endpoint: str, params: dict, data: Dict[str, Any]) -> bool:
+    """Determine if response should be cached based on content"""
+    if OFFLINE_MODE:
+        return False
+
+    if _is_mirror_request(endpoint):
+        return False
+
+    # Check for collection tracks
+    if "entity" in params and params["entity"] == "song":
+        # This is a lookup for collection tracks
+        if _has_collection_tracks(data):
+            logger.info(f"Caching collection tracks response for endpoint {endpoint}")
+            return True
+
+    # Check for artist collections (lookup with entity=album)
+    if "entity" in params and params["entity"] == "album":
+        # This is a lookup for artist collections
+        if _has_artist_collections(data):
+            logger.info(f"Caching artist collections response for endpoint {endpoint}")
+            return True
+
+    # For search endpoints, only cache if there are results
+    if endpoint == "search" and _has_results(data):
+        return True
+
+    # For lookup endpoints with specific IDs
+    if endpoint == "lookup" and _has_results(data):
+        return True
+
+    return False
 
 
 async def fetch_itunes(
@@ -161,8 +230,8 @@ async def fetch_itunes(
                     try:
                         response_data = json.loads(text)
 
-                        # Only cache responses that contain items and are not mirror requests
-                        if not OFFLINE_MODE and not is_mirror and _has_results(response_data):
+                        # Cache responses that contain meaningful data
+                        if _should_cache_response(endpoint, params, response_data):
                             _itunes_cache.set(endpoint, params, response_data)
 
                         return response_data
@@ -242,6 +311,69 @@ async def lookup_itunes(
             item for item in data["results"] if item.get("wrapperType") == entity
         ]
         data["results"] = filtered_results
+        data["resultCount"] = len(filtered_results)
+
+    return data
+
+
+async def lookup_collection_tracks(
+        collection_id: int,
+        bypass_cache: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """
+    Lookup all tracks in a collection/album
+    This specifically caches collection tracks when count > 0
+    """
+    logger.info(f"Looking up collection tracks: collection_id={collection_id}")
+    params = {
+        "id": collection_id,
+        "entity": "song"  # This retrieves all tracks in the collection
+    }
+
+    data = await fetch_itunes("lookup", params, bypass_cache=bypass_cache)
+
+    # Filter to only include tracks from this collection
+    if data and "results" in data:
+        tracks = [
+            item for item in data["results"]
+            if item.get("wrapperType") == "track" and item.get("collectionId") == collection_id
+        ]
+        data["results"] = tracks
+        data["resultCount"] = len(tracks)
+
+        # Cache will be handled by _should_cache_response
+        # which checks _has_collection_tracks
+
+    return data
+
+
+async def lookup_artist_collections(
+        artist_id: int,
+        bypass_cache: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """
+    Lookup all collections/albums by an artist
+    This specifically caches artist collections when count > 0
+    """
+    logger.info(f"Looking up artist collections: artist_id={artist_id}")
+    params = {
+        "id": artist_id,
+        "entity": "album"  # This retrieves all albums by the artist
+    }
+
+    data = await fetch_itunes("lookup", params, bypass_cache=bypass_cache)
+
+    # Filter to only include collections from this artist
+    if data and "results" in data:
+        collections = [
+            item for item in data["results"]
+            if item.get("wrapperType") == "collection" and item.get("artistId") == artist_id
+        ]
+        data["results"] = collections
+        data["resultCount"] = len(collections)
+
+        # Cache will be handled by _should_cache_response
+        # which checks _has_artist_collections
 
     return data
 
@@ -328,3 +460,19 @@ async def delete_mirror(entity_type: str, entity_id: str, url_type: str, method:
 
     # Use the unified fetch_itunes function with appropriate method
     return await fetch_itunes("mirror/delete", method=method, payload=payload)
+
+
+async def get_cached_collection_tracks(collection_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Get cached collection tracks if they exist and are valid
+    """
+    params = {"id": collection_id, "entity": "song"}
+    return _itunes_cache.get("lookup", params)
+
+
+async def get_cached_artist_collections(artist_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Get cached artist collections if they exist and are valid
+    """
+    params = {"id": artist_id, "entity": "album"}
+    return _itunes_cache.get("lookup", params)

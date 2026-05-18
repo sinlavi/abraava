@@ -134,12 +134,8 @@ async def send_message(bot: Client, chat_id: int, text: str, reply_markup=None):
     if reply_markup is None:
         reply_markup = []
     reply_markup.append([create_close_button()])
-    try:
-        message = await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*reply_markup))
-        return message
-    except Exception as e:
-        logger.error(f"Failed to send message: {e}")
-        return
+    message = await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*reply_markup))
+    return message
 
 
 async def send_photo(bot: Client, chat_id: int, photo, caption: str, reply_markup=None):
