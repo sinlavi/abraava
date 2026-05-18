@@ -16,8 +16,6 @@ from balethon import Client
 from balethon.objects import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboard
 from ytmusicapi import ytmusic
 
-from cache import SEARCH_CACHE_TTL, clear_expired_cache, SEARCH_CACHE, SEARCH_CACHE_MAX_ITEMS, store_search_cache, \
-    CACHE_DIR
 from config import BOT_NAME, FOOTER, OFFLINE_MODE, ITEMS_PER_PAGE, BOT_TOKEN, DB_CHANNEL_ID, INFO_CHANNEL_ID, logger, \
     BROADCAST_CHANNELS, ITUNES_BASE_URL
 from crawlers.itunes import search_itunes, lookup_itunes, fetch_itunes, set_mirror, get_mirror
@@ -57,10 +55,102 @@ MESSAGE_OWNER_TTL = 600  # 10 minutes
 # Retry Button Helper
 # ============================================================================
 
+CACHE_DIR = Path("cache")
+CACHE_DIR.mkdir(exist_ok=True)
 
-# ============================================================================
-# Periodic cleanup tasks
-# ============================================================================
+SEARCH_CACHE_TTL = 600
+ARTWORK_CACHE_TTL = 86400
+PREVIEW_CACHE_TTL = 86400
+TRACK_CACHE_TTL = 604800
+
+
+def get_cache_file_path(cache_key: str) -> Path:
+    safe_name = hashlib.md5(cache_key.encode()).hexdigest()
+    return CACHE_DIR / f"{safe_name}.cache"
+
+
+async def save_to_file_cache(cache_key: str, data: Any, ttl: int = SEARCH_CACHE_TTL):
+    try:
+        cache_path = get_cache_file_path(cache_key)
+        cache_data = {
+            "data": data,
+            "timestamp": time.time(),
+            "ttl": ttl
+        }
+        # Use pickle for complex objects
+        with open(cache_path, 'wb') as f:
+            pickle.dump(cache_data, f)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save to file cache {cache_key}: {e}")
+        return False
+
+
+async def get_from_file_cache(cache_key: str) -> Optional[Any]:
+    try:
+        cache_path = get_cache_file_path(cache_key)
+        if not cache_path.exists():
+            return None
+
+        with open(cache_path, 'rb') as f:
+            cache_data = pickle.load(f)
+
+        # Check if expired
+        if time.time() - cache_data["timestamp"] > cache_data["ttl"]:
+            cache_path.unlink(missing_ok=True)
+            return None
+
+        return cache_data["data"]
+    except Exception as e:
+        logger.error(f"Failed to read from file cache {cache_key}: {e}")
+        return None
+
+
+async def clear_expired_cache():
+    """Clear all expired cache files"""
+    while True:
+        await asyncio.sleep(3600)  # every hour
+        try:
+            now = time.time()
+            for cache_file in CACHE_DIR.glob("*.cache"):
+                try:
+                    with open(cache_file, 'rb') as f:
+                        cache_data = pickle.load(f)
+                    if now - cache_data["timestamp"] > cache_data["ttl"]:
+                        cache_file.unlink()
+                except:
+                    cache_file.unlink()  # Remove corrupted files
+        except Exception as e:
+            logger.error(f"Cache cleanup error: {e}")
+
+
+async def get_search_cache(search_id: str) -> Optional[Dict]:
+    """Retrieve search results from memory, check TTL"""
+    data = SEARCH_CACHE.get(search_id)
+    if data and time.time() - data["timestamp"] <= SEARCH_CACHE_TTL:
+        return data
+    if data:
+        SEARCH_CACHE.pop(search_id, None)
+    return None
+
+
+async def store_search_cache(search_id: str, type_: str, term: str, results: dict, owner_id: int):
+    """Store search results in memory with TTL"""
+    if len(SEARCH_CACHE) >= SEARCH_CACHE_MAX_ITEMS:
+        oldest = min(SEARCH_CACHE.items(), key=lambda x: x[1]["timestamp"])
+        SEARCH_CACHE.pop(oldest[0])
+    SEARCH_CACHE[search_id] = {
+        "type": type_,
+        "term": term,
+        "results": results,
+        "owner_id": owner_id,
+        "timestamp": time.time()
+    }
+
+
+SEARCH_CACHE = {}
+SEARCH_CACHE_MAX_ITEMS = 100
+
 async def cleanup_caches():
     while True:
         await asyncio.sleep(300)  # every 5 minutes
@@ -1046,7 +1136,6 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
     start_idx = (page - 1) * ITEMS_PER_PAGE
     end_idx = start_idx + ITEMS_PER_PAGE
     page_items = results_list[start_idx:end_idx]
-
     type_fa_map = {"artist": "هنرمند", "collection": "آلبوم", "track": "آهنگ", "all": "همه"}
     markup = []
 
