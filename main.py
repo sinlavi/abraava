@@ -8,7 +8,9 @@ import json
 import pickle
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List, Union, Tuple
+from dataclasses import dataclass
+from enum import Enum
 
 import aiohttp
 import aiosqlite
@@ -31,7 +33,6 @@ from utils import tag_mp3, send_error_with_retry, send_message, send_photo, send
     update_status_with_close, \
     reply_message
 import requests
-from typing import Optional, Dict, Any
 
 # ============================================================================
 # HTTP Session & Semaphores
@@ -355,6 +356,162 @@ def _delete_file_sync(path_str):
 
 
 # ============================================================================
+# Album Download Tracker with Enhanced Progress
+# ============================================================================
+@dataclass
+class TrackDownloadStatus:
+    name: str
+    success: bool = False
+    error: str = None
+    order: int = 0
+
+
+class AlbumDownloadTracker:
+    def __init__(self):
+        self.active_downloads = {}  # collection_id -> dict
+
+    def start_download(self, collection_id: int, status_msg, total_tracks: int, collection_name: str):
+        self.active_downloads[collection_id] = {
+            "status_msg": status_msg,
+            "tracks": [],
+            "current_idx": 0,
+            "total": total_tracks,
+            "cancelled": False,
+            "collection_name": collection_name,
+            "start_time": time.time()
+        }
+
+    def add_track(self, collection_id: int, track_name: str, order: int):
+        if collection_id not in self.active_downloads:
+            return
+        self.active_downloads[collection_id]["tracks"].append(
+            TrackDownloadStatus(name=track_name, order=order)
+        )
+
+    def update_track_result(self, collection_id: int, track_name: str, success: bool, error_msg: str = None):
+        if collection_id not in self.active_downloads:
+            return
+        tracker = self.active_downloads[collection_id]
+        for track in tracker["tracks"]:
+            if track.name == track_name:
+                track.success = success
+                track.error = error_msg
+                break
+        tracker["current_idx"] += 1
+
+    def get_progress_text(self, collection_id: int) -> str:
+        if collection_id not in self.active_downloads:
+            return ""
+        t = self.active_downloads[collection_id]
+        completed = sum(1 for tr in t["tracks"] if tr.success)
+        failed = sum(1 for tr in t["tracks"] if not tr.success and tr.error is not None)
+        elapsed = time.time() - t["start_time"]
+
+        # Estimate remaining time
+        if t["current_idx"] > 0:
+            avg_time = elapsed / t["current_idx"]
+            remaining = avg_time * (t["total"] - t["current_idx"])
+            eta = f"⏱️ زمان تقریبی باقیمانده: {int(remaining)} ثانیه"
+        else:
+            eta = ""
+
+        progress_percent = (t["current_idx"] / t["total"]) * 100
+        progress_bar_length = 20
+        filled = int(progress_bar_length * t["current_idx"] / t["total"])
+        bar = "█" * filled + "░" * (progress_bar_length - filled)
+
+        text = f"📀 *دانلود آلبوم: {t['collection_name']}*\n"
+        if t["current_idx"] < t["total"] and t["tracks"] and t["current_idx"] < len(t["tracks"]):
+            current_track = t["tracks"][t["current_idx"]]
+            text += f"🎵 *در حال دانلود:* {current_track.name} ({t['current_idx'] + 1}/{t['total']})\n"
+        text += f"✅ موفق: {completed} \n❌ ناموفق: {failed}\n"
+        if eta:
+            text += f"{eta}\n"
+        return text
+
+    def finish_download(self, collection_id: int):
+        if collection_id in self.active_downloads:
+            del self.active_downloads[collection_id]
+
+    def is_cancelled(self, collection_id: int) -> bool:
+        if collection_id not in self.active_downloads:
+            return True
+        return self.active_downloads[collection_id].get("cancelled", False)
+
+    def cancel_download(self, collection_id: int):
+        if collection_id in self.active_downloads:
+            self.active_downloads[collection_id]["cancelled"] = True
+
+
+album_tracker = AlbumDownloadTracker()
+
+
+async def download_and_send_album(bot: Client, chat_id: int, collection_id: int, user_id: int,
+                                  collection_name: str, tracks: List[dict], status_msg: Message):
+    """Download all tracks of an album and send them batchly with detailed progress"""
+
+    album_tracker.start_download(collection_id, status_msg, len(tracks), collection_name)
+
+    # Add all tracks to tracker first
+    for idx, track in enumerate(tracks, 1):
+        album_tracker.add_track(collection_id, track.get('trackName', 'Unknown'), idx)
+
+    # Add cancel button to status message
+    cancel_markup = [[InlineKeyboardButton(text="❌ لغو دانلود آلبوم", callback_data=f"cancel_album:{collection_id}")]]
+    await update_status_with_close(status_msg, album_tracker.get_progress_text(collection_id),
+                                   reply_markup=cancel_markup)
+
+    success_count = 0
+    failed_tracks = []
+
+    for idx, track in enumerate(tracks, 1):
+        if album_tracker.is_cancelled(collection_id):
+            await update_status_with_close(status_msg,
+                                           f"⏹️ *دانلود آلبوم لغو شد*\n{album_tracker.get_progress_text(collection_id)}")
+            album_tracker.finish_download(collection_id)
+            return
+
+        track_id = track.get('trackId')
+        track_name = track.get('trackName', 'Unknown')
+
+        try:
+            # Download and send the track with batch mode
+            await download_and_send_single_track(bot, chat_id, track_id, user_id, status_msg, is_batch=True)
+            album_tracker.update_track_result(collection_id, track_name, True)
+            success_count += 1
+        except Exception as e:
+            error_msg = str(e)[:100]
+            logger.error(f"Failed to download track {track_name}: {error_msg}")
+            album_tracker.update_track_result(collection_id, track_name, False, error_msg)
+            failed_tracks.append({"name": track_name, "error": error_msg})
+
+        # Update progress message after each track
+        await update_status_with_close(status_msg, album_tracker.get_progress_text(collection_id),
+                                       reply_markup=cancel_markup)
+
+        # Add delay between downloads to avoid rate limiting
+        await asyncio.sleep(2)
+
+    # Send final summary
+    final_text = f"✅ *دانلود آلبوم {collection_name} به پایان رسید*\n\n"
+    final_text += f"📊 جمع کل: {len(tracks)} قطعه\n"
+    final_text += f"✅ موفق: {success_count}\n"
+    if failed_tracks:
+        final_text += f"❌ ناموفق: {len(failed_tracks)}\n\n"
+        final_text += "⚠️ *قطعات ناموفق:*\n"
+        for ft in failed_tracks[:10]:  # Show first 10 failed tracks
+            final_text += f"• {ft['name']}\n"
+        if len(failed_tracks) > 10:
+            final_text += f"... و {len(failed_tracks) - 10} قطعه دیگر\n"
+        # Add retry button for failed tracks
+    else:
+        markup = None
+
+    await edit_or_send(bot, chat_id, status_msg, final_text, markup=markup, owner_id=user_id)
+    album_tracker.finish_download(collection_id)
+
+
+# ============================================================================
 # Quick Mode - Auto select first track result
 # ============================================================================
 async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: str, original_message: Message = None):
@@ -412,8 +569,6 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
         seconds = duration_sec % 60
         caption_parts.append(f"⏱️ مدت زمان: {minutes}:{seconds:02d}")
 
-    # caption_parts.append(f"🔊 حجم فایل: {file_size_mb:.1f} MB{FOOTER}")
-    # caption_parts.append(f"🔗 لینک نمایش: https://3rah.ir/music/ui?id={track_id}")
     caption = "\n".join(caption_parts)
     markup = [[InlineKeyboardButton(
         text="📂 نمایش در مینی اپ",
@@ -519,113 +674,13 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
                                     f"download_retry:{track_id}", status_msg)
 
 
-# ============================================================================
-# Album Batch Download
-# ============================================================================
-class AlbumDownloadTracker:
-    def __init__(self):
-        self.active_downloads = {}  # collection_id -> {"status_msg": msg, "downloaded": [], "failed": [], "current": 0, "total": 0}
-
-    def start_download(self, collection_id: int, status_msg, total_tracks: int):
-        self.active_downloads[collection_id] = {
-            "status_msg": status_msg,
-            "downloaded": [],
-            "failed": [],
-            "current": 0,
-            "total": total_tracks,
-            "cancelled": False
-        }
-
-    def update_progress(self, collection_id: int, track_name: str, success: bool, error_msg: str = None):
-        if collection_id not in self.active_downloads:
-            return
-        tracker = self.active_downloads[collection_id]
-        tracker["current"] += 1
-        if success:
-            tracker["downloaded"].append(track_name)
-        else:
-            tracker["failed"].append({"name": track_name, "error": error_msg})
-
-    def get_progress_text(self, collection_id: int) -> str:
-        if collection_id not in self.active_downloads:
-            return ""
-        t = self.active_downloads[collection_id]
-        return f"📊 دانلود شده: {len(t['downloaded'])}/{t['total']}\n✅ موفق: {len(t['downloaded'])}\n❌ ناموفق: {len(t['failed'])}"
-
-    def finish_download(self, collection_id: int):
-        if collection_id in self.active_downloads:
-            del self.active_downloads[collection_id]
-
-    def is_cancelled(self, collection_id: int) -> bool:
-        if collection_id not in self.active_downloads:
-            return True
-        return self.active_downloads[collection_id].get("cancelled", False)
-
-
-album_tracker = AlbumDownloadTracker()
-
-
-async def download_and_send_album(bot: Client, chat_id: int, collection_id: int, user_id: int,
-                                  collection_name: str, tracks: List[dict], status_msg: Message):
-    """Download all tracks of an album and send them batchly"""
-
-    album_tracker.start_download(collection_id, status_msg, len(tracks))
-
-    success_count = 0
-    failed_tracks = []
-
-    for idx, track in enumerate(tracks, 1):
-        if album_tracker.is_cancelled(collection_id):
-            await update_status_with_close(status_msg,
-                                           f"⏹️ *دانلود آلبوم لغو شد*\n{album_tracker.get_progress_text(collection_id)}")
-            album_tracker.finish_download(collection_id)
-            return
-
-        track_id = track.get('trackId')
-        track_name = track.get('trackName', 'Unknown')
-
-        # Update progress message
-        progress_text = f"🎵 *در حال دانلود آلبوم: {collection_name}*\n"
-        progress_text += f"📀 قطعه {idx} از {len(tracks)}: {track_name}\n"
-        progress_text += album_tracker.get_progress_text(collection_id)
-        await update_status_with_close(status_msg, progress_text)
-
-        try:
-            # Download and send the track
-            await download_and_send_single_track(bot, chat_id, track_id, user_id, status_msg, is_batch=True)
-            album_tracker.update_progress(collection_id, track_name, True)
-            success_count += 1
-
-            # Add delay between downloads to avoid rate limiting
-            await asyncio.sleep(2)
-
-        except Exception as e:
-            error_msg = str(e)[:100]
-            logger.error(f"Failed to download track {track_name}: {error_msg}")
-            album_tracker.update_progress(collection_id, track_name, False, error_msg)
-            failed_tracks.append({"name": track_name, "error": error_msg})
-
-    # Send final summary
-    final_text = f"✅ *دانلود آلبوم {collection_name} به پایان رسید*\n\n"
-    final_text += f"📊 جمع کل: {len(tracks)} قطعه\n"
-    final_text += f"✅ موفق: {success_count}\n"
-    if failed_tracks:
-        final_text += f"❌ ناموفق: {len(failed_tracks)}\n\n"
-        final_text += "⚠️ *قطعات ناموفق:*\n"
-        for ft in failed_tracks[:10]:  # Show first 10 failed tracks
-            final_text += f"• {ft['name']}\n"
-        if len(failed_tracks) > 10:
-            final_text += f"... و {len(failed_tracks) - 10} قطعه دیگر\n"
-
-    await edit_or_send(bot, chat_id, status_msg, final_text, markup=markup, owner_id=user_id)
-    album_tracker.finish_download(collection_id)
-
-
 async def download_and_send_single_track(bot: Client, chat_id: int, track_id: int, user_id: int,
                                          status_msg: Message = None, is_batch: bool = False):
     """Download and send a single track, with batch mode support"""
-
-    track_data = await get_track(track_id, status_msg)
+    if is_batch:
+        track_data = await get_track(track_id)
+    else:
+        track_data = await get_track(track_id, status_msg)
     if not track_data or not track_data.get("results"):
         raise Exception("اطلاعات آهنگ یافت نشد")
 
@@ -1477,6 +1532,13 @@ async def on_callback(callback_query: CallbackQuery):
             pass
         return
 
+    # Handle album download cancellation
+    if data.startswith("cancel_album:"):
+        collection_id = int(data.split(":")[1])
+        album_tracker.cancel_download(collection_id)
+        await bot.answer_callback_query(callback_query.id, "⏹️ لغو دانلود آلبوم در حال انجام...", show_alert=True)
+        return
+
     try:
         parts = data.split(":")
         if data.startswith("page:search:"):
@@ -1561,11 +1623,6 @@ async def on_callback(callback_query: CallbackQuery):
 
 
 # ============================================================================
-# Show Functions (using relational DB)
-# ============================================================================
-
-
-# ============================================================================
 # Main
 # ============================================================================
 if __name__ == "__main__":
@@ -1573,5 +1630,5 @@ if __name__ == "__main__":
     logger.info(f"Rate limit: {rate_limiter.max_requests} req/min per user")
     logger.info(f"Global rate limit: {rate_limiter.max_global} req/min")
     logger.info(f"File cache directory: {CACHE_DIR.absolute()}")
-    logger.info(f"Album batch download feature enabled")
+    logger.info(f"Album batch download feature enabled with progress tracking")
     bot.run()
