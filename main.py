@@ -33,8 +33,6 @@ from utils import tag_mp3, send_error_with_retry, send_message, send_photo, send
 import requests
 from typing import Optional, Dict, Any
 
-from typing import Optional, Dict, Any
-
 # ============================================================================
 # HTTP Session & Semaphores
 # ============================================================================
@@ -381,6 +379,144 @@ async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: s
     except Exception as e:
         await send_error_with_retry(bot, chat_id, f"خطا در جستجو: {str(e)[:100]}",
                                     f"quick_retry:{term}", status_msg)
+
+
+async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user_id: int = None, caption=""):
+    status_msg = await send_message(bot, chat_id, text=f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*")
+
+    track_data = await get_track(track_id, status_msg)
+    if not track_data or not track_data.get("results"):
+        await send_error_with_retry(bot, chat_id, f"خطا در دریافت اطلاعات آهنگ.",
+                                    f"download_retry:{track_id}", status_msg)
+        return
+
+    track = track_data["results"][0]
+    release_year = track.get("releaseDate", "").split("-")[0] if track.get("releaseDate") else ""
+
+    caption_parts = [
+        f"🎵 آهنگ: {track.get('trackName', 'Unknown Title')}",
+        f"🎤 هنرمند: {track.get('artistName', 'Unknown Artist')}",
+    ]
+
+    if track.get('collectionName'):
+        caption_parts.append(f"📀 آلبوم: {track.get('collectionName')}")
+    if release_year:
+        caption_parts.append(f"📅 انتشار: {release_year}")
+    if track.get('primaryGenreName'):
+        caption_parts.append(f"🎸 سبک: {track.get('primaryGenreName')}")
+    if track.get('trackExplicitness') == 'explicit':
+        caption_parts.append(f"🔞 Explicit")
+    if track.get('trackTimeMillis'):
+        duration_sec = track['trackTimeMillis'] // 1000
+        minutes = duration_sec // 60
+        seconds = duration_sec % 60
+        caption_parts.append(f"⏱️ مدت زمان: {minutes}:{seconds:02d}")
+
+    # caption_parts.append(f"🔊 حجم فایل: {file_size_mb:.1f} MB{FOOTER}")
+    # caption_parts.append(f"🔗 لینک نمایش: https://3rah.ir/music/ui?id={track_id}")
+    caption = "\n".join(caption_parts)
+    markup = [[InlineKeyboardButton(
+        text="📂 نمایش در مینی اپ",
+        web_app="https://player.abraava.ir?id=" + str(track_id)
+    )], [InlineKeyboardButton(
+        text="📋 کپی پیوند",
+        copy_text="https://player.abraava.ir?id=" + str(track_id)
+    )]
+    ]
+    audio_cache = None
+    audio_url = None
+    if track_id:
+        data = await get_mirror('track', str(track_id), 'audioUrl')
+        if len(data.get('mirrors', [])) > 0:
+            for mirror in data["mirrors"]:
+                if mirror.get('url_type') == 'audioUrl':
+                    audio_cache = mirror["mirror_url"].split('<token>/')[1]
+        if audio_cache:
+            audio_url = audio_cache
+    if audio_url:
+        try:
+            await update_status_with_close(status_msg, f"📤 *در حال ارسال فایل از حافظه کش...*")
+            await send_audio(bot, chat_id, audio=audio_url, caption=caption, reply_markup=markup)
+            await status_msg.delete()
+            return
+        except Exception as e:
+            logger.error(f"Forward failed: {e}, will re-download")
+
+    if OFFLINE_MODE:
+        await send_error_with_retry(bot, chat_id, f"آهنگ در دیتابیس محلی یافت نشد و بات در حالت آفلاین است.",
+                                    f"download_retry:{track_id}", status_msg)
+        return
+
+    t_name = track.get("trackName", "Unknown Title")
+    ye = track.get("releaseDate", "").split("-")[0]
+    a_name = track.get("artistName", "Unknown Artist")
+    collection_name = track.get("collectionName", "")
+    cover_url = get_high_res_artwork(track.get("artworkUrl100", track.get("artworkUrl")), size=600)
+
+    query = f'"{t_name}" by {a_name} collection {collection_name} {ye}'
+    await update_status_with_close(status_msg, f"🔍 *جستجوی سورس باکیفیت آهنگ در یوتیوب موزیک...*")
+
+    try:
+        video_id = await search_youtube_track(query)
+        if not video_id:
+            await send_error_with_retry(bot, chat_id, f"نتوانستیم لینک یوتیوب موزیک را برای این آهنگ پیدا کنیم.",
+                                        f"download_retry:{track_id}", status_msg)
+            return
+        video_url = f"https://music.youtube.com/watch?v={video_id}"
+
+        await update_status_with_close(status_msg, f"⏳ *در صف دانلود و آماده‌سازی...*")
+
+        mp3_path_str = None
+        try:
+            async with DOWNLOAD_SEMAPHORE:
+                await update_status_with_close(status_msg,
+                                               f"⏳ *در حال دانلود و پردازش (روش‌های پیشرفته ضدتحریم)...*")
+                mp3_path_str = await asyncio.get_event_loop().run_in_executor(
+                    None, download_audio, video_url
+                )
+
+                if not mp3_path_str:
+                    await send_error_with_retry(bot, chat_id, f"دانلود با شکست مواجه شد — همه ۸ روش ناموفق بودند.",
+                                                f"download_retry:{track_id}", status_msg)
+                    return
+
+                file_size_mb = await asyncio.to_thread(_get_file_size_sync, mp3_path_str)
+                if file_size_mb == 0:
+                    await send_error_with_retry(bot, chat_id, f"خطای داخلی: فایل دانلود شده یافت نشد.",
+                                                f"download_retry:{track_id}", status_msg)
+                    return
+
+                cover_bytes = None
+                if cover_url and HTTP_SESSION:
+                    try:
+                        async with HTTP_SESSION.get(cover_url) as resp:
+                            if resp.status == 200:
+                                cover_bytes = await resp.read()
+                    except Exception as e:
+                        logger.error(f"Failed to download cover: {e}")
+
+                await asyncio.get_event_loop().run_in_executor(
+                    None, tag_mp3, mp3_path_str, track, cover_bytes
+                )
+                await update_status_with_close(status_msg,
+                                               f"☁️ *در حال آپلود در سرورهای ابری {BOT_NAME}...*")
+                await send_audio_with_retry(
+                    bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, cache_id=str(track['trackId'])
+                )
+
+                await status_msg.delete()
+
+        except Exception as e:
+            logger.exception("Download error")
+            await send_error_with_retry(bot, chat_id, f"خطا در عملیات: {str(e)[:100]}",
+                                        f"download_retry:{track_id}", status_msg)
+        finally:
+            if mp3_path_str:
+                await asyncio.to_thread(_delete_file_sync, mp3_path_str)
+
+    except Exception as e:
+        await send_error_with_retry(bot, chat_id, f"خطا در جستجوی یوتیوب: {str(e)[:100]}",
+                                    f"download_retry:{track_id}", status_msg)
 
 
 # ============================================================================
