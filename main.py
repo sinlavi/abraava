@@ -367,8 +367,8 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
             if len(data.get("mirrors", [])) > 0:
                 artwork_cache = data["mirrors"][0]
                 for mirror in data["mirrors"]:
-                    if 'mirror_url' in mirror:
-                        artwork_cache = mirror["mirror_url"].split('<token>/')[1]
+                    if 'mirrorUrl' in mirror:
+                        artwork_cache = mirror["mirrorUrl"].split('<token>/')[1]
             if artwork_cache:
                 artwork_url = artwork_cache
         try:
@@ -663,8 +663,8 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
         data = await get_mirror('track', str(track_id), 'audioUrl')
         if len(data.get('mirrors', [])) > 0:
             for mirror in data["mirrors"]:
-                if mirror.get('url_type') == 'audioUrl':
-                    audio_cache = mirror["mirror_url"].split('<token>/')[1]
+                if mirror.get('urlType') == 'audioUrl':
+                    audio_cache = mirror["mirrorUrl"].split('<token>/')[1]
         if audio_cache:
             audio_url = audio_cache
     if audio_url:
@@ -800,8 +800,8 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
         data = await get_mirror('track', str(track_id), 'audioUrl')
         if len(data.get('mirrors', [])) > 0:
             for mirror in data["mirrors"]:
-                if mirror.get('url_type') == 'audioUrl':
-                    audio_cache = mirror["mirror_url"].split('<token>/')[1]
+                if mirror.get('urlType') == 'audioUrl':
+                    audio_cache = mirror["mirrorUrl"].split('<token>/')[1]
 
     if audio_cache:
         try:
@@ -942,8 +942,8 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
             if len(data.get("mirrors", [])) > 0:
                 preview_cache = data["mirrors"][0]
                 for mirror in data["mirrors"]:
-                    if 'mirror_url' in mirror:
-                        preview_cache = mirror["mirror_url"].split('<token>/')[1]
+                    if 'mirrorUrl' in mirror:
+                        preview_cache = mirror["mirrorUrl"].split('<token>/')[1]
             if preview_cache:
                 preview_url = preview_cache
 

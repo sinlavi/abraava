@@ -8,7 +8,6 @@ from pathlib import Path
 from config import ITUNES_BASE_URL, HttpClient, OFFLINE_MODE, logger, PROXY
 
 
-
 class iTunesCache:
     """Cache manager for iTunes API responses"""
 
@@ -423,10 +422,10 @@ async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url
     Sets a mirror URL for a specific entity
     """
     payload = {
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "url_type": url_type,
-        "mirror_url": mirror_url
+        "entityType": entity_type,
+        "entityId": entity_id,
+        "urlType": url_type,
+        "mirrorUrl": mirror_url
     }
     # Use POST method with payload
     return await fetch_itunes("mirror/set", method="POST", payload=payload)
@@ -438,9 +437,9 @@ async def get_mirror(entity_type: str, entity_id: str, url_type: str) -> Optiona
     Retrieves a mirror URL for a specific entity
     """
     params = {
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "url_type": url_type
+        "entityType": entity_type,
+        "entityId": entity_id,
+        "urlType": url_type
     }
     return await fetch_itunes("mirror/get", params=params, method="GET")
 
