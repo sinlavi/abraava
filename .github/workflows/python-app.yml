@@ -2,8 +2,9 @@ name: Test Deploy
 
 on:
   workflow_dispatch:
+  push:  # Auto-start on push
   schedule:
-    - cron: "0 */3 * * *"  # Run every 2 hours
+    - cron: "0 */3 * * *"  # Run every 3 hours
 
 concurrency:
   group: test-deploy
@@ -114,8 +115,8 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # ========== Run bot with periodic DB sync ==========
-      - name: Run bot with periodic DB sync
+      # ========== Run bot ==========
+      - name: Run bot
         id: bot
         continue-on-error: true
         env:
@@ -123,137 +124,4 @@ jobs:
           OFFLINE_MODE: ${{ secrets.OFFLINE_MODE }}
           DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
           INFO_CHANNEL_ID: ${{ secrets.INFO_CHANNEL_ID }}
-          # How often (in seconds) to pull/push .db files while main.py runs
-          SYNC_INTERVAL_SECONDS: 300   # 5 minutes
-        run: |
-          cat > run_with_sync.py << 'EOF'
-          import os
-          import subprocess
-          import threading
-          import time
-          import sys
-          from pathlib import Path
-
-          def sync_db():
-              """Pull latest .db files, then push local changes."""
-              print("[Sync] Starting database sync...")
-              # Pull latest changes (only .db files)
-              pull_cmd = ["git", "pull", "--no-rebase", "origin", os.environ.get("GITHUB_REF_NAME", "main")]
-              result = subprocess.run(pull_cmd, capture_output=True, text=True)
-              if result.returncode != 0:
-                  print(f"[Sync] Git pull failed: {result.stderr}")
-                  return
-
-              # Stage all .db files
-              db_files = list(Path(".").glob("**/*.db"))
-              if not db_files:
-                  print("[Sync] No .db files found.")
-                  return
-
-              for db in db_files:
-                  subprocess.run(["git", "add", "-f", str(db)], capture_output=True)
-
-              # Commit if there are changes
-              status = subprocess.run(["git", "diff", "--cached", "--quiet"])
-              if status.returncode != 0:
-                  commit_msg = f"Auto-sync database {time.strftime('%Y-%m-%d %H:%M:%S UTC')}"
-                  subprocess.run(["git", "commit", "-m", commit_msg], capture_output=True)
-                  # Push with retry
-                  for attempt in range(3):
-                      push = subprocess.run(["git", "push", "origin", os.environ.get("GITHUB_REF_NAME", "main")],
-                                            capture_output=True)
-                      if push.returncode == 0:
-                          print("[Sync] Push successful.")
-                          break
-                      print(f"[Sync] Push attempt {attempt+1} failed, retrying...")
-                      time.sleep(5)
-                  else:
-                      print("[Sync] Push failed after 3 attempts.")
-              else:
-                  print("[Sync] No changes to commit.")
-
-          def periodic_sync(interval):
-              """Run sync_db every `interval` seconds."""
-              while not stop_event.is_set():
-                  time.sleep(interval)
-                  if stop_event.is_set():
-                      break
-                  sync_db()
-
-          if __name__ == "__main__":
-              interval = int(os.environ.get("SYNC_INTERVAL_SECONDS", 300))
-              stop_event = threading.Event()
-
-              # Start periodic sync thread
-              sync_thread = threading.Thread(target=periodic_sync, args=(interval,), daemon=True)
-              sync_thread.start()
-
-              # Run main.py
-              try:
-                  subprocess.run([sys.executable, "main.py"], check=True)
-              finally:
-                  # Final sync after bot exits
-                  stop_event.set()
-                  sync_thread.join(timeout=10)
-                  print("[Wrapper] Bot finished, performing final sync...")
-                  sync_db()
-          EOF
-
-          python run_with_sync.py
-
-      # ========== Fallback commit & push (if periodic sync missed something) ==========
-      - name: Fallback commit and push database changes
-        if: always()  # Run even if bot failed or was cancelled
-        run: |
-          set -e
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config http.postBuffer 524288000
-          git config core.compression 0
-
-          git fetch origin
-          git pull --no-rebase origin "${GITHUB_REF_NAME}" || true
-
-          DB_FILES=$(find . -name "*.db" -type f)
-          if [[ -z "$DB_FILES" ]]; then
-            echo "No .db files found to commit"
-            exit 0
-          fi
-
-          echo "$DB_FILES" | while read -r file; do
-            git add -f "$file"
-          done
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-
-          git commit -m "Fallback auto-update $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-
-          for attempt in $(seq 1 3); do
-            if git push origin "${GITHUB_REF_NAME}"; then
-              echo "Successfully pushed fallback commit"
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "Fallback push failed"
-          exit 1
-        shell: bash
-
-      # ========== Emergency force push (if fallback also fails) ==========
-      - name: Emergency force push
-        if: failure() && steps.bot.outcome == 'failure'
-        run: |
-          echo "⚠️ Regular push failed, attempting emergency force push..."
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          find . -name "*.db" -type f -exec git add -f {} \;
-          if ! git diff --cached --quiet; then
-            git commit -m "Emergency auto-update $(date -u '+%Y-%m-%d %H:%M:%S UTC')" || true
-          fi
-          git push --force-with-lease origin "${GITHUB_REF_NAME}" || \
-          git push --force origin "${GITHUB_REF_NAME}"
-          echo "✅ Emergency force push completed"
-        shell: bash
+        run: python main.py
