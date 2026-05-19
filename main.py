@@ -1535,7 +1535,7 @@ if __name__ == "__main__":
         except Exception as e:
             logger.exception(f"Bot crashed: {e}")
             logger.info("Restarting bot in 5 seconds...")
-            time.sleep(5)
+            time.sleep(60)
 
         finally:
             logger.info("Bot shutdown complete")
