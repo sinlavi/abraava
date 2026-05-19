@@ -364,18 +364,16 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
         artwork_cache = None
         if cache_id:
             data = await get_mirror('collection', cache_id, 'artworkUrl')
-            if len(data.get("mirrors", [])) > 0:
-                artwork_cache = data["mirrors"][0]
-                for mirror in data["mirrors"]:
-                    if 'mirrorUrl' in mirror:
-                        artwork_cache = mirror["mirrorUrl"].split('<token>/')[1]
-            if artwork_cache:
+            logger.info(data)
+            if data.get("mirrors", {}).get('artworkUrl', False):
+                artwork_cache = data["mirrors"]['artworkUrl']['url'].split('<token>/')[1]
                 artwork_url = artwork_cache
         try:
             msg = await send_photo(bot, chat_id, photo=artwork_url, caption=text, reply_markup=markup)
             if cache_id and not artwork_cache and msg:
-                await set_mirror('collection', cache_id, 'artworkUrl',
-                                 'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
+                data = await set_mirror('collection', cache_id, 'artworkUrl',
+                                        'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
+                logger.info(data)
         except Exception as e:
             msg = await send_message(bot, chat_id, text=text, reply_markup=markup)
     else:
@@ -661,11 +659,8 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
     audio_url = None
     if track_id:
         data = await get_mirror('track', str(track_id), 'audioUrl')
-        if len(data.get('mirrors', [])) > 0:
-            for mirror in data["mirrors"]:
-                if mirror.get('urlType') == 'audioUrl':
-                    audio_cache = mirror["mirrorUrl"].split('<token>/')[1]
-        if audio_cache:
+        if data.get("mirrors", {}).get('audioUrl', False):
+            audio_cache = data["mirrors"]['audioUrl'].split('<token>/')[1]
             audio_url = audio_cache
     if audio_url:
         try:
@@ -939,12 +934,8 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
         preview_cache = None
         if cache_id:
             data = await get_mirror('track', cache_id, 'previewUrl')
-            if len(data.get("mirrors", [])) > 0:
-                preview_cache = data["mirrors"][0]
-                for mirror in data["mirrors"]:
-                    if 'mirrorUrl' in mirror:
-                        preview_cache = mirror["mirrorUrl"].split('<token>/')[1]
-            if preview_cache:
+            if data.get("mirrors", {}).get('previewUrl', False):
+                preview_cache = data["mirrors"]['previewUrl']['url'].split('<token>/')[1]
                 preview_url = preview_cache
 
         msg = await send_voice(bot, chat_id, voice=preview_url,
