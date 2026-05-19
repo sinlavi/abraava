@@ -1,6 +1,8 @@
+import hashlib
 import logging
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 from balethon import Client
 from balethon.objects import InlineKeyboard, Message, InlineKeyboardButton
@@ -180,3 +182,51 @@ async def reply_message(message: Message, text: str, reply_markup=None):
     reply_markup.append([create_close_button()])
     message = await message.reply(text=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*reply_markup))
     return message
+
+
+def format_duration(milliseconds: int) -> str:
+    if not milliseconds:
+        return "نامشخص"
+    minutes = milliseconds // 60000
+    seconds = (milliseconds % 60000) // 1000
+    return f"{minutes}:{seconds:02d}"
+
+
+def get_high_res_artwork(url: str, size: int = 600) -> str:
+    if not url:
+        return ""
+    return url.replace("100x100bb", f"{size}x{size}bb")
+
+
+def create_pagination_row(callback_prefix: str, current_page: int, total_pages: int) -> List[InlineKeyboardButton]:
+    row = []
+    if current_page > 1:
+        row.append(InlineKeyboardButton(text="▶️ قبلی", callback_data=f"{callback_prefix}:{current_page - 1}"))
+    row.append(InlineKeyboardButton(text=f"صفحه {current_page} از {total_pages}", callback_data="ignore"))
+    if current_page < total_pages:
+        row.append(InlineKeyboardButton(text="بعدی ◀️", callback_data=f"{callback_prefix}:{current_page + 1}"))
+    return row
+
+
+def generate_search_hash(type_: str, term: str) -> str:
+    return hashlib.md5(f"{type_}:{term}:{time.time()}".encode()).hexdigest()[:10]  # include time to avoid collisions
+
+
+def get_artist_image(artist_name):
+    # Search for the artist
+    search_results = ytmusic.YTMusic.search(artist_name, filter="artists")
+
+    if search_results:
+        # Get first artist result
+        artist_id = search_results[0]['browseId']
+
+        # Get artist details
+        artist_info = ytmusic.YTMusic.get_artist(artist_id)
+
+        # Get the thumbnails
+        if 'thumbnails' in artist_info:
+            thumbnails = artist_info['thumbnails']
+            highest_quality = thumbnails[-1]['url']
+            return highest_quality
+
+    return None
