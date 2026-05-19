@@ -1520,14 +1520,22 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 # Keep the existing main section
+
 if __name__ == "__main__":
     logger.info(f'"{BOT_NAME}" is starting...')
 
-    try:
-        bot.run()
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-    except Exception as e:
-        logger.error(f"Bot crashed: {e}")
-    finally:
-        logger.info("Bot shutdown complete")
+    while True:
+        try:
+            bot.run()
+
+        except KeyboardInterrupt:
+            logger.info("Bot stopped by user")
+            break  # exit retry loop
+
+        except Exception as e:
+            logger.exception(f"Bot crashed: {e}")
+            logger.info("Restarting bot in 5 seconds...")
+            time.sleep(5)
+
+        finally:
+            logger.info("Bot shutdown complete")
