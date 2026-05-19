@@ -89,15 +89,14 @@ def get_artist_image(artist_name):
         return None
     if search_results:
         # Get first artist result
-        artist_id = search_results[0]['browseId']
+        artist_id = search_results[0]['channelId']
 
         # Get artist details
         artist_info = YT.get_artist(artist_id)
 
         # Get the thumbnails
         if 'thumbnails' in artist_info:
-            thumbnails = artist_info['thumbnails']
-            highest_quality = thumbnails[-1]['url']
+            highest_quality = artist_info['thumbnails'][0]['url']
             return highest_quality
 
     return None

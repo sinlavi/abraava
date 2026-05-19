@@ -296,14 +296,18 @@ if OFFLINE_MODE:
 
 
 async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
-                       markup=None, artwork_url: str = None, cache_id=None, owner_id=None):
+                       markup=None, artwork_url: str = None, cache_id=None, owner_id=None, artist_id=None, ):
     """Send a new message or edit an existing one, and store message owner for groups."""
     if markup is None:
         markup = []
     if artwork_url:
         artwork_cache = None
+        entity_type = "collection"
+        if artist_id:
+            entity_type = "artist"
+            cache_id = artist_id
         if cache_id:
-            data = await get_mirror('collection', cache_id, 'artworkUrl')
+            data = await get_mirror(entity_type, cache_id, 'artworkUrl')
             logger.info(data)
             if data.get("mirrors", {}).get('artworkUrl', False):
                 artwork_cache = data["mirrors"]['artworkUrl']['url'].split('<token>/')[1]
@@ -311,7 +315,7 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
         try:
             msg = await send_photo(bot, chat_id, photo=artwork_url, caption=text, reply_markup=markup)
             if cache_id and not artwork_cache and msg:
-                data = await set_mirror('collection', cache_id, 'artworkUrl',
+                data = await set_mirror(entity_type, cache_id, 'artworkUrl',
                                         'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
                 logger.info(data)
         except Exception as e:
@@ -1105,7 +1109,7 @@ async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
                 markup.append(pagination_row)
         markup.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
-                           owner_id=owner_id, artwork_url=artist_image)
+                           owner_id=owner_id, artwork_url=artist_image, artist_id=artist_id)
         await status_msg.delete()
 
     except Exception as e:
