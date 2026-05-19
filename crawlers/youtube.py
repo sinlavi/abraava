@@ -91,7 +91,7 @@ def get_artist_image(artist_name):
         artist_id = search_results[0]['browseId']
 
         # Get artist details
-        artist_info = ytmusic.YTMusic.get_artist(artist_id)
+        artist_info = YT.get_artist(artist_id)
 
         # Get the thumbnails
         if 'thumbnails' in artist_info:
