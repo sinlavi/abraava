@@ -89,7 +89,7 @@ def get_artist_image(artist_name):
         return None
     if search_results:
         # Get first artist result
-        artist_id = search_results[0]['channelId']
+        artist_id = search_results[0]['browseId']
 
         # Get artist details
         artist_info = YT.get_artist(artist_id)
