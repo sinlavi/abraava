@@ -86,6 +86,7 @@ def get_artist_image(artist_name):
         search_results = YT.search(artist_name, filter="artists", limit=1)
     except Exception as e:
         logger.error(f"YTMusic search error: {e}")
+        return None
     if search_results:
         # Get first artist result
         artist_id = search_results[0]['browseId']
