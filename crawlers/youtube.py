@@ -78,6 +78,30 @@ def _sync_search_youtube(query: str) -> Optional[str]:
     return None
 
 
+def get_artist_image(artist_name):
+    global YT
+    if YT is None:
+        YT = YTMusic()
+    try:
+        search_results = YT.search(artist_name, filter="artists", limit=1)
+    except Exception as e:
+        logger.error(f"YTMusic search error: {e}")
+    if search_results:
+        # Get first artist result
+        artist_id = search_results[0]['browseId']
+
+        # Get artist details
+        artist_info = ytmusic.YTMusic.get_artist(artist_id)
+
+        # Get the thumbnails
+        if 'thumbnails' in artist_info:
+            thumbnails = artist_info['thumbnails']
+            highest_quality = thumbnails[-1]['url']
+            return highest_quality
+
+    return None
+
+
 async def search_youtube_track(query: str) -> Optional[str]:
     if OFFLINE_MODE:
         logger.info("Offline mode: skipping YouTube search")

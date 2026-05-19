@@ -24,10 +24,10 @@ from config import BOT_NAME, FOOTER, OFFLINE_MODE, ITEMS_PER_PAGE, BOT_TOKEN, DB
 from crawlers.itunes import search_itunes, lookup_itunes, fetch_itunes, set_mirror, get_mirror
 from crawlers.utils import get_or_crawl_collection, \
     get_or_crawl_artist, get_track, get_or_crawl_collection_tracks, get_or_crawl_artist_collections
-from crawlers.youtube import download_audio, search_youtube_track
+from crawlers.youtube import download_audio, search_youtube_track, get_artist_image
 from utils import tag_mp3, send_error_with_retry, send_message, send_photo, send_audio, send_voice, \
     update_status_with_close, \
-    reply_message, create_pagination_row, get_high_res_artwork, format_duration, generate_search_hash, get_artist_image
+    reply_message, create_pagination_row, get_high_res_artwork, format_duration, generate_search_hash
 import requests
 
 # ============================================================================
@@ -1105,7 +1105,7 @@ async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
                 markup.append(pagination_row)
         markup.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
-                           owner_id=owner_id,artwork_url=artist_image)
+                           owner_id=owner_id, artwork_url=artist_image)
         await status_msg.delete()
 
     except Exception as e:

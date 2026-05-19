@@ -210,23 +210,3 @@ def create_pagination_row(callback_prefix: str, current_page: int, total_pages: 
 
 def generate_search_hash(type_: str, term: str) -> str:
     return hashlib.md5(f"{type_}:{term}:{time.time()}".encode()).hexdigest()[:10]  # include time to avoid collisions
-
-
-def get_artist_image(artist_name):
-    # Search for the artist
-    search_results = ytmusic.YTMusic.search(artist_name, filter="artists")
-
-    if search_results:
-        # Get first artist result
-        artist_id = search_results[0]['browseId']
-
-        # Get artist details
-        artist_info = ytmusic.YTMusic.get_artist(artist_id)
-
-        # Get the thumbnails
-        if 'thumbnails' in artist_info:
-            thumbnails = artist_info['thumbnails']
-            highest_quality = thumbnails[-1]['url']
-            return highest_quality
-
-    return None
