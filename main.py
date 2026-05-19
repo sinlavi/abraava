@@ -1072,7 +1072,7 @@ async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
                                         f"artist_retry:{artist_id}", status_msg)
             return
         artist_data = artist_data['results'][0]
-        artist_image = await get_artist_image(artist_data.get('artistName'))
+        artist_image = get_artist_image(artist_data.get('artistName'))
 
         text = f"*🎤 هنرمند:* {artist_data.get('artistName', 'نامشخص')}\n"
         text += f"*🎭 سبک:* {artist_data.get('primaryGenreName', 'نامشخص')}\n"
