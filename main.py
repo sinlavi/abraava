@@ -24,11 +24,6 @@ from crawlers.itunes import search_itunes, lookup_itunes, fetch_itunes, set_mirr
 from crawlers.utils import get_or_crawl_collection, \
     get_or_crawl_artist, get_track, get_or_crawl_collection_tracks, get_or_crawl_artist_collections
 from crawlers.youtube import download_audio, search_youtube_track
-from db.utils import insert_artist, get_search_cache, insert_search_cache, insert_collection, insert_track, init_db, \
-    set_cache, get_cache, \
-    get_collection_tracks, get_users_db, insert_user, local_search, get_artist_collections, get_all_users, \
-    get_track_db, \
-    get_collection_db, get_artist_db
 from utils import tag_mp3, send_error_with_retry, send_message, send_photo, send_audio, send_voice, \
     update_status_with_close, \
     reply_message
@@ -424,6 +419,26 @@ class AlbumDownloadTracker:
     def __init__(self):
         # Key: (user_id, collection_id) -> data
         self.active_downloads = {}
+        self.download_locks = {}  # Per-album locks
+
+    async def acquire_lock(self, user_id: int, collection_id: int) -> bool:
+        """Acquire lock for a specific album download"""
+        key = (user_id, collection_id)
+        if key not in self.download_locks:
+            self.download_locks[key] = asyncio.Lock()
+
+        # Try to acquire with timeout
+        try:
+            await asyncio.wait_for(self.download_locks[key].acquire(), timeout=5.0)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    def release_lock(self, user_id: int, collection_id: int):
+        """Release lock for a specific album download"""
+        key = (user_id, collection_id)
+        if key in self.download_locks and self.download_locks[key].locked():
+            self.download_locks[key].release()
 
     def start_download(self, user_id: int, collection_id: int, status_msg, total_tracks: int, collection_name: str):
         key = (user_id, collection_id)
@@ -434,7 +449,8 @@ class AlbumDownloadTracker:
             "total": total_tracks,
             "cancelled": False,
             "collection_name": collection_name,
-            "start_time": time.time()
+            "start_time": time.time(),
+            "lock_acquired": True
         }
 
     def add_track(self, user_id: int, collection_id: int, track_name: str, order: int):
@@ -493,6 +509,7 @@ class AlbumDownloadTracker:
         key = (user_id, collection_id)
         if key in self.active_downloads:
             del self.active_downloads[key]
+        self.release_lock(user_id, collection_id)
 
     def is_cancelled(self, user_id: int, collection_id: int) -> bool:
         key = (user_id, collection_id)
@@ -512,6 +529,14 @@ album_tracker = AlbumDownloadTracker()
 async def download_and_send_album(bot: Client, chat_id: int, collection_id: int, user_id: int,
                                   collection_name: str, tracks: List[dict], status_msg: Message):
     """Download all tracks of an album and send them batchly with detailed progress"""
+
+    # Acquire lock for this specific album download
+    if not await album_tracker.acquire_lock(user_id, collection_id):
+        await update_status_with_close(status_msg,
+                                       "❌ *در حال حاضر دانلود این آلبوم در حال انجام است*\nلطفاً چند لحظه صبر کنید.")
+        album_tracker.finish_download(user_id, collection_id)
+        release_user_download_lock(user_id)
+        return
 
     album_tracker.start_download(user_id, collection_id, status_msg, len(tracks), collection_name)
 
@@ -578,7 +603,7 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
         final_text += f"❌ ناموفق: {len(failed_tracks)}\n\n"
         final_text += "⚠️ *قطعات ناموفق:*\n"
         for ft in failed_tracks[:10]:
-            final_text += f"{ft['name']}\n"
+            final_text += f"- {ft['name']}\n"
         if len(failed_tracks) > 10:
             final_text += f"... و {len(failed_tracks) - 10} قطعه دیگر\n"
     if stopped_by_rate_limit:
@@ -660,7 +685,7 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
     if track_id:
         data = await get_mirror('track', str(track_id), 'audioUrl')
         if data.get("mirrors", {}).get('audioUrl', False):
-            audio_cache = data["mirrors"]['audioUrl'].split('<token>/')[1]
+            audio_cache = data["mirrors"]['audioUrl']['url'].split('<token>/')[1]
             audio_url = audio_cache
     if audio_url:
         try:
@@ -730,7 +755,7 @@ async def send_cached_or_download(bot: Client, chat_id: int, track_id: int, user
                 await update_status_with_close(status_msg,
                                                f"☁️ *در حال آپلود در سرورهای ابری {BOT_NAME}...*")
                 await send_audio_with_retry(
-                    bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, cache_id=str(track['trackId'])
+                    bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, cache_id=str(track.get('trackId'))
                 )
 
                 await status_msg.delete()
@@ -793,10 +818,9 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     audio_cache = None
     if track_id:
         data = await get_mirror('track', str(track_id), 'audioUrl')
-        if len(data.get('mirrors', [])) > 0:
-            for mirror in data["mirrors"]:
-                if mirror.get('urlType') == 'audioUrl':
-                    audio_cache = mirror["mirrorUrl"].split('<token>/')[1]
+        logger.info(data)
+        if data.get("mirrors", {}).get('audioUrl', False):
+            audio_cache = data["mirrors"]['audioUrl']['url'].split('<token>/')[1]
 
     if audio_cache:
         try:
@@ -955,96 +979,6 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
 # Channel Membership Check
 # ============================================================================
 
-broadcast_queue = asyncio.Queue()
-
-
-async def handle_channel_post(message):
-    content = message.content
-    should_broadcast = "#تبلیغ" in content or "#اطلاع_رسانی" in content
-
-    if should_broadcast:
-        logger.info(f"Broadcasting message from channel: {content[:100]}...")
-        users = await get_all_users()
-        if users:
-            await broadcast_queue.put({"users": users, "message": message})
-            logger.info(f"Broadcast queued for {len(users)} users")
-
-
-async def broadcast_worker():
-    logger.info("Broadcast worker started")
-
-    while True:
-        try:
-            data = await broadcast_queue.get()
-
-            users = data["users"]
-            from_chat = data["from_chat"]
-            message_id = data["message_id"]
-
-            success = 0
-            failed = 0
-
-            for user_id in users:
-                try:
-                    await bot.forward_message(
-                        chat_id=user_id,
-                        from_chat_id=from_chat,
-                        message_id=message_id
-                    )
-
-                    success += 1
-                    await asyncio.sleep(0.05)
-
-                except Exception as e:
-                    failed += 1
-                    logger.debug(f"Broadcast fail {user_id}: {e}")
-
-            logger.info(
-                f"Broadcast finished | success={success} failed={failed}"
-            )
-
-            broadcast_queue.task_done()
-
-        except Exception as e:
-            logger.error(f"Broadcast worker crashed: {e}")
-            await asyncio.sleep(5)
-
-
-async def check_channel_membership(bot: Client, user_id: int) -> bool:
-    is_registered = await get_users_db(user_id)
-    if not is_registered:
-        await insert_user(user_id)
-
-    if not INFO_CHANNEL_ID:
-        return True
-
-    try:
-        member = await bot.get_chat_member(int(INFO_CHANNEL_ID), user_id)
-        if member.status in ["member", "administrator", "creator"]:
-            return True
-        return False
-    except Exception as e:
-        logger.error(f"Error checking membership for user {user_id}: {e}")
-        return False
-
-
-async def require_membership(bot: Client, chat_id: int, user_id: int) -> bool:
-    is_member = await check_channel_membership(bot, user_id)
-    if not is_member:
-        markup = [
-            [InlineKeyboardButton(text="🔗 عضویت در کانال", url=f"https://ble.ir/abraava")],
-            [InlineKeyboardButton(text="✅ تایید عضویت", callback_data="verify_membership")],
-        ]
-        await send_message(
-            bot, chat_id,
-            f"⚠️ *برای استفاده از {BOT_NAME}، ابتدا باید در کانال ما عضو شوید.*\n\n"
-            f"پس از عضویت، روی دکمه «تایید عضویت» کلیک کنید.",
-            reply_markup=markup
-        )
-        return False
-    return True
-
-
 # ============================================================================
 # Group Message Validation
 # ============================================================================
@@ -1083,13 +1017,40 @@ async def on_initialize():
     global HTTP_SESSION
     HTTP_SESSION = aiohttp.ClientSession()
 
-    await init_db()
-    logger.info("Database initialized successfully (relational tables ready).")
     logger.info(f"Bot started with rate limiting: {rate_limiter.max_requests} req/min per user")
     logger.info(f"Download rate limit: 20 downloads per 2 hours per user")
-    asyncio.create_task(broadcast_worker())
+
+    # Send update message to all users
+    update_message = (
+        "🔄 *بات در حال بروزرسانی است*\n\n"
+        "ربات موسیقی در حال اعمال تغییرات و بهبود عملکرد می‌باشد.\n"
+        "لطفاً چند لحظه صبر کنید...\n\n"
+        "✅ به زودی مجدداً راه‌اندازی خواهد شد."
+    )
     asyncio.create_task(cleanup_caches())
     asyncio.create_task(clear_expired_cache())
+
+
+@bot.on_shutdown()
+async def on_shutdown():
+    global HTTP_SESSION
+
+    # Send shutdown message to all users
+    shutdown_message = (
+        "🔄 *ربات در حال راه‌اندازی مجدد*\n\n"
+        "بهبودهای جدید اعمال شد:\n"
+        "• رفع مشکل همزمانی دانلود آلبوم\n"
+        "• بهبود سیستم برودکست\n"
+        "• بهینه‌سازی عملکرد کلی\n\n"
+        "✅ *بات مجدداً راه‌اندازی شد*\n"
+        "اکنون می‌توانید مانند قبل از ربات استفاده کنید.\n\n"
+        "🎵 از شنیدن موسیقی لذت ببرید!"
+    )
+
+    if HTTP_SESSION and not HTTP_SESSION.closed:
+        await HTTP_SESSION.close()
+
+    logger.info("Bot shutdown complete")
 
 
 @bot.on_disconnect()
@@ -1134,11 +1095,6 @@ async def parse_search_query(text: str) -> Optional[tuple[str, str]]:
 async def handle_message(message):
     if "abraava" in str(message.author.username):
         return
-    if message.content:
-        if message.chat.id in BROADCAST_CHANNELS and message.chat.type == "channel":
-            await handle_channel_post(message)
-            return
-
     is_group = message.chat.type in ["group", "supergroup", "channel"]
     msg_text = message.content or ""
     user_id = message.author.id
@@ -1176,12 +1132,6 @@ async def handle_message(message):
                                          f"فقط پیام‌های متنی زیر ۱۰۰ کاراکتر قابل پردازش هستند.\n"
                                          f"لطفاً بدون عکس، ویدیو، فایل و فوروارد پیام دهید.",
                                 )
-            return
-
-    if not is_group and INFO_CHANNEL_ID and not msg_text.startswith('/start'):
-        is_member = await check_channel_membership(bot, user_id)
-        if not is_member:
-            await require_membership(bot, chat_id, user_id)
             return
 
     if msg_text.startswith("/start"):
@@ -1457,15 +1407,6 @@ async def handle_search_command(chat_id: int, user_id: int, type_: str, term: st
             itunes_results = await search_itunes(term, entity=entity, limit=50)
             if itunes_results and itunes_results.get("resultCount", 0) > 0:
                 results = itunes_results
-                for item in results["results"]:
-                    if item.get("wrapperType") == "artist":
-                        await insert_artist(item)
-                    elif item.get("wrapperType") == "collection":
-                        await insert_collection(item)
-                    elif item.get("wrapperType") == "track":
-                        await insert_track(item)
-        else:
-            results = await local_search(term, type_)
 
         if results and results.get("resultCount", 0) > 0:
             await send_search_page(chat_id, type_, term, results, 1, original_term=term, owner_id=owner_id or user_id)
@@ -1562,22 +1503,6 @@ async def on_callback(callback_query: CallbackQuery):
             await callback_query.message.delete()
         except:
             pass
-        return
-    if data == "verify_membership":
-        if INFO_CHANNEL_ID:
-            is_member = await check_channel_membership(bot, user_id)
-            if is_member:
-                await bot.answer_callback_query(callback_query.id, "✅ عضویت شما تایید شد!", show_alert=True)
-                await send_message(
-                    bot,
-                    chat_id,
-                    f"✅ *عضویت شما با موفقیت تایید شد!*\n\n"
-                    f"حالا می‌توانید از {BOT_NAME} استفاده کنید.\n"
-                    f"کافیست نام آهنگ مورد نظر خود را بنویسید."
-                )
-                await callback_query.message.delete()
-            else:
-                await bot.answer_callback_query(callback_query.id, "❌ هنوز عضو نشده‌اید!", show_alert=True)
         return
     if data == "toggle_quick_mode":
         current = user_quick_mode.get(user_id, False)
@@ -1690,13 +1615,6 @@ async def on_callback(callback_query: CallbackQuery):
                 await bot.answer_callback_query(callback_query.id, "❌ دانلود آلبوم در گروه‌ها مجاز نیست.",
                                                 show_alert=True)
                 return
-            # Check if user already has active download
-            """if not await acquire_user_download_lock(user_id):
-                await bot.answer_callback_query(callback_query.id,
-                                                "❌ شما در حال حاضر یک دانلود فعال دارید. ابتدا آن را تمام یا لغو کنید.",
-                                                show_alert=True)
-                return"""
-            # Check download rate limit for first track only (subsequent tracks checked inside loop)
             can_dl, wait_sec = await download_rate_limiter.can_download(user_id)
             if not can_dl:
                 release_user_download_lock(user_id)
@@ -1751,6 +1669,21 @@ async def on_callback(callback_query: CallbackQuery):
 # ============================================================================
 # Main
 # ============================================================================
+# Add this at the very top with other imports
+import signal
+import sys
+
+
+# Add this after bot initialization but before bot.run()
+def signal_handler(signum, frame):
+    logger.info(f"Received signal {signum}, shutting down...")
+    sys.exit(0)
+
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+# Keep the existing main section
 if __name__ == "__main__":
     logger.info(f"🎵 {BOT_NAME} Music Bot Starting (High Concurrency Mode)...")
     logger.info(f"Rate limit: {rate_limiter.max_requests} req/min per user")
@@ -1758,4 +1691,12 @@ if __name__ == "__main__":
     logger.info(f"Download rate limit: 20 downloads per 2 hours per user")
     logger.info(f"File cache directory: {CACHE_DIR.absolute()}")
     logger.info(f"Album batch download feature enabled with progress tracking (per user)")
-    bot.run()
+
+    try:
+        bot.run()
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Bot crashed: {e}")
+    finally:
+        logger.info("Bot shutdown complete")
