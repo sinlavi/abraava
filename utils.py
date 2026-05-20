@@ -132,10 +132,11 @@ async def update_status_with_close(status_msg: Message, text: str, reply_markup=
         logger.error(f"Failed to update status message: {e}")
 
 
-async def send_message(bot: Client, chat_id: int, text: str, reply_markup=None):
+async def send_message(bot: Client, chat_id: int, text: str, reply_markup=None, no=False):
     if reply_markup is None:
         reply_markup = []
-    reply_markup.append([create_close_button()])
+    if no == False:
+        reply_markup.append([create_close_button()])
     message = await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*reply_markup))
     return message
 

@@ -1338,7 +1338,7 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
                                         'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
                 logger.info(data)
         except Exception as e:
-            msg = await send_message(bot, chat_id, text=text, reply_markup=markup)
+            msg = await send_message(bot, chat_id, text=text, reply_markup=markup,no=True)
     else:
         msg = await send_message(bot, chat_id, text, reply_markup=markup)
 
