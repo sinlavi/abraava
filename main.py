@@ -758,7 +758,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     if track.get('trackExplicitness') == 'explicit':
         caption_parts.append(f"🔞 Explicit")
     if track.get('trackTimeMillis'):
-        duration_sec = track['trackTimeMillis'] // 1000
+        duration_sec = int(track['trackTimeMillis']) // 1000
         minutes = duration_sec // 60
         seconds = duration_sec % 60
         caption_parts.append(f"⏱️ مدت زمان: {minutes}:{seconds:02d}")
@@ -775,6 +775,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     audio_cache = None
     if track_id:
         data = await get_mirror('track', str(track_id), 'audioUrl')
+        logger.info(data)
         if data.get("mirrors", {}).get('audioUrl', False):
             audio_cache = data["mirrors"]['audioUrl']['url'].split('<token>/')[1]
 
@@ -1153,6 +1154,7 @@ async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
             text += f"\n*🎵 قطعات ({total_items}):*\n"
             for i, track in enumerate(page_items, start_idx + 1):
                 track_time = track.get('trackTimeMillis', 0)
+                track_time = int(track_time)
                 if isinstance(track_time, str):
                     track_time = int(track_time) if track_time.isdigit() else 0
                 duration = format_duration(track_time)
@@ -1341,7 +1343,7 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
                                         'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
                 logger.info(data)
         except Exception as e:
-            msg = await send_message(bot, chat_id, text=text, reply_markup=markup,no=True)
+            msg = await send_message(bot, chat_id, text=text, reply_markup=markup, no=True)
     else:
         msg = await send_message(bot, chat_id, text, reply_markup=markup)
 
