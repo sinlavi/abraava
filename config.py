@@ -6,20 +6,31 @@ import aiohttp
 from dotenv import load_dotenv
 
 load_dotenv()
+import pickle
 
 BOT_NAME = "ابرآوا"
 BOT_USERNAME = "@abraava_bot"
 INFO_CHANNEL_USERNAME = "@abraava"
 FOOTER = '\n\n' + BOT_USERNAME + '\n' + INFO_CHANNEL_USERNAME
 PROXY = os.getenv("proxy", None)
-ITUNES_BASE_URL =  "https://3rah.ir/music"
+ITUNES_BASE_URL = "https://3rah.ir/music"
 BOT_TOKEN = os.environ.get("BOT_TOKEN", None)
 DB_CHANNEL_ID = os.environ.get("DB_CHANNEL_ID", None)
 INFO_CHANNEL_ID = '5524168471'
-BROADCAST_CHANNELS = [INFO_CHANNEL_ID, '4783738693']
 ITEMS_PER_PAGE = 7
+API_BASE_URL = "https://3rah.ir/users/index.php"  # Replace with your actual API URL
+API_TOKEN = "YOUR_BOT_TOKEN_HERE"
 OFFLINE_MODE = False
 logger = logging.getLogger("ABRAAVA")
+
+BROADCAST_CHANNELS = [
+    {"username": "@abraava", "name": "ابرآوا", "id": 5524168471},
+]
+REQUIRED_CHANNELS = [
+    {"username": "@abraava", "name": "ابرآوا", "id": 5524168471},
+]
+
+BROADCAST_KEYWORDS = ["#اطلاع_رسانی", "#ابرآوا", "#اطلاعیه", "#تبلیغات"]
 
 
 class HttpClient:
