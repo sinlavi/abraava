@@ -6,6 +6,9 @@ import time
 import random
 import logging
 import subprocess
+import tempfile
+import uuid
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -235,7 +238,7 @@ def _build_opts(method: int, output_dir: str, preferred_quality: int) -> dict:
     return opts
 
 
-def download_audio(
+async def download_audio(
         url: str,
         output_dir: Optional[str] = None,
         *,
@@ -243,32 +246,37 @@ def download_audio(
         preferred_quality: int = 128,
 ) -> Optional[str]:
     """
-    Download YouTube audio as "your entered" kbps MP3.
-    Smartly sorts methods based on success rate and evades bot detection.
+    Download YouTube audio as MP3.
+    Creates a unique temporary directory for each download to avoid conflicts.
+    Returns the absolute path of the downloaded MP3 file, or None on failure.
+    The caller is responsible for deleting the parent directory after use.
     """
     global METHOD_ORDER
     url = _normalize_url(url)
 
+    # Create a unique subdirectory for this download
     if output_dir is None:
-        output_dir = os.path.join(os.getcwd(), "downloads")
+        base_dir = os.path.join(os.getcwd(), "downloads")
     else:
-        if not os.path.isabs(output_dir):
-            output_dir = os.path.join(os.getcwd(), output_dir)
+        base_dir = output_dir
+    os.makedirs(base_dir, exist_ok=True)
 
-    os.makedirs(output_dir, exist_ok=True)
+    unique_id = uuid.uuid4().hex
+    unique_dir = os.path.join(base_dir, unique_id)
+    os.makedirs(unique_dir, exist_ok=True)
 
     logger.info("Starting download: %s", url)
-    logger.info("Output directory: %s", output_dir)
+    logger.info("Unique output directory: %s", unique_dir)
     logger.info("Deno available: %s | Proxy available: %s", _check_deno(), _check_proxy())
     logger.info("Current method priority: %s", METHOD_ORDER)
 
-    before = set(Path(output_dir).glob("*.mp3"))
+    before = set(Path(unique_dir).glob("*.mp3"))
 
     for method in list(METHOD_ORDER):  # Copy list to iterate
         for attempt in range(1, max_retries_per_method + 1):
             logger.info("▶ Try Method %d (Attempt %d)", method, attempt)
             try:
-                opts = _build_opts(method, output_dir, preferred_quality)
+                opts = _build_opts(method, unique_dir, preferred_quality)
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     ydl.download([url])
             except Exception as exc:
@@ -280,7 +288,7 @@ def download_audio(
                 time.sleep(random.uniform(3.0, 6.0))
                 continue
 
-            after = set(Path(output_dir).glob("*.mp3"))
+            after = set(Path(unique_dir).glob("*.mp3"))
             new_files = after - before
             if new_files:
                 mp3_path = max(new_files, key=lambda p: p.stat().st_mtime)
@@ -297,6 +305,11 @@ def download_audio(
                 logger.warning("Method %d completed but no MP3 found – retrying…", method)
                 time.sleep(random.uniform(2.0, 4.0))
 
+    # اگر همه متدها شکست خوردند، دایرکتوری موقت را پاک می‌کنیم
+    try:
+        shutil.rmtree(unique_dir, ignore_errors=True)
+    except Exception:
+        pass
     logger.error("❌ All methods failed for: %s", url)
     return None
 

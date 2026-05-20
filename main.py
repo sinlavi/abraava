@@ -3,13 +3,9 @@ import asyncio
 import hashlib
 import os
 import random
-import shutil
-import tempfile
 import time
 import json
 import pickle
-import uuid
-
 import aiohttp
 import aiosqlite
 from collections import defaultdict
@@ -737,12 +733,15 @@ async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: s
 
 async def download_and_send_single_track(bot: Client, chat_id: int, track_id: int, user_id: int = None,
                                          status_msg: Message = None, is_batch: bool = False):
-    status_msg = await send_message(bot, chat_id, text=f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*")
+    # اگر در حالت آلبوم هستیم، پیام وضعیت جدید ایجاد نمی‌کنیم
+    if not is_batch or status_msg is None:
+        status_msg = await send_message(bot, chat_id, text=f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*")
 
-    track_data = await get_track(track_id, status_msg)
+    track_data = await get_track(track_id, status_msg if not is_batch else None)
     if not track_data or not track_data.get("results"):
-        await send_error_with_retry(bot, chat_id, "خطا در دریافت اطلاعات آهنگ.",
-                                    f"download_retry:{track_id}", status_msg)
+        if not is_batch:
+            await send_error_with_retry(bot, chat_id, "خطا در دریافت اطلاعات آهنگ.",
+                                        f"download_retry:{track_id}", status_msg)
         return
 
     track = track_data["results"][0]
@@ -752,7 +751,6 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
         f"🎵 آهنگ: {track.get('trackName', 'Unknown Title')}",
         f"🎤 هنرمند: {track.get('artistName', 'Unknown Artist')}",
     ]
-
     if track.get('collectionName'):
         caption_parts.append(f"📀 آلبوم: {track.get('collectionName')}")
     if release_year:
@@ -779,7 +777,6 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     audio_cache = None
     if track_id:
         data = await get_mirror('track', str(track_id), 'audioUrl')
-        logger.info(data)
         if data.get("mirrors", {}).get('audioUrl', False):
             audio_cache = data["mirrors"]['audioUrl']['url'].split('<token>/')[1]
 
@@ -787,9 +784,8 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
         try:
             await update_status_with_close(status_msg, f"📤 *در حال ارسال فایل از حافظه کش...*")
             await send_audio(bot, chat_id, audio=audio_cache, caption=caption, reply_markup=markup)
-            await status_msg.delete()
-
-            # Log download from cache
+            if not is_batch:
+                await status_msg.delete()
             await api_client.log_download(
                 user_id=user_id,
                 track_id=str(track_id),
@@ -804,8 +800,9 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
             logger.error(f"Cache send failed: {e}, will re-download")
 
     if OFFLINE_MODE:
-        await send_error_with_retry(bot, chat_id, "آهنگ در دیتابیس محلی یافت نشد و بات در حالت آفلاین است.",
-                                    f"download_retry:{track_id}", status_msg)
+        if not is_batch:
+            await send_error_with_retry(bot, chat_id, "آهنگ در دیتابیس محلی یافت نشد و بات در حالت آفلاین است.",
+                                        f"download_retry:{track_id}", status_msg)
         return
 
     t_name = track.get("trackName", "Unknown Title")
@@ -818,82 +815,90 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
 
     await update_status_with_close(status_msg, f"🔍 *جستجوی سورس باکیفیت آهنگ در یوتیوب موزیک...*")
 
-    mp3_path_str = None
     try:
         video_id = await search_youtube_track(query)
         if not video_id:
-            await send_error_with_retry(bot, chat_id, "نتوانستیم لینک یوتیوب موزیک را برای این آهنگ پیدا کنیم.",
-                                        f"download_retry:{track_id}", status_msg)
+            if not is_batch:
+                await send_error_with_retry(bot, chat_id, "نتوانستیم لینک یوتیوب موزیک را برای این آهنگ پیدا کنیم.",
+                                            f"download_retry:{track_id}", status_msg)
             return
 
         video_url = f"https://music.youtube.com/watch?v={video_id}"
         await update_status_with_close(status_msg, f"⏳ *در صف دانلود و آماده‌سازی...*")
 
-        async with DOWNLOAD_SEMAPHORE:
-            await update_status_with_close(status_msg, f"⏳ *در حال دانلود و پردازش (روش‌های پیشرفته ضدتحریم)...*")
-            original_path = await asyncio.get_event_loop().run_in_executor(
-                None, download_audio, video_url
-            )
+        mp3_path_str = None
+        temp_dir_to_clean = None
+        try:
+            async with DOWNLOAD_SEMAPHORE:
+                await update_status_with_close(status_msg, f"⏳ *در حال دانلود و پردازش (روش‌های پیشرفته ضدتحریم)...*")
+                # استفاده از تابع امن به جای download_audio اصلی
+                mp3_path_str = await download_audio(video_url)
+                # ذخیره دایرکتوری والد برای پاکسازی بعدی
+                temp_dir_to_clean = os.path.dirname(mp3_path_str)
 
-            if not original_path:
-                await send_error_with_retry(bot, chat_id, "دانلود با شکست مواجه شد — همه ۸ روش ناموفق بودند.",
+                if not mp3_path_str or not os.path.exists(mp3_path_str):
+                    if not is_batch:
+                        await send_error_with_retry(bot, chat_id, "دانلود با شکست مواجه شد — همه روش‌ها ناموفق بودند.",
+                                                    f"download_retry:{track_id}", status_msg)
+                    return
+
+                file_size_mb = os.path.getsize(mp3_path_str) / (1024 * 1024)
+                if file_size_mb == 0:
+                    if not is_batch:
+                        await send_error_with_retry(bot, chat_id, "خطای داخلی: فایل دانلود شده یافت نشد.",
+                                                    f"download_retry:{track_id}", status_msg)
+                    return
+
+                cover_bytes = None
+                if cover_url and HTTP_SESSION:
+                    try:
+                        async with HTTP_SESSION.get(cover_url) as resp:
+                            if resp.status == 200:
+                                cover_bytes = await resp.read()
+                    except Exception as e:
+                        logger.error(f"Failed to download cover: {e}")
+
+                await asyncio.get_event_loop().run_in_executor(
+                    None, tag_mp3, mp3_path_str, track, cover_bytes
+                )
+
+                await update_status_with_close(status_msg, f"☁️ *در حال آپلود در سرورهای ابری {BOT_NAME}...*")
+
+                await send_audio_with_retry(
+                    bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, track_id=str(track['trackId'])
+                )
+
+                await api_client.log_download(
+                    user_id=user_id,
+                    track_id=str(track_id),
+                    track_name=t_name,
+                    artist_name=a_name,
+                    album_name=collection_name,
+                    file_size=int(file_size_mb * 1024 * 1024),
+                    download_source='youtube'
+                )
+
+                if not is_batch:
+                    await status_msg.delete()
+
+        except Exception as e:
+            logger.exception("Download error")
+            if not is_batch:
+                await send_error_with_retry(bot, chat_id, f"خطا در عملیات: {str(e)[:100]}",
                                             f"download_retry:{track_id}", status_msg)
-                return
-
-            # ========== ایجاد فایل یکتا ==========
-            unique_filename = f"{uuid.uuid4().hex}.mp3"
-            unique_path = os.path.join(tempfile.gettempdir(), unique_filename)
-            await asyncio.to_thread(shutil.copy2, original_path, unique_path)
-            # حذف فایل اصلی
-            await asyncio.to_thread(_delete_file_sync, original_path)
-            mp3_path_str = unique_path
-            # ====================================
-
-            file_size_mb = await asyncio.to_thread(_get_file_size_sync, mp3_path_str)
-            if file_size_mb == 0:
-                await send_error_with_retry(bot, chat_id, "خطای داخلی: فایل دانلود شده یافت نشد.",
-                                            f"download_retry:{track_id}", status_msg)
-                return
-
-            cover_bytes = None
-            if cover_url and HTTP_SESSION:
+        finally:
+            # پاکسازی دایرکتوری موقت
+            if temp_dir_to_clean and os.path.exists(temp_dir_to_clean):
                 try:
-                    async with HTTP_SESSION.get(cover_url) as resp:
-                        if resp.status == 200:
-                            cover_bytes = await resp.read()
-                except Exception as e:
-                    logger.error(f"Failed to download cover: {e}")
-
-            await asyncio.get_event_loop().run_in_executor(
-                None, tag_mp3, mp3_path_str, track, cover_bytes
-            )
-
-            await update_status_with_close(status_msg, f"☁️ *در حال آپلود در سرورهای ابری {BOT_NAME}...*")
-
-            await send_audio_with_retry(
-                bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, track_id=str(track['trackId'])
-            )
-
-            # Log successful download
-            await api_client.log_download(
-                user_id=user_id,
-                track_id=str(track_id),
-                track_name=t_name,
-                artist_name=a_name,
-                album_name=collection_name,
-                file_size=int(file_size_mb * 1024 * 1024),
-                download_source='youtube'
-            )
-
-            await status_msg.delete()
+                    import shutil
+                    shutil.rmtree(temp_dir_to_clean, ignore_errors=True)
+                except:
+                    pass
 
     except Exception as e:
-        logger.exception("Download error")
-        await send_error_with_retry(bot, chat_id, f"خطا در عملیات: {str(e)[:100]}",
-                                    f"download_retry:{track_id}", status_msg)
-    finally:
-        if mp3_path_str:
-            await asyncio.to_thread(_delete_file_sync, mp3_path_str)
+        if not is_batch:
+            await send_error_with_retry(bot, chat_id, f"خطا در جستجوی یوتیوب: {str(e)[:100]}",
+                                        f"download_retry:{track_id}", status_msg)
 
 def _get_file_size_sync(path_str):
     p = Path(path_str)
