@@ -202,7 +202,7 @@ def format_duration(milliseconds):
         return "0:00"
 
 
-def get_high_res_artwork(artwork_url: str, size: int = 600):
+def get_high_res_artwork(artwork_url: str, size: int = 400):
     """Get high resolution artwork by replacing size in URL"""
     if not artwork_url:
         return None
