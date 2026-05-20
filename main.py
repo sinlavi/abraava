@@ -1152,7 +1152,10 @@ async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
 
             text += f"\n*🎵 قطعات ({total_items}):*\n"
             for i, track in enumerate(page_items, start_idx + 1):
-                duration = format_duration(track.get('trackTimeMillis', 0))
+                track_time = track.get('trackTimeMillis', 0)
+                if isinstance(track_time, str):
+                    track_time = int(track_time) if track_time.isdigit() else 0
+                duration = format_duration(track_time)
                 text += f"{i}. {track.get('trackName', 'نامشخص')} ({duration})\n"
 
             for track in page_items:

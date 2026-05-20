@@ -185,29 +185,82 @@ async def reply_message(message: Message, text: str, reply_markup=None):
     return message
 
 
-def format_duration(milliseconds: int) -> str:
-    if not milliseconds:
-        return "نامشخص"
-    minutes = milliseconds // 60000
-    seconds = (milliseconds % 60000) // 1000
-    return f"{minutes}:{seconds:02d}"
+def format_duration(milliseconds):
+    """Convert milliseconds to MM:SS format"""
+    try:
+        if isinstance(milliseconds, str):
+            milliseconds = int(milliseconds) if milliseconds.isdigit() else 0
+        elif milliseconds is None:
+            milliseconds = 0
+
+        seconds = milliseconds // 1000
+        minutes = seconds // 60
+        seconds = seconds % 60
+        return f"{minutes}:{seconds:02d}"
+    except (ValueError, TypeError) as e:
+        logger.error(f"Error formatting duration: {e}, value: {milliseconds}")
+        return "0:00"
 
 
-def get_high_res_artwork(url: str, size: int = 600) -> str:
-    if not url:
-        return ""
-    return url.replace("100x100bb", f"{size}x{size}bb")
+def get_high_res_artwork(artwork_url: str, size: int = 600):
+    """Get high resolution artwork by replacing size in URL"""
+    if not artwork_url:
+        return None
+    try:
+        # Handle string inputs
+        if not isinstance(artwork_url, str):
+            artwork_url = str(artwork_url)
 
+        # Replace {w}x{h} pattern with requested size
+        if "{w}" in artwork_url:
+            artwork_url = artwork_url.replace("{w}", str(size))
+        if "{h}" in artwork_url:
+            artwork_url = artwork_url.replace("{h}", str(size))
 
-def create_pagination_row(callback_prefix: str, current_page: int, total_pages: int) -> List[InlineKeyboardButton]:
-    row = []
-    if current_page > 1:
-        row.append(InlineKeyboardButton(text="▶️ قبلی", callback_data=f"{callback_prefix}:{current_page - 1}"))
-    row.append(InlineKeyboardButton(text=f"صفحه {current_page} از {total_pages}", callback_data="ignore"))
-    if current_page < total_pages:
-        row.append(InlineKeyboardButton(text="بعدی ◀️", callback_data=f"{callback_prefix}:{current_page + 1}"))
-    return row
+        # Common pattern: 100x100 -> 600x600
+        if "100x100" in artwork_url:
+            artwork_url = artwork_url.replace("100x100", f"{size}x{size}")
 
+        return artwork_url
+    except Exception as e:
+        logger.error(f"Error getting high res artwork: {e}")
+        return artwork_url
+def create_pagination_row(callback_prefix: str, current_page: int, total_pages: int):
+    """Create pagination buttons for navigation"""
+    try:
+        # Convert to int if they're strings
+        current_page = int(current_page) if isinstance(current_page, str) else current_page
+        total_pages = int(total_pages) if isinstance(total_pages, str) else total_pages
 
-def generate_search_hash(type_: str, term: str) -> str:
-    return hashlib.md5(f"{type_}:{term}:{time.time()}".encode()).hexdigest()[:10]  # include time to avoid collisions
+        buttons = []
+        if current_page > 1:
+            buttons.append(InlineKeyboardButton(
+                text="◀️ قبلی",
+                callback_data=f"{callback_prefix}:{current_page - 1}"
+            ))
+        buttons.append(InlineKeyboardButton(
+            text=f"{current_page}/{total_pages}",
+            callback_data="ignore"
+        ))
+        if current_page < total_pages:
+            buttons.append(InlineKeyboardButton(
+                text="بعدی ▶️",
+                callback_data=f"{callback_prefix}:{current_page + 1}"
+            ))
+        return buttons
+    except (ValueError, TypeError) as e:
+        logger.error(f"Error creating pagination row: {e}")
+        return []
+
+def generate_search_hash(search_type: str, search_term: str) -> str:
+    """Generate a unique hash for search caching"""
+    try:
+        # Ensure both are strings
+        search_type = str(search_type) if search_type else ""
+        search_term = str(search_term) if search_term else ""
+
+        combined = f"{search_type}:{search_term}".lower()
+        return hashlib.md5(combined.encode()).hexdigest()
+    except Exception as e:
+        logger.error(f"Error generating search hash: {e}")
+        return hashlib.md5(f"{time.time()}".encode()).hexdigest()
