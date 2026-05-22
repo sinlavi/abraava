@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import os
 import sys
 import time
@@ -14,6 +15,7 @@ from typing import Optional
 
 import asyncio
 import yt_dlp
+from rapidfuzz import fuzz
 from ytmusicapi import YTMusic
 
 try:
@@ -68,19 +70,63 @@ METHOD_ORDER = [8, 2, 3, 4, 5, 6, 7, 1]
 YT = None
 
 
-def _sync_search_youtube(query: str) -> Optional[str]:
+# تابع کمکی برای محاسبه شباهت با rapidfuzz
+def _get_similarity(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    # استفاده از WRatio برای مدیریت بهتر غلط‌های املایی، حروف کوچک/بزرگ و جابه‌جایی کلمات
+    return fuzz.WRatio(str(a), str(b)) / 100.0
+
+def _sync_search_youtube(t_name: str, a_name: str, collection_name: str, ye: str) -> Optional[str]:
     global YT
     if YT is None:
         YT = YTMusic()
+
+    # ساخت کوئری مناسب برای موتور جستجوی یوتیوب
+    search_query = f"{t_name} {a_name} {collection_name}".strip()
+
     try:
-        results = YT.search(query, filter="songs", limit=1)
-        if results and isinstance(results, list) and len(results) > 0:
-            return results[0].get("videoId")
+        results = YT.search(search_query, filter="songs", limit=10)
+
+        if not results or not isinstance(results, list):
+            return None
+
+        best_match_id = None
+        highest_score = -1.0
+
+        for res in results:
+            # استخراج اطلاعات از نتیجه یوتیوب
+            res_title = res.get("title", "")
+            artists = res.get("artists", [])
+            res_artist = ", ".join([a.get("name", "") for a in artists]) if artists else ""
+            album_data = res.get("album") or {}
+            res_album = album_data.get("name", "")
+            res_year = res.get("year", "")
+
+            score = 0.0
+
+            # محاسبه امتیاز وزن‌دار با استفاده از پارامترهای ورودی و rapidfuzz
+            # وزن‌دهی: نام ترک ۴۵٪، نام آرتیست ۳۵٪، نام آلبوم ۱۵٪
+            score += _get_similarity(t_name, res_title) * 0.45
+            score += _get_similarity(a_name, res_artist) * 0.35
+            score += _get_similarity(collection_name, res_album) * 0.15
+
+            # وزن سال ۵٪ (فقط در صورت وجود سال در ورودی و نتیجه)
+            if ye and res_year:
+                if str(ye) == str(res_year):
+                    score += 0.05
+
+            # ذخیره بهترین نتیجه
+            if score > highest_score:
+                highest_score = score
+                best_match_id = res.get("videoId")
+
+        return best_match_id
+
     except Exception as e:
         logger.error(f"YTMusic search error: {e}")
+
     return None
-
-
 def get_artist_image(artist_name):
     global YT
     if YT is None:
@@ -105,11 +151,11 @@ def get_artist_image(artist_name):
     return None
 
 
-async def search_youtube_track(query: str) -> Optional[str]:
+async def search_youtube_track(t_name, a_name, collection_name, ye) -> Optional[str]:
     if OFFLINE_MODE:
         logger.info("Offline mode: skipping YouTube search")
         return None
-    return await asyncio.to_thread(_sync_search_youtube, query)
+    return await asyncio.to_thread(_sync_search_youtube, t_name, a_name, collection_name, ye)
 
 
 def _check_deno() -> bool:

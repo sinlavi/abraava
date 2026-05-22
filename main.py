@@ -735,9 +735,9 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                                          status_msg: Message = None, is_batch: bool = False):
     status_msg = await send_message(bot, chat_id, text=f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*")
 
-    track_data = await get_track(track_id, status_msg if not is_batch else None)
+    track_data = await get_track(track_id, status_msg if True else None)
     if not track_data or not track_data.get("results"):
-        if not is_batch:
+        if True:
             await send_error_with_retry(bot, chat_id, "خطا در دریافت اطلاعات آهنگ.",
                                         f"download_retry:{track_id}", status_msg)
         return
@@ -782,7 +782,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
         try:
             await update_status_with_close(status_msg, f"📤 *در حال ارسال فایل از حافظه کش...*")
             await send_audio(bot, chat_id, audio=audio_cache, caption=caption, reply_markup=markup)
-            if not is_batch:
+            if True:
                 await status_msg.delete()
             await api_client.log_download(
                 user_id=user_id,
@@ -798,7 +798,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
             logger.error(f"Cache send failed: {e}, will re-download")
 
     if OFFLINE_MODE:
-        if not is_batch:
+        if True:
             await send_error_with_retry(bot, chat_id, "آهنگ در دیتابیس محلی یافت نشد و بات در حالت آفلاین است.",
                                         f"download_retry:{track_id}", status_msg)
         return
@@ -814,9 +814,9 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     await update_status_with_close(status_msg, f"🔍 *جستجوی سورس باکیفیت آهنگ در یوتیوب موزیک...*")
 
     try:
-        video_id = await search_youtube_track(query)
+        video_id = await search_youtube_track(t_name,a_name,collection_name,ye)
         if not video_id:
-            if not is_batch:
+            if True:
                 await send_error_with_retry(bot, chat_id, "نتوانستیم لینک یوتیوب موزیک را برای این آهنگ پیدا کنیم.",
                                             f"download_retry:{track_id}", status_msg)
             return
@@ -835,14 +835,14 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                 temp_dir_to_clean = os.path.dirname(mp3_path_str)
 
                 if not mp3_path_str or not os.path.exists(mp3_path_str):
-                    if not is_batch:
+                    if True:
                         await send_error_with_retry(bot, chat_id, "دانلود با شکست مواجه شد — همه روش‌ها ناموفق بودند.",
                                                     f"download_retry:{track_id}", status_msg)
                     return
 
                 file_size_mb = os.path.getsize(mp3_path_str) / (1024 * 1024)
                 if file_size_mb == 0:
-                    if not is_batch:
+                    if True:
                         await send_error_with_retry(bot, chat_id, "خطای داخلی: فایل دانلود شده یافت نشد.",
                                                     f"download_retry:{track_id}", status_msg)
                     return
@@ -876,12 +876,12 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                     download_source='youtube'
                 )
 
-                if not is_batch:
+                if True:
                     await status_msg.delete()
 
         except Exception as e:
             logger.exception("Download error")
-            if not is_batch:
+            if True:
                 await send_error_with_retry(bot, chat_id, f"خطا در عملیات: {str(e)[:100]}",
                                             f"download_retry:{track_id}", status_msg)
         finally:
@@ -894,7 +894,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                     pass
 
     except Exception as e:
-        if not is_batch:
+        if True:
             await send_error_with_retry(bot, chat_id, f"خطا در جستجوی یوتیوب: {str(e)[:100]}",
                                         f"download_retry:{track_id}", status_msg)
 
