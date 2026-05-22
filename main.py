@@ -2,6 +2,7 @@ import logging
 import asyncio
 import hashlib
 import os
+import io
 import random
 import time
 import json
@@ -816,7 +817,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     await update_status_with_close(status_msg, f"🔍 *جستجوی سورس باکیفیت آهنگ در یوتیوب موزیک...*")
 
     try:
-        video_id = await search_youtube_track(t_name,a_name,collection_name,ye)
+        video_id = await search_youtube_track(t_name, a_name, collection_name, ye)
         if not video_id:
             if True:
                 await send_error_with_retry(bot, chat_id, "نتوانستیم لینک یوتیوب موزیک را برای این آهنگ پیدا کنیم.",
@@ -899,6 +900,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
         if True:
             await send_error_with_retry(bot, chat_id, f"خطا در جستجوی یوتیوب: {str(e)[:100]}",
                                         f"download_retry:{track_id}", status_msg)
+
 
 def _get_file_size_sync(path_str):
     p = Path(path_str)
@@ -1336,25 +1338,45 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
                        markup=None, artwork_url: str = None, cache_id=None, owner_id=None, artist_id=None):
     if markup is None:
         markup = []
+
+    msg = None
     if artwork_url:
         artwork_cache = None
         entity_type = "collection"
         if artist_id:
             entity_type = "artist"
             cache_id = artist_id
+
         if cache_id:
             data = await get_mirror(entity_type, cache_id, 'artworkUrl')
             logger.info(data)
             if data.get("mirrors", {}).get('artworkUrl', False):
                 artwork_cache = data["mirrors"]['artworkUrl']['url'].split('<token>/')[1]
-                artwork_url = artwork_cache
+
         try:
-            msg = await send_photo(bot, chat_id, photo=artwork_url, caption=text, reply_markup=markup)
+            # Check if we have it in cache, otherwise download it
+            if artwork_cache:
+                photo_to_send = artwork_cache
+            else:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(artwork_url) as resp:
+                        if resp.status == 200:
+                            photo_bytes = await resp.read()
+                            photo_to_send = io.BytesIO(photo_bytes)
+                            photo_to_send.name = "artwork.jpg"  # Most frameworks require a filename
+                        else:
+                            # Fallback to URL if download fails
+                            photo_to_send = artwork_url
+
+            msg = await send_photo(bot, chat_id, photo=photo_to_send, caption=text, reply_markup=markup)
+
             if cache_id and not artwork_cache and msg:
                 data = await set_mirror(entity_type, cache_id, 'artworkUrl',
                                         'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
                 logger.info(data)
+
         except Exception as e:
+            logger.error(f"Failed to send photo: {e}")
             msg = await send_message(bot, chat_id, text=text, reply_markup=markup, no=True)
     else:
         msg = await send_message(bot, chat_id, text, reply_markup=markup)
