@@ -735,7 +735,7 @@ async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: s
 async def download_and_send_single_track(bot: Client, chat_id: int, track_id: int, user_id: int = None,
                                          status_msg: Message = None, is_batch: bool = False):
     # اگر در حالت آلبوم هستیم، پیام وضعیت جدید ایجاد نمی‌کنیم
-    if not is_batch or status_msg is None:
+    if is_batch or status_msg is None:
         status_msg = await send_message(bot, chat_id, text=f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*")
 
     track_data = await get_track(track_id, status_msg if True else None)
