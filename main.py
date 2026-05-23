@@ -833,8 +833,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
             async with DOWNLOAD_SEMAPHORE:
                 await update_status_with_close(status_msg, f"⏳ *در حال دانلود و پردازش (روش‌های پیشرفته ضدتحریم)...*")
                 # استفاده از تابع امن به جای download_audio اصلی
-                mp3_path_str = await asyncio.get_event_loop().run_in_executor(
-                    None, download_audio, video_url
+                mp3_path_str = await download_audio(video_url
                 )
 
                
