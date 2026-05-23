@@ -878,7 +878,8 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                     file_size=int(file_size_mb * 1024 * 1024),
                     download_source='youtube'
                 )
-
+                download_rate_limiter.record_download(user_id)
+                
                 if True:
                     await status_msg.delete()
 
@@ -1825,19 +1826,15 @@ async def on_callback(callback_query: CallbackQuery):
             track_id = int(parts[1])
             await show_track_page(chat_id, track_id, callback_query.message, user_id)
         elif data.startswith("download:"):
-            track_id = int(parts[1])
-
-            can_dl, wait_sec = await download_rate_limiter.can_download(user_id)
-            if not can_dl:
-                await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت دانلود: {wait_sec} ثانیه صبر کنید",
-                                                show_alert=True)
-                return
-            await bot.answer_callback_query(callback_query.id, "در حال پردازش دانلود...")
-            try:
-                await download_and_send_single_track(bot, chat_id, track_id, user_id)
-                download_rate_limiter.record_download(user_id)
-            finally:
-                pass
+		    track_id = int(parts[1])
+		    can_dl, wait_sec = await download_rate_limiter.can_download(user_id)
+		    if not can_dl:
+		        await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت دانلود: {wait_sec} ثانیه صبر کنید", show_alert=True)
+    		    return
+		    await bot.answer_callback_query(callback_query.id, "در حال پردازش دانلود...")
+    # اجرای دانلود در تسک جداگانه
+		    asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
+      
         elif data.startswith("download_album:"):
             collection_id = int(parts[1])
             chat = await bot.get_chat(chat_id)
