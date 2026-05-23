@@ -145,7 +145,7 @@ def get_artist_image(artist_name):
 
         # Get the thumbnails
         if 'thumbnails' in artist_info:
-            highest_quality = artist_info['thumbnails'][1]['url']
+            highest_quality = artist_info['thumbnails'][0]['url']
             return highest_quality
 
     return None
