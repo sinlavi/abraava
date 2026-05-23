@@ -1557,9 +1557,10 @@ async def handle_message(message):
                 f"پس از عضویت، دوباره تلاش کنید."
             )
             return
-
+    """
     # Check rate limit
     allowed, wait_time = await rate_limiter.check_user(user_id)
+    
     if not allowed:
         if is_group:
             return
@@ -1569,7 +1570,7 @@ async def handle_message(message):
                             f"لطفاً {wait_time} ثانیه صبر کنید."
                             )
         return
-
+    """
     # Process group messages
     if is_group:
         bot_mention = f"@{bot.user.username}"
@@ -1716,19 +1717,19 @@ async def on_callback(callback_query: CallbackQuery):
     is_group = callback_query.message.chat.type in ["group", "supergroup"]
 
     # Ownership check for group messages
-    if is_group:
+    """if is_group:
         owner = get_message_owner(message_id)
         if owner is not None and owner != user_id:
             await bot.answer_callback_query(callback_query.id, "❌ شما اجازه تعامل با این پیام را ندارید.",
                                             show_alert=True)
             return
-
+     
     # Rate limit check
     allowed, wait_time = await rate_limiter.check_user(user_id)
     if not allowed:
         await bot.answer_callback_query(callback_query.id, f"⏳ لطفاً {wait_time} ثانیه صبر کنید", show_alert=True)
         return
-
+    """
     if data == "ignore":
         await bot.answer_callback_query(callback_query.id)
         return
