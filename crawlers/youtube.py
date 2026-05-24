@@ -284,6 +284,7 @@ def _build_opts(method: int, output_dir: str, preferred_quality: int) -> dict:
     return opts
 
 
+
 async def download_audio(
         url: str,
         output_dir: Optional[str] = None,
@@ -293,14 +294,10 @@ async def download_audio(
 ) -> Optional[str]:
     """
     Download YouTube audio as MP3.
-    Creates a unique temporary directory for each download to avoid conflicts.
-    Returns the absolute path of the downloaded MP3 file, or None on failure.
-    The caller is responsible for deleting the parent directory after use.
     """
     global METHOD_ORDER
     url = _normalize_url(url)
 
-    # Create a unique subdirectory for this download
     if output_dir is None:
         base_dir = os.path.join(os.getcwd(), "downloads")
     else:
@@ -313,25 +310,31 @@ async def download_audio(
 
     logger.info("Starting download: %s", url)
     logger.info("Unique output directory: %s", unique_dir)
-    logger.info("Deno available: %s | Proxy available: %s", _check_deno(), _check_proxy())
-    logger.info("Current method priority: %s", METHOD_ORDER)
 
     before = set(Path(unique_dir).glob("*.mp3"))
+    loop = asyncio.get_event_loop()  # گرفتن Event Loop
 
-    for method in list(METHOD_ORDER):  # Copy list to iterate
+    for method in list(METHOD_ORDER):
         for attempt in range(1, max_retries_per_method + 1):
             logger.info("▶ Try Method %d (Attempt %d)", method, attempt)
             try:
                 opts = _build_opts(method, unique_dir, preferred_quality)
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    ydl.download([url])
+
+                # رفع مشکل فریز شدن ربات: اجرای yt_dlp در ترد (Thread) جداگانه
+                def run_ydl():
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        ydl.download([url])
+
+                await loop.run_in_executor(None, run_ydl)
+
             except Exception as exc:
                 logger.warning("Method %d failed: %s", method, exc)
-                # در صورت شکست، متد فعلی را به انتهای لیست می‌فرستیم
                 if method in METHOD_ORDER:
                     METHOD_ORDER.remove(method)
                     METHOD_ORDER.append(method)
-                time.sleep(random.uniform(3.0, 6.0))
+
+                # رفع مشکل فریز شدن: جایگزینی time.sleep با asyncio.sleep
+                await asyncio.sleep(random.uniform(3.0, 6.0))
                 continue
 
             after = set(Path(unique_dir).glob("*.mp3"))
@@ -341,7 +344,6 @@ async def download_audio(
                 size_mb = mp3_path.stat().st_size / (1024 * 1024)
                 logger.info("✅ Success with method %d → %s (%.1f MB)", method, mp3_path.name, size_mb)
 
-                # بهینه‌سازی هوشمند: متد موفق به صدر لیست می‌آید
                 if method in METHOD_ORDER:
                     METHOD_ORDER.remove(method)
                     METHOD_ORDER.insert(0, method)
@@ -349,16 +351,15 @@ async def download_audio(
                 return str(mp3_path)
             else:
                 logger.warning("Method %d completed but no MP3 found – retrying…", method)
-                time.sleep(random.uniform(2.0, 4.0))
+                # رفع مشکل فریز شدن: جایگزینی time.sleep با asyncio.sleep
+                await asyncio.sleep(random.uniform(2.0, 4.0))
 
-    # اگر همه متدها شکست خوردند، دایرکتوری موقت را پاک می‌کنیم
     try:
         shutil.rmtree(unique_dir, ignore_errors=True)
     except Exception:
         pass
     logger.error("❌ All methods failed for: %s", url)
     return None
-
 
 def _normalize_url(url: str) -> str:
     """Convert youtu.be short links to full youtube.com/watch?v= URLs."""

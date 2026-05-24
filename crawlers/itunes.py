@@ -125,8 +125,6 @@ def _has_collection_tracks(data: Dict[str, Any]) -> bool:
     if not isinstance(results, list) or len(results) == 0:
         return False
 
-    # Check if this is a collection tracks response
-    # Collection tracks have wrapperType "track" and collectionId
     track_count = 0
     for item in results:
         if item.get("wrapperType") == "track" and item.get("collectionId"):
@@ -143,8 +141,6 @@ def _has_artist_collections(data: Dict[str, Any]) -> bool:
     if not isinstance(results, list) or len(results) == 0:
         return False
 
-    # Check if this is an artist collections response
-    # Artist collections have wrapperType "collection" and artistId
     collection_count = 0
     for item in results:
         if item.get("wrapperType") == "collection" and item.get("artistId"):
@@ -166,16 +162,18 @@ def _should_cache_response(endpoint: str, params: dict, data: Dict[str, Any]) ->
     if _is_mirror_request(endpoint):
         return False
 
+    # DO NOT cache if result count is zero or missing data
+    if not data or data.get("resultCount", 0) <= 0:
+        return False
+
     # Check for collection tracks
     if "entity" in params and params["entity"] == "song":
-        # This is a lookup for collection tracks
         if _has_collection_tracks(data):
             logger.info(f"Caching collection tracks response for endpoint {endpoint}")
             return True
 
     # Check for artist collections (lookup with entity=album)
     if "entity" in params and params["entity"] == "album":
-        # This is a lookup for artist collections
         if _has_artist_collections(data):
             logger.info(f"Caching artist collections response for endpoint {endpoint}")
             return True
@@ -202,12 +200,10 @@ async def fetch_itunes(
 
     params = params or {}
 
-    # Mirror requests should never use cache
     is_mirror = _is_mirror_request(endpoint)
     if is_mirror:
         bypass_cache = True
 
-    # Only use cache for GET requests and non-mirror endpoints
     if method == "GET" and not bypass_cache and not OFFLINE_MODE and not is_mirror:
         cached_response = _itunes_cache.get(endpoint, params)
         if cached_response is not None:
@@ -221,7 +217,6 @@ async def fetch_itunes(
     url = f"{ITUNES_BASE_URL}/{endpoint}"
 
     try:
-        # Handle different HTTP methods
         if method == "GET":
             async with session.get(url, params=params, ssl=False, proxy=PROXY) as resp:
                 if resp.status == 200:
@@ -229,7 +224,7 @@ async def fetch_itunes(
                     try:
                         response_data = json.loads(text)
 
-                        # Cache responses that contain meaningful data
+                        # Cache responses that contain meaningful data (and resultCount > 0)
                         if _should_cache_response(endpoint, params, response_data):
                             _itunes_cache.set(endpoint, params, response_data)
 
@@ -238,7 +233,7 @@ async def fetch_itunes(
                         logger.error(f"Failed to parse JSON from {url}")
                         return None
                 else:
-                    logger.warning(f"iTunes API returned status {resp.status} for {url}")
+                    logger.warning(f"iTunes API returned status {resp.status} for {url}. Result will not be cached.")
 
         elif method == "POST":
             async with session.post(url, params=params, json=payload, ssl=False, proxy=PROXY) as resp:
@@ -268,7 +263,8 @@ async def fetch_itunes(
                     return None
 
     except Exception as e:
-        logger.error(f"Error fetching from iTunes API ({endpoint}): {e}")
+        # Network errors (timeouts, connection resets) fall here and are not cached.
+        logger.error(f"Error/Network failure fetching from iTunes API ({endpoint}): {e}")
 
     return None
 
@@ -321,17 +317,15 @@ async def lookup_collection_tracks(
 ) -> Optional[Dict[str, Any]]:
     """
     Lookup all tracks in a collection/album
-    This specifically caches collection tracks when count > 0
     """
     logger.info(f"Looking up collection tracks: collection_id={collection_id}")
     params = {
         "id": collection_id,
-        "entity": "song"  # This retrieves all tracks in the collection
+        "entity": "song"
     }
 
     data = await fetch_itunes("lookup", params, bypass_cache=bypass_cache)
 
-    # Filter to only include tracks from this collection
     if data and "results" in data:
         tracks = [
             item for item in data["results"]
@@ -339,9 +333,6 @@ async def lookup_collection_tracks(
         ]
         data["results"] = tracks
         data["resultCount"] = len(tracks)
-
-        # Cache will be handled by _should_cache_response
-        # which checks _has_collection_tracks
 
     return data
 
@@ -352,17 +343,15 @@ async def lookup_artist_collections(
 ) -> Optional[Dict[str, Any]]:
     """
     Lookup all collections/albums by an artist
-    This specifically caches artist collections when count > 0
     """
     logger.info(f"Looking up artist collections: artist_id={artist_id}")
     params = {
         "id": artist_id,
-        "entity": "album"  # This retrieves all albums by the artist
+        "entity": "album"
     }
 
     data = await fetch_itunes("lookup", params, bypass_cache=bypass_cache)
 
-    # Filter to only include collections from this artist
     if data and "results" in data:
         collections = [
             item for item in data["results"]
@@ -370,9 +359,6 @@ async def lookup_artist_collections(
         ]
         data["results"] = collections
         data["resultCount"] = len(collections)
-
-        # Cache will be handled by _should_cache_response
-        # which checks _has_artist_collections
 
     return data
 
@@ -417,25 +403,18 @@ def get_cache_stats() -> Dict[str, Any]:
 
 
 async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url: str) -> Optional[Dict[str, Any]]:
-    """
-    POST /mirror/set
-    Sets a mirror URL for a specific entity
-    """
+    """POST /mirror/set"""
     payload = {
         "entityType": entity_type,
         "entityId": entity_id,
         "urlType": url_type,
         "mirrorUrl": mirror_url
     }
-    # Use POST method with payload
     return await fetch_itunes("mirror/set", method="POST", payload=payload)
 
 
 async def get_mirror(entity_type: str, entity_id: str, url_type: str) -> Optional[Dict[str, Any]]:
-    """
-    GET /mirror/get
-    Retrieves a mirror URL for a specific entity
-    """
+    """GET /mirror/get"""
     params = {
         "entityType": entity_type,
         "entityId": entity_id,
@@ -446,32 +425,20 @@ async def get_mirror(entity_type: str, entity_id: str, url_type: str) -> Optiona
 
 async def delete_mirror(entity_type: str, entity_id: str, url_type: str, method: Literal["POST", "DELETE"] = "POST") -> \
         Optional[Dict[str, Any]]:
-    """
-    DELETE or POST /mirror/delete
-    Deletes a mirror URL for a specific entity
-    method: Either "POST" or "DELETE" (default: "POST")
-    """
+    """DELETE or POST /mirror/delete"""
     payload = {
         "entity_type": entity_type,
         "entity_id": entity_id,
         "url_type": url_type
     }
-
-    # Use the unified fetch_itunes function with appropriate method
     return await fetch_itunes("mirror/delete", method=method, payload=payload)
 
 
 async def get_cached_collection_tracks(collection_id: int) -> Optional[Dict[str, Any]]:
-    """
-    Get cached collection tracks if they exist and are valid
-    """
     params = {"id": collection_id, "entity": "song"}
     return _itunes_cache.get("lookup", params)
 
 
 async def get_cached_artist_collections(artist_id: int) -> Optional[Dict[str, Any]]:
-    """
-    Get cached artist collections if they exist and are valid
-    """
     params = {"id": artist_id, "entity": "album"}
     return _itunes_cache.get("lookup", params)
