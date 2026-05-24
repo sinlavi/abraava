@@ -1370,7 +1370,7 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
                             photo_to_send.name = "artwork.jpg"  # Most frameworks require a filename
                         else:
                             # Fallback to URL if download fails
-                            photo_to_send = artwork_url
+                            photo_to_send = None
 
             msg = await send_photo(bot, chat_id, photo=photo_to_send, caption=text, reply_markup=markup)
 
