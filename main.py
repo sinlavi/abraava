@@ -1098,7 +1098,8 @@ async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
                                         f"artist_retry:{artist_id}", status_msg)
             return
         artist_data = artist_data['results'][0]
-        artist_image = get_artist_image(artist_data.get('artistName'))
+        artist_image = None
+        # get_artist_image(artist_data.get('artistName'))
 
         text = f"*🎤 هنرمند:* {artist_data.get('artistName', 'نامشخص')}\n"
         text += f"*🎭 سبک:* {artist_data.get('primaryGenreName', 'نامشخص')}\n"
@@ -1373,12 +1374,13 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
                             # Fallback to URL if download fails
                             photo_to_send = None
 
-            msg = await send_photo(bot, chat_id, photo=photo_to_send, caption=text, reply_markup=markup)
+            #msg = await send_photo(bot, chat_id, photo=photo_to_send, caption=text, reply_markup=markup)
+            msg = await send_message(bot, chat_id, text=text, reply_markup=markup, no=True)
 
-            if cache_id and not artwork_cache and msg:
+            """if cache_id and not artwork_cache and msg:
                 data = await set_mirror(entity_type, cache_id, 'artworkUrl',
                                         'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
-                logger.info(data)
+                logger.info(data)"""
 
         except Exception as e:
             logger.error(f"Failed to send photo: {e}")
