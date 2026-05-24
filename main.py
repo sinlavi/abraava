@@ -854,7 +854,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                     return
 
                 cover_bytes = None
-                if False and cover_url and HTTP_SESSION:
+                if cover_url and HTTP_SESSION:
                     try:
                         async with HTTP_SESSION.get(cover_url) as resp:
                             if resp.status == 200:
