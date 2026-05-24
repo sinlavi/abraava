@@ -235,7 +235,7 @@ def create_pagination_row(callback_prefix: str, current_page: int, total_pages: 
         buttons = []
         if current_page > 1:
             buttons.append(InlineKeyboardButton(
-                text="◀️ قبلی",
+                text="▶️ قبلی",
                 callback_data=f"{callback_prefix}:{current_page - 1}"
             ))
         buttons.append(InlineKeyboardButton(
@@ -244,7 +244,7 @@ def create_pagination_row(callback_prefix: str, current_page: int, total_pages: 
         ))
         if current_page < total_pages:
             buttons.append(InlineKeyboardButton(
-                text="بعدی ▶️",
+                text="بعدی ◀️",
                 callback_data=f"{callback_prefix}:{current_page + 1}"
             ))
         return buttons

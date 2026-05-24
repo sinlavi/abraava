@@ -735,7 +735,7 @@ async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: s
 async def download_and_send_single_track(bot: Client, chat_id: int, track_id: int, user_id: int = None,
                                          status_msg: Message = None, is_batch: bool = False):
     # اگر در حالت آلبوم هستیم، پیام وضعیت جدید ایجاد نمی‌کنیم
-    if not is_batch or status_msg is None:
+    if is_batch or status_msg is None:
         status_msg = await send_message(bot, chat_id, text=f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*")
 
     track_data = await get_track(track_id, status_msg if True else None)
@@ -833,7 +833,10 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
             async with DOWNLOAD_SEMAPHORE:
                 await update_status_with_close(status_msg, f"⏳ *در حال دانلود و پردازش (روش‌های پیشرفته ضدتحریم)...*")
                 # استفاده از تابع امن به جای download_audio اصلی
-                mp3_path_str = await download_audio(video_url)
+                mp3_path_str = await download_audio(video_url
+                )
+
+               
                 # ذخیره دایرکتوری والد برای پاکسازی بعدی
                 temp_dir_to_clean = os.path.dirname(mp3_path_str)
 
@@ -878,7 +881,8 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                     file_size=int(file_size_mb * 1024 * 1024),
                     download_source='youtube'
                 )
-
+                download_rate_limiter.record_download(user_id)
+                
                 if True:
                     await status_msg.delete()
 
@@ -1556,9 +1560,10 @@ async def handle_message(message):
                 f"پس از عضویت، دوباره تلاش کنید."
             )
             return
-
+    """
     # Check rate limit
     allowed, wait_time = await rate_limiter.check_user(user_id)
+    
     if not allowed:
         if is_group:
             return
@@ -1568,7 +1573,7 @@ async def handle_message(message):
                             f"لطفاً {wait_time} ثانیه صبر کنید."
                             )
         return
-
+    """
     # Process group messages
     if is_group:
         bot_mention = f"@{bot.user.username}"
@@ -1715,19 +1720,19 @@ async def on_callback(callback_query: CallbackQuery):
     is_group = callback_query.message.chat.type in ["group", "supergroup"]
 
     # Ownership check for group messages
-    if is_group:
+    """if is_group:
         owner = get_message_owner(message_id)
         if owner is not None and owner != user_id:
             await bot.answer_callback_query(callback_query.id, "❌ شما اجازه تعامل با این پیام را ندارید.",
                                             show_alert=True)
             return
-
+     
     # Rate limit check
     allowed, wait_time = await rate_limiter.check_user(user_id)
     if not allowed:
         await bot.answer_callback_query(callback_query.id, f"⏳ لطفاً {wait_time} ثانیه صبر کنید", show_alert=True)
         return
-
+    """
     if data == "ignore":
         await bot.answer_callback_query(callback_query.id)
         return
@@ -1825,19 +1830,15 @@ async def on_callback(callback_query: CallbackQuery):
             track_id = int(parts[1])
             await show_track_page(chat_id, track_id, callback_query.message, user_id)
         elif data.startswith("download:"):
-            track_id = int(parts[1])
-
-            can_dl, wait_sec = await download_rate_limiter.can_download(user_id)
-            if not can_dl:
-                await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت دانلود: {wait_sec} ثانیه صبر کنید",
-                                                show_alert=True)
-                return
-            await bot.answer_callback_query(callback_query.id, "در حال پردازش دانلود...")
-            try:
-                await download_and_send_single_track(bot, chat_id, track_id, user_id)
-                download_rate_limiter.record_download(user_id)
-            finally:
-                pass
+        	track_id = int(parts[1])
+        	can_dl, wait_sec = await download_rate_limiter.can_download(user_id)
+        	if not can_dl:
+		        await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت دانلود: {wait_sec} ثانیه صبر کنید", show_alert=True)
+		        return
+        	await bot.answer_callback_query(callback_query.id, "در حال پردازش دانلود...")
+    # اجرای دانلود در تسک جداگانه
+        	asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
+      
         elif data.startswith("download_album:"):
             collection_id = int(parts[1])
             chat = await bot.get_chat(chat_id)
