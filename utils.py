@@ -14,7 +14,7 @@ from config import FOOTER
 logger = logging.getLogger("ABRAAVA:TAGEDITOR")
 
 
-def tag_mp3(file_path: Path, track_data: dict, cover_bytes: bytes = None):
+def tag_mp3(file_path: Path, track_data: dict, cover_bytes = None):
     """Add comprehensive ID3 metadata to the downloaded MP3 file."""
     try:
         audio = ID3(file_path)
