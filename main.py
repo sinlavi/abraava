@@ -854,7 +854,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                     return
 
                 cover_bytes = None
-                if cover_url and HTTP_SESSION:
+                if False and cover_url and HTTP_SESSION:
                     try:
                         async with HTTP_SESSION.get(cover_url) as resp:
                             if resp.status == 200:
@@ -1359,9 +1359,10 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
 
         try:
             # Check if we have it in cache, otherwise download it
+            photo_to_send=None
             if artwork_cache:
                 photo_to_send = artwork_cache
-            else:
+            elif False:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(artwork_url) as resp:
                         if resp.status == 200:
