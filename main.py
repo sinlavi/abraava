@@ -884,7 +884,11 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                 download_rate_limiter.record_download(user_id)
                 
                 if True:
-                    await status_msg.delete()
+                    try:
+                        await status_msg.delete()
+                    except:
+                        print('')
+                        
 
         except Exception as e:
             logger.exception("Download error")
