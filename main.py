@@ -1360,7 +1360,7 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
 
         try:
             # Check if we have it in cache, otherwise download it
-            photo_to_send=None
+            photo_to_send=artwork_url
             if artwork_cache:
                 photo_to_send = artwork_cache
             elif False:
@@ -1374,13 +1374,15 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
                             # Fallback to URL if download fails
                             photo_to_send = None
 
-            #msg = await send_photo(bot, chat_id, photo=photo_to_send, caption=text, reply_markup=markup)
-            msg = await send_message(bot, chat_id, text=text, reply_markup=markup, no=True)
+            if photo_to_send:
+                msg = await send_photo(bot, chat_id, photo=photo_to_send, caption=text, reply_markup=markup)
+            else:
+                msg = await send_message(bot, chat_id, text=text, reply_markup=markup)
 
-            """if cache_id and not artwork_cache and msg:
+            if cache_id and not artwork_cache and msg and photo_to_send:
                 data = await set_mirror(entity_type, cache_id, 'artworkUrl',
                                         'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
-                logger.info(data)"""
+                logger.info(data)
 
         except Exception as e:
             logger.error(f"Failed to send photo: {e}")
