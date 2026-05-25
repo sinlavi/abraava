@@ -3,8 +3,8 @@ name: Test Deploy
 on:
   workflow_dispatch:
   push:  # Auto-start on push
-  #schedule:
-    #- cron: "0 */3 * * *"  # Run every 3 hours
+  schedule:
+    - cron: "0 */3 * * *"  # Run every 3 hours
 
 concurrency:
   group: test-deploy
