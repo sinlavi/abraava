@@ -1081,7 +1081,7 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
         if len(failed_tracks) > 10:
             final_text += f"... و {len(failed_tracks) - 10} قطعه دیگر\n"
     if stopped_by_rate_limit:
-        final_text += "\n🚫 *توقف به دلیل محدودیت ۲۰ دانلود در دو ساعت.*"
+        final_text += "\n🚫 *توقف به دلیل محدودیت ۱۰۰ دانلود در ساعت.*"
 
     await edit_or_send(bot, chat_id, status_msg, final_text, owner_id=user_id)
     album_tracker.finish_download(user_id, collection_id, success_count, len(failed_tracks))
@@ -1654,7 +1654,7 @@ async def handle_message(message):
                             f"بدون عکس، ویدیو، فایل یا پیام فوروارد شده\n"
                             f"فقط کاربری که ربات را صدا زده می‌تواند روی دکمه‌ها کلیک کند\n\n"
                             f"🔒 محدودیت جستجو: {rate_limiter.max_requests} درخواست در دقیقه\n"
-                            f"⬇️ محدودیت دانلود: ۲۰ فایل در هر دو ساعت"
+                            f"⬇️ محدودیت دانلود: ۱۰۰ فایل در هر ساعت"
                             f"",
                             )
 
