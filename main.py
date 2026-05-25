@@ -419,7 +419,7 @@ class DownloadRateLimiter:
         return max(0, self.max_downloads - len(self.users[user_id]))
 
 
-download_rate_limiter = DownloadRateLimiter(max_downloads=20, time_window=7200)
+download_rate_limiter = DownloadRateLimiter(max_downloads=100, time_window=3600)
 
 user_active_downloads = set()
 user_download_lock = asyncio.Lock()
@@ -1666,7 +1666,7 @@ async def handle_message(message):
                             f"⚡ *حالت سریع:* دانلود خودکار اولین نتیجه جستجو\n"
                             f"📀 *دانلود آلبوم:* قابلیت دانلود تمام قطعات یک آلبوم به صورت یکجا\n\n"
                             f"🔒 محدودیت جستجو: {rate_limiter.max_requests} req/min per user\n"
-                            f"⬇️ محدودیت دانلود: ۲۰ فایل در هر دو ساعت"
+                            f"⬇️ محدودیت دانلود: ۱۰۰ فایل در هر  ساعت"
                             f"",
                             )
 
