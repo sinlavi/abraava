@@ -33,6 +33,14 @@ jobs:
           DIGEST=$(docker inspect caomingjun/warp --format='{{.Id}}')
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
 
+      - name: Cache WARP Docker image
+        id: cache-warp
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: /tmp/warp-image.tar
+          key: warp-image-${{ steps.warp-digest.outputs.digest }}
+
       - name: Load or pull WARP container
         id: warp-pull
         continue-on-error: true
