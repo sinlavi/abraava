@@ -24,70 +24,48 @@ jobs:
         with:
           fetch-depth: 1
 
-      # ========== FFmpeg setup (TOP - Fastest to fail if issue) ==========
+      # ========== FFmpeg setup (Direct download - Most reliable) ==========
       - name: Cache FFmpeg binaries
         id: cache-ffmpeg
         uses: actions/cache@v4
         with:
-          path: |
-            /opt/hostedtoolcache/ffmpeg
-            ~/.cache/ffmpeg
-          key: ffmpeg-ubuntu-6.1.1-${{ runner.arch }}
+          path: ~/ffmpeg
+          key: ffmpeg-ubuntu-latest-static
           restore-keys: |
-            ffmpeg-ubuntu-6.1.1-
             ffmpeg-ubuntu-
 
-      - name: Install FFmpeg (pinned version for stability)
+      - name: Download and install FFmpeg static build
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
-        uses: FedericoCarboni/setup-ffmpeg@v3
-        with:
-          ffmpeg-version: "6.1.1"
-          github-token: ${{ github.token }}
-
-      - name: Configure FFmpeg PATH from cache
-        if: steps.cache-ffmpeg.outputs.cache-hit == 'true'
         run: |
-          # Try multiple possible cache locations
-          if [ -d "/opt/hostedtoolcache/ffmpeg" ]; then
-            FFMPEG_DIR=$(find /opt/hostedtoolcache/ffmpeg -type f -name "ffmpeg" -exec dirname {} \; | head -1)
-          elif [ -d "$HOME/.cache/ffmpeg" ]; then
-            FFMPEG_DIR=$(find $HOME/.cache/ffmpeg -type f -name "ffmpeg" -exec dirname {} \; | head -1)
-          fi
-          
-          if [ -n "$FFMPEG_DIR" ] && [ -f "$FFMPEG_DIR/ffmpeg" ]; then
-            echo "$FFMPEG_DIR" >> $GITHUB_PATH
-            echo "✅ FFmpeg PATH configured: $FFMPEG_DIR"
-          else
-            echo "⚠️ Cache miss - binary not found, will reinstall"
-            echo "cache-hit=false" >> $GITHUB_OUTPUT
-          fi
+          cd ~
+          echo "📥 Downloading FFmpeg static build from johnvansickle.com..."
+          wget -q --show-progress https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+          echo "📦 Extracting FFmpeg..."
+          tar -xf ffmpeg-release-amd64-static.tar.xz
+          mv ffmpeg-*-amd64-static ffmpeg
+          rm ffmpeg-release-amd64-static.tar.xz
+          echo "✅ FFmpeg installed to ~/ffmpeg"
+          ls -la ~/ffmpeg/
 
-      - name: Reinstall FFmpeg if cache invalid
-        if: steps.cache-ffmpeg.outputs.cache-hit == 'true' && steps.verify-ffmpeg.outcome == 'failure'
-        uses: FedericoCarboni/setup-ffmpeg@v3
-        with:
-          ffmpeg-version: "6.1.1"
-          github-token: ${{ github.token }}
+      - name: Add FFmpeg to PATH
+        run: |
+          echo "$HOME/ffmpeg" >> $GITHUB_PATH
+          echo "✅ FFmpeg added to PATH"
 
       - name: Verify FFmpeg installation
         id: verify-ffmpeg
         run: |
           if command -v ffmpeg &> /dev/null; then
-            echo "✅ FFmpeg $(ffmpeg -version | head -n1)"
-            echo "📍 Path: $(which ffmpeg)"
-            echo "✅ FFprobe $(ffprobe -version | head -n1)"
-            echo "📍 Path: $(which ffprobe)"
+            echo "✅ FFmpeg version: $(ffmpeg -version | head -n1)"
+            echo "📍 FFmpeg path: $(which ffmpeg)"
+            echo "✅ FFprobe version: $(ffprobe -version | head -n1)"
+            echo "📍 FFprobe path: $(which ffprobe)"
+            
+            # Test FFmpeg functionality
+            ffmpeg -f lavfi -i nullsrc=s=100x100:d=1 -f null - 2>&1 | grep -q "filter" && echo "✅ FFmpeg working correctly"
           else
-            echo "❌ FFmpeg not found in PATH"
-            echo "🔧 Attempting apt-get fallback..."
-            sudo apt-get update
-            sudo apt-get install -y ffmpeg
-            if command -v ffmpeg &> /dev/null; then
-              echo "✅ FFmpeg installed via apt: $(ffmpeg -version | head -n1)"
-            else
-              echo "❌ All FFmpeg installation methods failed"
-              exit 1
-            fi
+            echo "❌ FFmpeg installation failed"
+            exit 1
           fi
 
       # ========== WARP (Cloudflare proxy) with caching ==========
@@ -131,6 +109,7 @@ jobs:
           echo "🧹 Removed old WARP data"
 
       - name: Start Cloudflare WARP proxy
+        id: warp-start
         run: |
           docker network inspect warp-net >/dev/null 2>&1 || docker network create warp-net
           
@@ -148,12 +127,14 @@ jobs:
           echo "⏳ Waiting for WARP to initialize..."
           sleep 15
           
-          echo "🔍 Testing WARP proxy..."
+          echo "🔍 Testing WARP proxy connection..."
           if curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 10 | grep -q "warp=on"; then
             echo "✅ WARP proxy is working!"
+            echo "🌐 External IP:"
             curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 10 | grep "ip="
           else
             echo "❌ WARP proxy failed to connect"
+            docker logs warp --tail 20
             exit 1
           fi
 
@@ -167,10 +148,18 @@ jobs:
             requirements.txt
             pyproject.toml
 
-      - name: Install Python dependencies
+      - name: Upgrade pip
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+            echo "✅ Dependencies installed from requirements.txt"
+          else
+            echo "⚠️ requirements.txt not found"
+          fi
 
       # ========== Run bot ==========
       - name: Run bot
@@ -180,10 +169,13 @@ jobs:
           OFFLINE_MODE: ${{ secrets.OFFLINE_MODE }}
           DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
           INFO_CHANNEL_ID: ${{ secrets.INFO_CHANNEL_ID }}
-          # Optional: Set proxy for all HTTP/HTTPS requests
+          # Proxy configuration (uncomment if your bot needs to use WARP)
+          # ALL_PROXY: socks5://127.0.0.1:1080
           # HTTP_PROXY: socks5://127.0.0.1:1080
           # HTTPS_PROXY: socks5://127.0.0.1:1080
-        run: python main.py
+        run: |
+          echo "🚀 Starting bot..."
+          python main.py
 
       # ========== Restart on failure ==========
       - name: Restart workflow on failure
@@ -193,11 +185,12 @@ jobs:
         run: |
           echo "⚠️ Workflow failed! Triggering restart..."
           echo "📝 Failed job: ${{ github.job }}"
-          echo "🔄 Ref: ${{ github.ref_name }}"
+          echo "🔄 Branch: ${{ github.ref_name }}"
+          echo "🔗 Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           
           sleep 10
           
           gh workflow run "${{ github.workflow }}" --ref "${{ github.ref_name }}"
           
-          echo "✅ Restart triggered"
+          echo "✅ Restart triggered successfully"
           exit 1
