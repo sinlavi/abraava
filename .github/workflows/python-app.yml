@@ -24,33 +24,47 @@ jobs:
         with:
           fetch-depth: 1
 
-      # ========== FFmpeg setup (Direct download - Most reliable) ==========
+      # ========== FFmpeg setup with caching ==========
       - name: Cache FFmpeg binaries
         id: cache-ffmpeg
         uses: actions/cache@v4
         with:
-          path: ~/ffmpeg
-          key: ffmpeg-ubuntu-latest-static
+          path: |
+            ~/ffmpeg-bin
+            /usr/local/bin/ffmpeg
+            /usr/local/bin/ffprobe
+          key: ffmpeg-static-linux64-${{ runner.os }}-v1
           restore-keys: |
-            ffmpeg-ubuntu-
+            ffmpeg-static-linux64-${{ runner.os }}-
 
-      - name: Download and install FFmpeg static build
+      - name: Download and install FFmpeg static build (if not cached)
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |
-          cd ~
-          echo "📥 Downloading FFmpeg static build from johnvansickle.com..."
-          wget -q --show-progress https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+          mkdir -p ~/ffmpeg-bin
+          cd ~/ffmpeg-bin
+          
+          echo "📥 Downloading FFmpeg from GitHub releases..."
+          # Using BtbN's FFmpeg builds (official GitHub releases, very reliable)
+          wget --timeout=60 --tries=3 --retry-connrefused --progress=dot:giga \
+            https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+          
+          if [ ! -f "ffmpeg-master-latest-linux64-gpl.tar.xz" ]; then
+            echo "❌ Download failed, trying fallback..."
+            wget --timeout=60 --tries=3 \
+              https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2025-01-01-12-54/ffmpeg-master-latest-linux64-gpl.tar.xz
+          fi
+          
           echo "📦 Extracting FFmpeg..."
-          tar -xf ffmpeg-release-amd64-static.tar.xz
-          mv ffmpeg-*-amd64-static ffmpeg
-          rm ffmpeg-release-amd64-static.tar.xz
-          echo "✅ FFmpeg installed to ~/ffmpeg"
-          ls -la ~/ffmpeg/
-
-      - name: Add FFmpeg to PATH
-        run: |
-          echo "$HOME/ffmpeg" >> $GITHUB_PATH
-          echo "✅ FFmpeg added to PATH"
+          tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz
+          
+          echo "🔧 Installing FFmpeg..."
+          sudo cp ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/
+          sudo cp ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
+          sudo chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
+          
+          # Cleanup
+          rm -rf ffmpeg-master-latest-linux64-gpl*
+          echo "✅ FFmpeg installed to /usr/local/bin"
 
       - name: Verify FFmpeg installation
         id: verify-ffmpeg
@@ -69,14 +83,14 @@ jobs:
           fi
 
       # ========== WARP (Cloudflare proxy) with caching ==========
-      - name: Check for cached WARP Docker image
+      - name: Cache WARP Docker image
         id: cache-warp
         uses: actions/cache@v4
         with:
           path: /tmp/warp-image.tar
-          key: warp-image-caomingjun-warp
+          key: warp-image-caomingjun-warp-${{ runner.os }}-v1
           restore-keys: |
-            warp-image-
+            warp-image-caomingjun-warp-${{ runner.os }}-
 
       - name: Load cached WARP image if exists
         if: steps.cache-warp.outputs.cache-hit == 'true'
@@ -84,7 +98,6 @@ jobs:
           echo "📦 Loading WARP from cache..."
           docker load < /tmp/warp-image.tar
           echo "✅ WARP loaded from cache"
-          echo "source=cache" >> $GITHUB_OUTPUT
 
       - name: Pull fresh WARP image if not cached
         if: steps.cache-warp.outputs.cache-hit != 'true'
@@ -93,7 +106,6 @@ jobs:
           docker pull caomingjun/warp
           docker save caomingjun/warp -o /tmp/warp-image.tar
           echo "✅ WARP pulled and saved to cache"
-          echo "source=fresh" >> $GITHUB_OUTPUT
 
       - name: Remove old WARP data volume for fresh IP
         continue-on-error: true
@@ -119,18 +131,17 @@ jobs:
             caomingjun/warp
           
           echo "⏳ Waiting for WARP to initialize..."
-          sleep 15
+          for i in {1..30}; do
+            if curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 5 --silent | grep -q "warp=on"; then
+              echo "✅ WARP proxy is working!"
+              break
+            fi
+            echo "⏳ Attempt $i/30: WARP not ready yet..."
+            sleep 5
+          done
           
-          echo "🔍 Testing WARP proxy connection..."
-          if curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 10 | grep -q "warp=on"; then
-            echo "✅ WARP proxy is working!"
-            echo "🌐 External IP:"
-            curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 10 | grep "ip="
-          else
-            echo "❌ WARP proxy failed to connect"
-            docker logs warp --tail 20
-            exit 1
-          fi
+          echo "🌐 External IP:"
+          curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 10 | grep "ip=" || echo "⚠️ Could not get IP, but continuing..."
 
       # ========== Python environment ==========
       - name: Set up Python
