@@ -69,37 +69,31 @@ jobs:
           fi
 
       # ========== WARP (Cloudflare proxy) with caching ==========
-      - name: Get WARP image digest
-        id: warp-digest
-        run: |
-          docker pull --quiet caomingjun/warp
-          DIGEST=$(docker inspect caomingjun/warp --format='{{.Id}}')
-          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-
-      - name: Cache WARP Docker image
+      - name: Check for cached WARP Docker image
         id: cache-warp
         uses: actions/cache@v4
         with:
           path: /tmp/warp-image.tar
-          key: warp-image-${{ steps.warp-digest.outputs.digest }}
+          key: warp-image-caomingjun-warp
           restore-keys: |
             warp-image-
 
-      - name: Load or pull WARP container
-        id: warp-setup
+      - name: Load cached WARP image if exists
+        if: steps.cache-warp.outputs.cache-hit == 'true'
         run: |
-          if [[ -f /tmp/warp-image.tar ]]; then
-            echo "📦 Loading WARP from cache..."
-            docker load < /tmp/warp-image.tar
-            echo "✅ WARP loaded from cache"
-            echo "source=cache" >> $GITHUB_OUTPUT
-          else
-            echo "🌐 Pulling fresh WARP image..."
-            docker pull caomingjun/warp
-            docker save caomingjun/warp -o /tmp/warp-image.tar
-            echo "✅ WARP pulled and saved to cache"
-            echo "source=fresh" >> $GITHUB_OUTPUT
-          fi
+          echo "📦 Loading WARP from cache..."
+          docker load < /tmp/warp-image.tar
+          echo "✅ WARP loaded from cache"
+          echo "source=cache" >> $GITHUB_OUTPUT
+
+      - name: Pull fresh WARP image if not cached
+        if: steps.cache-warp.outputs.cache-hit != 'true'
+        run: |
+          echo "🌐 Pulling fresh WARP image..."
+          docker pull caomingjun/warp
+          docker save caomingjun/warp -o /tmp/warp-image.tar
+          echo "✅ WARP pulled and saved to cache"
+          echo "source=fresh" >> $GITHUB_OUTPUT
 
       - name: Remove old WARP data volume for fresh IP
         continue-on-error: true
