@@ -2,9 +2,9 @@ name: Test Deploy
 
 on:
   workflow_dispatch:
-  push:  # Auto-start on push
+  push:
   schedule:
-    - cron: "0 */3 * * *"  # Run every 3 hours
+    - cron: "0 */3 * * *"
 
 concurrency:
   group: test-deploy
@@ -14,7 +14,7 @@ jobs:
   run-bot:
     permissions:
       contents: write
-      actions: write  # Required to trigger a workflow restart via GH CLI
+      actions: write
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -24,7 +24,73 @@ jobs:
         with:
           fetch-depth: 1
 
-      # ========== WARP (Cloudflare proxy) - Fresh IP each time ==========
+      # ========== FFmpeg setup (TOP - Fastest to fail if issue) ==========
+      - name: Cache FFmpeg binaries
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: |
+            /opt/hostedtoolcache/ffmpeg
+            ~/.cache/ffmpeg
+          key: ffmpeg-ubuntu-6.1.1-${{ runner.arch }}
+          restore-keys: |
+            ffmpeg-ubuntu-6.1.1-
+            ffmpeg-ubuntu-
+
+      - name: Install FFmpeg (pinned version for stability)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        uses: FedericoCarboni/setup-ffmpeg@v3
+        with:
+          ffmpeg-version: "6.1.1"
+          github-token: ${{ github.token }}
+
+      - name: Configure FFmpeg PATH from cache
+        if: steps.cache-ffmpeg.outputs.cache-hit == 'true'
+        run: |
+          # Try multiple possible cache locations
+          if [ -d "/opt/hostedtoolcache/ffmpeg" ]; then
+            FFMPEG_DIR=$(find /opt/hostedtoolcache/ffmpeg -type f -name "ffmpeg" -exec dirname {} \; | head -1)
+          elif [ -d "$HOME/.cache/ffmpeg" ]; then
+            FFMPEG_DIR=$(find $HOME/.cache/ffmpeg -type f -name "ffmpeg" -exec dirname {} \; | head -1)
+          fi
+          
+          if [ -n "$FFMPEG_DIR" ] && [ -f "$FFMPEG_DIR/ffmpeg" ]; then
+            echo "$FFMPEG_DIR" >> $GITHUB_PATH
+            echo "✅ FFmpeg PATH configured: $FFMPEG_DIR"
+          else
+            echo "⚠️ Cache miss - binary not found, will reinstall"
+            echo "cache-hit=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Reinstall FFmpeg if cache invalid
+        if: steps.cache-ffmpeg.outputs.cache-hit == 'true' && steps.verify-ffmpeg.outcome == 'failure'
+        uses: FedericoCarboni/setup-ffmpeg@v3
+        with:
+          ffmpeg-version: "6.1.1"
+          github-token: ${{ github.token }}
+
+      - name: Verify FFmpeg installation
+        id: verify-ffmpeg
+        run: |
+          if command -v ffmpeg &> /dev/null; then
+            echo "✅ FFmpeg $(ffmpeg -version | head -n1)"
+            echo "📍 Path: $(which ffmpeg)"
+            echo "✅ FFprobe $(ffprobe -version | head -n1)"
+            echo "📍 Path: $(which ffprobe)"
+          else
+            echo "❌ FFmpeg not found in PATH"
+            echo "🔧 Attempting apt-get fallback..."
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+            if command -v ffmpeg &> /dev/null; then
+              echo "✅ FFmpeg installed via apt: $(ffmpeg -version | head -n1)"
+            else
+              echo "❌ All FFmpeg installation methods failed"
+              exit 1
+            fi
+          fi
+
+      # ========== WARP (Cloudflare proxy) with caching ==========
       - name: Get WARP image digest
         id: warp-digest
         run: |
@@ -38,107 +104,72 @@ jobs:
         with:
           path: /tmp/warp-image.tar
           key: warp-image-${{ steps.warp-digest.outputs.digest }}
+          restore-keys: |
+            warp-image-
 
       - name: Load or pull WARP container
-        id: warp-pull
+        id: warp-setup
         run: |
           if [[ -f /tmp/warp-image.tar ]]; then
+            echo "📦 Loading WARP from cache..."
             docker load < /tmp/warp-image.tar
+            echo "✅ WARP loaded from cache"
+            echo "source=cache" >> $GITHUB_OUTPUT
           else
+            echo "🌐 Pulling fresh WARP image..."
             docker pull caomingjun/warp
             docker save caomingjun/warp -o /tmp/warp-image.tar
+            echo "✅ WARP pulled and saved to cache"
+            echo "source=fresh" >> $GITHUB_OUTPUT
           fi
 
       - name: Remove old WARP data volume for fresh IP
-        id: cleanup-warp-data
         continue-on-error: true
         run: |
           docker rm -f warp 2>/dev/null || true
           docker volume rm warp-data 2>/dev/null || true
-          echo "Removed old WARP data to get a fresh IP"
+          echo "🧹 Removed old WARP data"
 
-      - name: Start Cloudflare WARP proxy (new IP)
-        id: warp-start
+      - name: Start Cloudflare WARP proxy
         run: |
           docker network inspect warp-net >/dev/null 2>&1 || docker network create warp-net
-          docker run -d --name warp --restart=always --network warp-net \
-            -p 1080:1080 --cap-add NET_ADMIN \
+          
+          docker run -d \
+            --name warp \
+            --restart=always \
+            --network warp-net \
+            -p 1080:1080 \
+            --cap-add NET_ADMIN \
             --sysctl net.ipv6.conf.all.disable_ipv6=0 \
             --sysctl net.ipv4.conf.all.src_valid_mark=1 \
             -v warp-data:/var/lib/cloudflare-warp \
             caomingjun/warp
+          
+          echo "⏳ Waiting for WARP to initialize..."
           sleep 15
           
-          # Test proxy connection
-          echo "Testing WARP proxy connection..."
+          echo "🔍 Testing WARP proxy..."
           if curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 10 | grep -q "warp=on"; then
-            echo "WARP proxy is working!"
+            echo "✅ WARP proxy is working!"
             curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 10 | grep "ip="
           else
-            echo "WARP proxy failed to connect"
+            echo "❌ WARP proxy failed to connect"
             exit 1
           fi
 
-      # ========== FFmpeg setup (fast, with caching) ==========
-      - name: Cache FFmpeg binaries
-        id: cache-ffmpeg
-        uses: actions/cache@v4
-        with:
-          path: /opt/hostedtoolcache/ffmpeg
-          key: ffmpeg-ubuntu-latest-release
-          restore-keys: |
-            ffmpeg-ubuntu-latest-
-
-      - name: Install FFmpeg
-        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
-        uses: FedericoCarboni/setup-ffmpeg@v3
-        with:
-          ffmpeg-version: release
-          github-token: ${{ github.token }}
-
-      - name: Add FFmpeg to PATH (from cache)
-        if: steps.cache-ffmpeg.outputs.cache-hit == 'true'
-        run: |
-          # Find the actual ffmpeg directory in tool cache
-          FFMPEG_DIR=$(find /opt/hostedtoolcache/ffmpeg -name "ffmpeg" -type f -exec dirname {} \; | head -1)
-          if [ -n "$FFMPEG_DIR" ]; then
-            echo "$FFMPEG_DIR" >> $GITHUB_PATH
-            echo "Added $FFMPEG_DIR to PATH"
-          else
-            echo "::warning::FFmpeg binary not found in cache, will reinstall"
-            # Force reinstall if binary missing
-            echo "cache-hit=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Reinstall FFmpeg if cache invalid
-        if: steps.cache-ffmpeg.outputs.cache-hit == 'true' && steps.verify-ffmpeg.outcome == 'failure'
-        uses: FedericoCarboni/setup-ffmpeg@v3
-        with:
-          ffmpeg-version: release
-          github-token: ${{ github.token }}
-
-      - name: Verify FFmpeg installation
-        id: verify-ffmpeg
-        run: |
-          if command -v ffmpeg &> /dev/null; then
-            echo "✓ FFmpeg installed: $(ffmpeg -version | head -n1)"
-            echo "✓ FFmpeg path: $(which ffmpeg)"
-            echo "✓ FFprobe path: $(which ffprobe)"
-          else
-            echo "✗ FFmpeg not found in PATH"
-            exit 1
-          fi
-
-      # ========== Python & dependencies ==========
+      # ========== Python environment ==========
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
 
       - name: Install Python dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       # ========== Run bot ==========
@@ -149,22 +180,24 @@ jobs:
           OFFLINE_MODE: ${{ secrets.OFFLINE_MODE }}
           DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
           INFO_CHANNEL_ID: ${{ secrets.INFO_CHANNEL_ID }}
+          # Optional: Set proxy for all HTTP/HTTPS requests
+          # HTTP_PROXY: socks5://127.0.0.1:1080
+          # HTTPS_PROXY: socks5://127.0.0.1:1080
         run: python main.py
 
-      # ========== Restart on Failure ==========
+      # ========== Restart on failure ==========
       - name: Restart workflow on failure
         if: failure() && github.event_name != 'schedule'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "⚠️ Workflow failed! Triggering a restart..."
-          echo "Failed step: ${{ github.job }}"
+          echo "⚠️ Workflow failed! Triggering restart..."
+          echo "📝 Failed job: ${{ github.job }}"
+          echo "🔄 Ref: ${{ github.ref_name }}"
           
-          # Wait a moment before restarting
           sleep 10
           
-          # Trigger new workflow run
           gh workflow run "${{ github.workflow }}" --ref "${{ github.ref_name }}"
           
-          # Exit with error to mark this run as failed
+          echo "✅ Restart triggered"
           exit 1
