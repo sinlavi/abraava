@@ -1,4 +1,4 @@
-name: Test Deploy (Fast)
+name: Test Deploy
 
 on:
   workflow_dispatch:
@@ -19,86 +19,178 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      # ========== PRE-CACHED EVERYTHING ==========
-      - name: Restore all caches
-        uses: actions/cache/restore@v4
-        id: cache
+      # ========== FFmpeg setup (Direct download - Most reliable) ==========
+      - name: Cache FFmpeg binaries
+        id: cache-ffmpeg
+        uses: actions/cache@v4
         with:
-          path: |
-            ~/ffmpeg
-            /tmp/warp-image.tar
-            ~/.cache/pip
-          key: full-cache-${{ runner.os }}-${{ github.sha }}
+          path: ~/ffmpeg
+          key: ffmpeg-ubuntu-latest-static
           restore-keys: |
-            full-cache-${{ runner.os }}-
-            full-cache-
+            ffmpeg-ubuntu-
 
-      # ========== FFMPEG (2 seconds) ==========
-      - name: Setup FFmpeg
-        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Download and install FFmpeg static build
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |
-          mkdir -p ~/ffmpeg
-          wget -qO- https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz | tar -xJ -C /tmp/
-          mv /tmp/ffmpeg-*-amd64-static/* ~/ffmpeg/
-        continue-on-error: true
-      
-      - name: Use FFmpeg
+          cd ~
+          echo "📥 Downloading FFmpeg static build from johnvansickle.com..."
+          wget -q --show-progress https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+          echo "📦 Extracting FFmpeg..."
+          tar -xf ffmpeg-release-amd64-static.tar.xz
+          mv ffmpeg-*-amd64-static ffmpeg
+          rm ffmpeg-release-amd64-static.tar.xz
+          echo "✅ FFmpeg installed to ~/ffmpeg"
+          ls -la ~/ffmpeg/
+
+      - name: Add FFmpeg to PATH
         run: |
           echo "$HOME/ffmpeg" >> $GITHUB_PATH
-          ffmpeg -version | head -n1
+          echo "✅ FFmpeg added to PATH"
 
-      # ========== WARP (1 second) ==========
-      - name: Setup WARP
-        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Verify FFmpeg installation
+        id: verify-ffmpeg
         run: |
-          docker pull caomingjun/warp
-          docker save caomingjun/warp -o /tmp/warp-image.tar
-      
-      - name: Start WARP
-        run: |
-          docker load < /tmp/warp-image.tar 2>/dev/null || true
-          docker run -d --name warp -p 1080:1080 --cap-add NET_ADMIN caomingjun/warp
-          sleep 3
+          if command -v ffmpeg &> /dev/null; then
+            echo "✅ FFmpeg version: $(ffmpeg -version | head -n1)"
+            echo "📍 FFmpeg path: $(which ffmpeg)"
+            echo "✅ FFprobe version: $(ffprobe -version | head -n1)"
+            echo "📍 FFprobe path: $(which ffprobe)"
+            
+            # Test FFmpeg functionality
+            ffmpeg -f lavfi -i nullsrc=s=100x100:d=1 -f null - 2>&1 | grep -q "filter" && echo "✅ FFmpeg working correctly"
+          else
+            echo "❌ FFmpeg installation failed"
+            exit 1
+          fi
 
-      # ========== PYTHON (1 second if cached) ==========
-      - name: Setup Python
+      # ========== WARP (Cloudflare proxy) with caching ==========
+      - name: Get WARP image digest
+        id: warp-digest
+        run: |
+          docker pull --quiet caomingjun/warp
+          DIGEST=$(docker inspect caomingjun/warp --format='{{.Id}}')
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+      - name: Cache WARP Docker image
+        id: cache-warp
+        uses: actions/cache@v4
+        with:
+          path: /tmp/warp-image.tar
+          key: warp-image-${{ steps.warp-digest.outputs.digest }}
+          restore-keys: |
+            warp-image-
+
+      - name: Load or pull WARP container
+        id: warp-setup
+        run: |
+          if [[ -f /tmp/warp-image.tar ]]; then
+            echo "📦 Loading WARP from cache..."
+            docker load < /tmp/warp-image.tar
+            echo "✅ WARP loaded from cache"
+            echo "source=cache" >> $GITHUB_OUTPUT
+          else
+            echo "🌐 Pulling fresh WARP image..."
+            docker pull caomingjun/warp
+            docker save caomingjun/warp -o /tmp/warp-image.tar
+            echo "✅ WARP pulled and saved to cache"
+            echo "source=fresh" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Remove old WARP data volume for fresh IP
+        continue-on-error: true
+        run: |
+          docker rm -f warp 2>/dev/null || true
+          docker volume rm warp-data 2>/dev/null || true
+          echo "🧹 Removed old WARP data"
+
+      - name: Start Cloudflare WARP proxy
+        id: warp-start
+        run: |
+          docker network inspect warp-net >/dev/null 2>&1 || docker network create warp-net
+          
+          docker run -d \
+            --name warp \
+            --restart=always \
+            --network warp-net \
+            -p 1080:1080 \
+            --cap-add NET_ADMIN \
+            --sysctl net.ipv6.conf.all.disable_ipv6=0 \
+            --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+            -v warp-data:/var/lib/cloudflare-warp \
+            caomingjun/warp
+          
+          echo "⏳ Waiting for WARP to initialize..."
+          sleep 15
+          
+          echo "🔍 Testing WARP proxy connection..."
+          if curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 10 | grep -q "warp=on"; then
+            echo "✅ WARP proxy is working!"
+            echo "🌐 External IP:"
+            curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 10 | grep "ip="
+          else
+            echo "❌ WARP proxy failed to connect"
+            docker logs warp --tail 20
+            exit 1
+          fi
+
+      # ========== Python environment ==========
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
 
-      - name: Install deps
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: pip install -r requirements.txt
+      - name: Upgrade pip
+        run: |
+          python -m pip install --upgrade pip
 
-      # ========== SAVE CACHE FOR NEXT RUN ==========
-      - name: Save cache
-        if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/ffmpeg
-            /tmp/warp-image.tar
-            ~/.cache/pip
-          key: full-cache-${{ runner.os }}-${{ github.run_id }}
+      - name: Install Python dependencies
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+            echo "✅ Dependencies installed from requirements.txt"
+          else
+            echo "⚠️ requirements.txt not found"
+          fi
 
-      # ========== RUN ==========
+      # ========== Run bot ==========
       - name: Run bot
+        id: bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           OFFLINE_MODE: ${{ secrets.OFFLINE_MODE }}
           DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
           INFO_CHANNEL_ID: ${{ secrets.INFO_CHANNEL_ID }}
-        run: python main.py
+          # Proxy configuration (uncomment if your bot needs to use WARP)
+          # ALL_PROXY: socks5://127.0.0.1:1080
+          # HTTP_PROXY: socks5://127.0.0.1:1080
+          # HTTPS_PROXY: socks5://127.0.0.1:1080
+        run: |
+          echo "🚀 Starting bot..."
+          python main.py
 
-      # ========== RESTART ==========
-      - name: Restart
+      # ========== Restart on failure ==========
+      - name: Restart workflow on failure
         if: failure() && github.event_name != 'schedule'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run "${{ github.workflow }}" --ref "${{ github.ref_name }}" && exit 1
+        run: |
+          echo "⚠️ Workflow failed! Triggering restart..."
+          echo "📝 Failed job: ${{ github.job }}"
+          echo "🔄 Branch: ${{ github.ref_name }}"
+          echo "🔗 Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          
+          sleep 10
+          
+          gh workflow run "${{ github.workflow }}" --ref "${{ github.ref_name }}"
+          
+          echo "✅ Restart triggered successfully"
+          exit 1
