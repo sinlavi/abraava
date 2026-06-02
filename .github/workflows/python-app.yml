@@ -95,7 +95,7 @@ jobs:
           ffmpeg-version: release
           architecture: ''
           linking-type: env
-          github-token: ${{ github.server_url == 'https://github.com && github.token || '' }}
+          github-token: ${{ github.server_url == 'https://github.com && github.token' || '' }}
 
       - name: Verify FFmpeg installation
         id: verify-ffmpeg
