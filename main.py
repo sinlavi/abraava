@@ -32,6 +32,97 @@ from utils import tag_mp3, send_error_with_retry, send_message, send_photo, send
 import requests
 
 # ============================================================================
+# Bale Upload Health Status
+# ============================================================================
+BALE_UPLOAD_ISSUE = False
+BALE_UPLOAD_ISSUE_MESSAGE_ID = None
+BALE_UPLOAD_ISSUE_NOTIFIED = False
+BALE_UPLOAD_ISSUE_CHECK_INTERVAL = 60  # Check every 60 seconds
+BALE_UPLOAD_CONSECUTIVE_FAILURES = 0
+BALE_UPLOAD_MAX_FAILURES = 3  # After 3 failures, declare issue
+BALE_UPLOAD_CONSECUTIVE_SUCCESSES = 0
+BALE_UPLOAD_MIN_SUCCESSES = 2  # After 2 successes, declare resolved
+
+
+async def notify_bale_upload_issue(bot: Client, issue_detected: bool, error_details: str = ""):
+    """Send notification to info channel about Bale upload issues"""
+    global BALE_UPLOAD_ISSUE_MESSAGE_ID, BALE_UPLOAD_ISSUE_NOTIFIED
+    
+    if not INFO_CHANNEL_ID:
+        logger.warning("INFO_CHANNEL_ID not set, cannot send notification")
+        return
+    
+    try:
+        if issue_detected and not BALE_UPLOAD_ISSUE_NOTIFIED:
+            # Send issue notification
+            message_text = (
+                f"⚠️ *اخطار: مشکل در آپلود فایل به بله*\n\n"
+                f"ربات با خطای 500 (Internal Server Error) مواجه شده است.\n"
+                f"این مشکل ممکن است به دلیل اختلال در سرورهای بله باشد.\n\n"
+                f"📝 جزئیات: {error_details}\n"
+                f"🕐 زمان: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"ربات به حالت اضطراری تغییر می‌کند و تا رفع مشکل، تصاویر با URL ارسال می‌شوند.\n\n"
+                f"#اطلاع_رسانی #مشکل_بله #اختلال_سرور"
+            )
+            
+            msg = await send_message(bot, INFO_CHANNEL_ID, message_text)
+            if msg:
+                BALE_UPLOAD_ISSUE_MESSAGE_ID = msg.id
+                BALE_UPLOAD_ISSUE_NOTIFIED = True
+                logger.info(f"Sent Bale upload issue notification to channel {INFO_CHANNEL_ID}")
+                
+        elif not issue_detected and BALE_UPLOAD_ISSUE_NOTIFIED:
+            # Send resolution notification and delete old message
+            message_text = (
+                f"✅ *مشکل آپلود به بله برطرف شد*\n\n"
+                f"ربات به حالت عادی بازگشت.\n"
+                f"🕐 زمان رفع: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"#اطلاع_رسانی #مشکل_بله #رفع_مشکل"
+            )
+            
+            await send_message(bot, INFO_CHANNEL_ID, message_text)
+            
+            # Delete the old issue notification if exists
+            if BALE_UPLOAD_ISSUE_MESSAGE_ID:
+                try:
+                    await bot.delete_message(INFO_CHANNEL_ID, BALE_UPLOAD_ISSUE_MESSAGE_ID)
+                except Exception as e:
+                    logger.error(f"Failed to delete issue notification: {e}")
+            
+            BALE_UPLOAD_ISSUE_MESSAGE_ID = None
+            BALE_UPLOAD_ISSUE_NOTIFIED = False
+            logger.info("Bale upload issue resolved notification sent")
+            
+    except Exception as e:
+        logger.error(f"Failed to send Bale upload notification: {e}")
+
+
+def check_bale_upload_status(success: bool):
+    """Update Bale upload health status based on success/failure"""
+    global BALE_UPLOAD_ISSUE, BALE_UPLOAD_CONSECUTIVE_FAILURES, BALE_UPLOAD_CONSECUTIVE_SUCCESSES
+    
+    if success:
+        BALE_UPLOAD_CONSECUTIVE_FAILURES = 0
+        BALE_UPLOAD_CONSECUTIVE_SUCCESSES += 1
+        
+        # If we had an issue and now have enough successes, resolve it
+        if BALE_UPLOAD_ISSUE and BALE_UPLOAD_CONSECUTIVE_SUCCESSES >= BALE_UPLOAD_MIN_SUCCESSES:
+            BALE_UPLOAD_ISSUE = False
+            BALE_UPLOAD_CONSECUTIVE_SUCCESSES = 0
+            asyncio.create_task(notify_bale_upload_issue(bot, False))
+            logger.info("Bale upload issue resolved")
+    else:
+        BALE_UPLOAD_CONSECUTIVE_SUCCESSES = 0
+        BALE_UPLOAD_CONSECUTIVE_FAILURES += 1
+        
+        # If we have enough consecutive failures, declare issue
+        if not BALE_UPLOAD_ISSUE and BALE_UPLOAD_CONSECUTIVE_FAILURES >= BALE_UPLOAD_MAX_FAILURES:
+            BALE_UPLOAD_ISSUE = True
+            asyncio.create_task(notify_bale_upload_issue(bot, True, f"{BALE_UPLOAD_CONSECUTIVE_FAILURES} consecutive failures"))
+            logger.warning("Bale upload issue detected")
+
+
+# ============================================================================
 # API Client for PHP Backend
 # ============================================================================
 # ============================================================================
@@ -810,6 +901,62 @@ async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: s
                                     f"quick_retry:{term}", status_msg)
 
 
+async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file_name: str, caption: str,
+                                max_retries=3, direct=False, track_id=None):
+    last_exception = None
+    abs_audio_path = os.path.abspath(str(audio_path))
+
+    exists = await asyncio.to_thread(os.path.exists, abs_audio_path)
+    if not exists:
+        logger.error(f"File not found for upload: {abs_audio_path}")
+        raise FileNotFoundError(f"File not found: {abs_audio_path}")
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            with open(abs_audio_path, 'rb') as audio_file:
+                logger.info(f'Sending audio, attempt {attempt}/{max_retries}...')
+                markup = [[InlineKeyboardButton(
+                    text="📂 نمایش در مینی اپ",
+                    web_app="https://player.abraava.ir?id=" + track_id
+                )], [InlineKeyboardButton(
+                    text="📋 کپی پیوند",
+                    copy_text="https://player.abraava.ir?id=" + track_id
+                )]]
+                msg = await send_audio(
+                    bot,
+                    chat_id=chat_id,
+                    audio=audio_file,
+                    caption=caption,
+                    reply_markup=markup,
+                )
+
+                await set_mirror('track', str(track_id), 'audioUrl',
+                                 'https://tapi.bale.ai/file/bot<token>/' + str(msg.audio.id))
+                
+                # Success! Update health status
+                check_bale_upload_status(True)
+                return msg
+
+        except Exception as e:
+            error_str = str(e)
+            last_exception = e
+            logger.warning(f"send_audio attempt {attempt}/{max_retries} failed: {error_str}")
+            
+            # Check if it's a 500 error
+            if "500" in error_str or "Internal Server Error" in error_str:
+                check_bale_upload_status(False)
+                logger.warning(f"Bale upload 500 error detected on attempt {attempt}")
+
+            if attempt < max_retries:
+                wait_time = attempt * 3
+                logger.info(f"Retrying in {wait_time} seconds...")
+                await asyncio.sleep(wait_time)
+            else:
+                raise Exception("آپلود در بله به مشکل مواجه شد. لطفاً بعداً تلاش کنید یا آهنگ دیگری انتخاب کنید.")
+
+    raise last_exception if last_exception else Exception("آپلود در بله به مشکل مواجه شد")
+
+
 async def download_and_send_single_track(bot: Client, chat_id: int, track_id: int, user_id: int = None,
                                          status_msg: Message = None, is_batch: bool = False,
                                          album_artwork_bytes: bytes = None):
@@ -982,68 +1129,6 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
         if True:
             await send_error_with_retry(bot, chat_id, f"خطا در جستجوی یوتیوب: {str(e)[:100]}",
                                         f"download_retry:{track_id}", status_msg)
-
-
-def _get_file_size_sync(path_str):
-    p = Path(path_str)
-    return p.stat().st_size / (1024 * 1024) if p.exists() else 0
-
-
-def _delete_file_sync(path_str):
-    try:
-        p = Path(path_str)
-        if p.exists():
-            p.unlink()
-    except Exception as e:
-        logger.error(f"Failed to delete temp file {path_str}: {e}")
-
-
-async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file_name: str, caption: str,
-                                max_retries=3, direct=False, track_id=None):
-    last_exception = None
-    abs_audio_path = os.path.abspath(str(audio_path))
-
-    exists = await asyncio.to_thread(os.path.exists, abs_audio_path)
-    if not exists:
-        logger.error(f"File not found for upload: {abs_audio_path}")
-        raise FileNotFoundError(f"File not found: {abs_audio_path}")
-
-    for attempt in range(1, max_retries + 1):
-        try:
-            with open(abs_audio_path, 'rb') as audio_file:
-                logger.info(f'Sending audio, attempt {attempt}/{max_retries}...')
-                markup = [[InlineKeyboardButton(
-                    text="📂 نمایش در مینی اپ",
-                    web_app="https://player.abraava.ir?id=" + track_id
-                )], [InlineKeyboardButton(
-                    text="📋 کپی پیوند",
-                    copy_text="https://player.abraava.ir?id=" + track_id
-                )]]
-                msg = await send_audio(
-                    bot,
-                    chat_id=chat_id,
-                    audio=audio_file,
-                    caption=caption,
-                    reply_markup=markup,
-                )
-
-                await set_mirror('track', str(track_id), 'audioUrl',
-                                 'https://tapi.bale.ai/file/bot<token>/' + str(msg.audio.id))
-                return msg
-
-        except Exception as e:
-            error_str = str(e)
-            last_exception = e
-            logger.warning(f"send_audio attempt {attempt}/{max_retries} failed: {error_str}")
-
-            if attempt < max_retries:
-                wait_time = attempt * 3
-                logger.info(f"Retrying in {wait_time} seconds...")
-                await asyncio.sleep(wait_time)
-            else:
-                raise Exception("آپلود در بله به مشکل مواجه شد. لطفاً بعداً تلاش کنید یا آهنگ دیگری انتخاب کنید.")
-
-    raise last_exception if last_exception else Exception("آپلود در بله به مشکل مواجه شد")
 
 
 async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None):
@@ -1434,6 +1519,8 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
 async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
                        markup=None, artwork_url: str = None, entity_type: str = None, cache_id: int = None,
                        owner_id=None):
+    global BALE_UPLOAD_ISSUE
+    
     if markup is None:
         markup = []
 
@@ -1444,24 +1531,43 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
             file_id_or_url, artwork_bytes = await get_artwork_for_display(artwork_url, entity_type, cache_id)
             
             if file_id_or_url:
-                # Check if it's a file_id (starts with https://tapi.bale.ai/file/bot)
-                if file_id_or_url.startswith('https://tapi.bale.ai/file/'):
-                    # This is a file_id from mirror, use directly
+                # Check if Bale upload has issues
+                if BALE_UPLOAD_ISSUE:
+                    # In issue mode: always use URL (don't try to upload)
+                    logger.info(f"Bale upload issue detected, using URL for artwork: {file_id_or_url[:100]}")
                     msg = await send_photo(bot, chat_id, photo=file_id_or_url, caption=text, reply_markup=markup)
                 else:
-                    # This is a URL, send as is
-                    msg = await send_photo(bot, chat_id, photo=file_id_or_url, caption=text, reply_markup=markup)
-                
-                # If we downloaded artwork (artwork_bytes exists), set mirror for future use
-                if artwork_bytes and msg and msg.photo:
-                    await set_mirror(entity_type, str(cache_id), 'artworkUrl',
-                                     'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
+                    # Normal mode: try to send as file
+                    try:
+                        # Check if it's a file_id (starts with https://tapi.bale.ai/file/bot)
+                        if isinstance(file_id_or_url, str) and file_id_or_url.startswith('https://tapi.bale.ai/file/'):
+                            # This is a file_id from mirror, use directly
+                            msg = await send_photo(bot, chat_id, photo=file_id_or_url, caption=text, reply_markup=markup)
+                        else:
+                            # This is a URL, send as is
+                            msg = await send_photo(bot, chat_id, photo=file_id_or_url, caption=text, reply_markup=markup)
+                        
+                        # If we downloaded artwork (artwork_bytes exists), set mirror for future use
+                        if artwork_bytes and msg and msg.photo:
+                            await set_mirror(entity_type, str(cache_id), 'artworkUrl',
+                                             'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
+                    except Exception as upload_error:
+                        error_str = str(upload_error)
+                        if "500" in error_str or "Internal Server Error" in error_str:
+                            # Mark issue but don't notify again (already notified)
+                            BALE_UPLOAD_ISSUE = True
+                            logger.warning(f"Bale upload 500 error in edit_or_send, falling back to URL")
+                            # Retry with URL directly
+                            msg = await send_photo(bot, chat_id, photo=file_id_or_url, caption=text, reply_markup=markup)
+                        else:
+                            raise
             else:
                 # No artwork available, send text only
                 msg = await send_message(bot, chat_id, text=text, reply_markup=markup, no=True)
                 
         except Exception as e:
             logger.error(f"Failed to send photo: {e}")
+            # Final fallback: send as text message
             msg = await send_message(bot, chat_id, text=text, reply_markup=markup, no=True)
     else:
         msg = await send_message(bot, chat_id, text, reply_markup=markup)
@@ -1583,7 +1689,8 @@ async def on_initialize():
 
 @bot.on_shutdown()
 async def on_shutdown():
-    global HTTP_SESSION    
+    global HTTP_SESSION
+
     if HTTP_SESSION and not HTTP_SESSION.closed:
         await HTTP_SESSION.close()
 
