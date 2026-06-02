@@ -33,6 +33,83 @@ import requests
 
 
 # ============================================================================
+# Bale Upload Error Notification System
+# ============================================================================
+class BaleUploadErrorNotifier:
+    def __init__(self):
+        self.notification_message_id = None
+        self.error_active = False
+        self.last_error_time = 0
+        self.error_cooldown = 300  # 5 minutes cooldown between notifications
+
+    async def notify_upload_error(self, bot: Client, error_message: str = ""):
+        """Send notification to info channel about Bale upload issues"""
+        if not INFO_CHANNEL_ID:
+            return
+        
+        current_time = time.time()
+        
+        # Check cooldown to avoid spam
+        if current_time - self.last_error_time < self.error_cooldown:
+            return
+        
+        self.last_error_time = current_time
+        
+        notification_text = (
+            "⚠️ *اخطار: اختلال در سرویس آپلود بله* ⚠️\n\n"
+            "در حال حاضر سرویس آپلود فایل پیام‌رسان بله با مشکل مواجه شده است.\n"
+            "این مشکل از سمت بله می‌باشد و به محض رفع مشکل، ربات به حالت عادی بازخواهد گشت.\n\n"
+            f"زمان: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"خطا: {error_message[:200] if error_message else 'خطای ناشناخته در آپلود فایل'}\n\n"
+            "✅ به محض رفع مشکل، این پیام حذف خواهد شد."
+        )
+        
+        try:
+            if not self.error_active:
+                # Send new notification
+                msg = await send_message(bot, INFO_CHANNEL_ID, notification_text)
+                self.notification_message_id = msg.id
+                self.error_active = True
+                logger.warning(f"Bale upload error notification sent to channel {INFO_CHANNEL_ID}")
+            else:
+                # Update existing notification
+                try:
+                    await bot.edit_message(
+                        chat_id=INFO_CHANNEL_ID,
+                        message_id=self.notification_message_id,
+                        text=notification_text
+                    )
+                except:
+                    # If edit fails, send new one
+                    msg = await send_message(bot, INFO_CHANNEL_ID, notification_text)
+                    self.notification_message_id = msg.id
+        except Exception as e:
+            logger.error(f"Failed to send upload error notification: {e}")
+
+    async def clear_upload_error_notification(self, bot: Client):
+        """Remove the error notification when issue is resolved"""
+        if not INFO_CHANNEL_ID or not self.error_active:
+            return
+        
+        try:
+            await bot.delete_message(INFO_CHANNEL_ID, self.notification_message_id)
+            logger.info("Bale upload error notification cleared")
+        except Exception as e:
+            logger.error(f"Failed to delete error notification: {e}")
+        finally:
+            self.error_active = False
+            self.notification_message_id = None
+
+    async def check_and_clear_if_resolved(self, bot: Client, test_success: bool = False):
+        """Check if error is resolved and clear notification"""
+        if self.error_active and test_success:
+            await self.clear_upload_error_notification(bot)
+
+
+bale_error_notifier = BaleUploadErrorNotifier()
+
+
+# ============================================================================
 # API Client for PHP Backend
 # ============================================================================
 # ============================================================================
@@ -617,7 +694,8 @@ class AlbumDownloadTracker:
             "cancelled": False,
             "collection_name": collection_name,
             "start_time": time.time(),
-            "lock_acquired": True
+            "lock_acquired": True,
+            "cover_bytes": None  # Store cover art bytes for reuse
         }
 
     def add_track(self, user_id: int, collection_id: int, track_name: str, order: int):
@@ -627,6 +705,17 @@ class AlbumDownloadTracker:
         self.active_downloads[key]["tracks"].append(
             TrackDownloadStatus(name=track_name, order=order)
         )
+
+    def set_cover_bytes(self, user_id: int, collection_id: int, cover_bytes: bytes):
+        key = (user_id, collection_id)
+        if key in self.active_downloads:
+            self.active_downloads[key]["cover_bytes"] = cover_bytes
+
+    def get_cover_bytes(self, user_id: int, collection_id: int) -> Optional[bytes]:
+        key = (user_id, collection_id)
+        if key in self.active_downloads:
+            return self.active_downloads[key].get("cover_bytes")
+        return None
 
     def update_track_result(self, user_id: int, collection_id: int, track_name: str, success: bool,
                             error_msg: str = None):
@@ -733,7 +822,8 @@ async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: s
 
 
 async def download_and_send_single_track(bot: Client, chat_id: int, track_id: int, user_id: int = None,
-                                         status_msg: Message = None, is_batch: bool = False):
+                                         status_msg: Message = None, is_batch: bool = False, 
+                                         album_cover_bytes: bytes = None):
     # اگر در حالت آلبوم هستیم، پیام وضعیت جدید ایجاد نمی‌کنیم
     if is_batch or status_msg is None:
         status_msg = await send_message(bot, chat_id, text=f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*")
@@ -796,9 +886,13 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                 file_size=0,
                 download_source='cache'
             )
+            # If we successfully uploaded, clear any error notification
+            await bale_error_notifier.check_and_clear_if_resolved(bot, test_success=True)
             return
         except Exception as e:
             logger.error(f"Cache send failed: {e}, will re-download")
+            # Notify about upload error
+            await bale_error_notifier.notify_upload_error(bot, str(e))
 
     if OFFLINE_MODE:
         if True:
@@ -833,10 +927,8 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
             async with DOWNLOAD_SEMAPHORE:
                 await update_status_with_close(status_msg, f"⏳ *در حال دانلود و پردازش (روش‌های پیشرفته ضدتحریم)...*")
                 # استفاده از تابع امن به جای download_audio اصلی
-                mp3_path_str = await download_audio(video_url
-                )
+                mp3_path_str = await download_audio(video_url)
 
-               
                 # ذخیره دایرکتوری والد برای پاکسازی بعدی
                 temp_dir_to_clean = os.path.dirname(mp3_path_str)
 
@@ -853,8 +945,9 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                                                     f"download_retry:{track_id}", status_msg)
                     return
 
-                cover_bytes = None
-                if cover_url and HTTP_SESSION:
+                # Use provided album cover bytes if available, otherwise download
+                cover_bytes = album_cover_bytes
+                if cover_bytes is None and cover_url and HTTP_SESSION:
                     try:
                         async with HTTP_SESSION.get(cover_url) as resp:
                             if resp.status == 200:
@@ -868,9 +961,17 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
 
                 await update_status_with_close(status_msg, f"☁️ *در حال آپلود در سرورهای ابری {BOT_NAME}...*")
 
-                await send_audio_with_retry(
-                    bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, track_id=str(track['trackId'])
-                )
+                try:
+                    await send_audio_with_retry(
+                        bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, track_id=str(track['trackId'])
+                    )
+                    # Clear any error notification on successful upload
+                    await bale_error_notifier.check_and_clear_if_resolved(bot, test_success=True)
+                except Exception as upload_error:
+                    error_str = str(upload_error)
+                    logger.error(f"Upload failed: {error_str}")
+                    await bale_error_notifier.notify_upload_error(bot, error_str)
+                    raise  # Re-raise to be caught by outer try-except
 
                 await api_client.log_download(
                     user_id=user_id,
@@ -962,6 +1063,10 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
             last_exception = e
             logger.warning(f"send_audio attempt {attempt}/{max_retries} failed: {error_str}")
 
+            # Check if this is an upload-related error
+            if any(keyword in error_str.lower() for keyword in ['upload', 'timeout', 'connection', 'network']):
+                await bale_error_notifier.notify_upload_error(bot, error_str)
+
             if attempt < max_retries:
                 wait_time = attempt * 3
                 logger.info(f"Retrying in {wait_time} seconds...")
@@ -1031,6 +1136,21 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
     await update_status_with_close(status_msg, album_tracker.get_progress_text(user_id, collection_id),
                                    reply_markup=cancel_markup, no=True)
 
+    # Download cover art once for the entire album
+    album_cover_bytes = None
+    if tracks and len(tracks) > 0:
+        first_track = tracks[0]
+        cover_url = get_high_res_artwork(first_track.get("artworkUrl100", first_track.get("artworkUrl")), size=600)
+        if cover_url and HTTP_SESSION:
+            try:
+                async with HTTP_SESSION.get(cover_url) as resp:
+                    if resp.status == 200:
+                        album_cover_bytes = await resp.read()
+                        album_tracker.set_cover_bytes(user_id, collection_id, album_cover_bytes)
+                        logger.info(f"Album cover art downloaded once for {collection_name}")
+            except Exception as e:
+                logger.error(f"Failed to download album cover: {e}")
+
     success_count = 0
     failed_tracks = []
     stopped_by_rate_limit = False
@@ -1055,7 +1175,9 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
             break
 
         try:
-            await download_and_send_single_track(bot, chat_id, track_id, user_id, status_msg, is_batch=True)
+            # Pass album cover bytes to each track download
+            await download_and_send_single_track(bot, chat_id, track_id, user_id, status_msg, 
+                                                 is_batch=True, album_cover_bytes=album_cover_bytes)
             download_rate_limiter.record_download(user_id)
             album_tracker.update_track_result(user_id, collection_id, track_name, True)
             success_count += 1
