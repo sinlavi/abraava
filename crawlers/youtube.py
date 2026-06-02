@@ -70,6 +70,23 @@ METHOD_ORDER = [8, 2, 3, 4, 5, 6, 7, 1]
 YT = None
 
 
+def _get_cookies_path() -> Optional[str]:
+    """
+    Get the path to cookies.txt in the root project folder.
+    Returns None if the file doesn't exist.
+    """
+    # Get the root project directory (where this script is located)
+    script_dir = Path(__file__).parent
+    cookies_path = script_dir / "cookies.txt"
+    
+    if cookies_path.exists() and cookies_path.is_file():
+        logger.info(f"Found cookies file at: {cookies_path}")
+        return str(cookies_path)
+    else:
+        logger.debug(f"No cookies.txt found at: {cookies_path}")
+        return None
+
+
 # تابع کمکی برای محاسبه شباهت با rapidfuzz
 def _get_similarity(a: str, b: str) -> float:
     if not a or not b:
@@ -127,6 +144,7 @@ def _sync_search_youtube(t_name: str, a_name: str, collection_name: str, ye: str
         logger.error(f"YTMusic search error: {e}")
 
     return None
+
 def get_artist_image(artist_name):
     global YT
     if YT is None:
@@ -207,8 +225,12 @@ def _build_opts(method: int, output_dir: str, preferred_quality: int) -> dict:
 
     # استفاده از کوکی مرورگرها به جای فایل متنی ساده در صورت امکان
     # (اگر فایل وجود نداشت خطا نمی‌دهد، اما اگر باشد کمک زیادی به دور زدن می‌کند)
-    if os.path.exists("cookies.txt"):
-        opts["cookiefile"] = "cookies.txt"
+    cookies_path = _get_cookies_path()
+    if cookies_path:
+        opts["cookiefile"] = cookies_path
+        logger.debug(f"Using cookies from: {cookies_path}")
+    else:
+        logger.debug("No cookies.txt found, proceeding without cookies")
 
     AUDIO_POSTPROCESSOR['preferredquality'] = str(preferred_quality)
     opts["postprocessors"] = [AUDIO_POSTPROCESSOR]
