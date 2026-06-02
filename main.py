@@ -1148,7 +1148,8 @@ async def on_message(message: Message):
                 await search_and_send(chat_id, user_id, "track", msg_text, message, user_id)
 
 @bot.on_callback_query()
-async def on_callback(callback: CallbackQuery):
+async def on_callback(callback_query: CallbackQuery):
+    callback = callback_query
     data = callback.data
     user_id = callback.author.id
     chat_id = callback.message.chat.id
