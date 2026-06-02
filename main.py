@@ -54,14 +54,20 @@ class BaleUploadErrorNotifier:
             logger.info("Upload error notification already active, skipping duplicate notification")
             # Still trigger album cancellation if needed
             if album_download_callback:
-                await album_download_callback()
+                try:
+                    await album_download_callback()
+                except Exception as e:
+                    logger.error(f"Error in album download callback: {e}")
             return
         
         # Check cooldown to avoid spam (even if not active, but for safety)
         if current_time - self.last_error_time < self.error_cooldown:
             logger.info(f"Upload error notification on cooldown, skipping (last error: {self.last_error_time})")
             if album_download_callback:
-                await album_download_callback()
+                try:
+                    await album_download_callback()
+                except Exception as e:
+                    logger.error(f"Error in album download callback: {e}")
             return
         
         self.last_error_time = current_time
@@ -75,16 +81,18 @@ class BaleUploadErrorNotifier:
         )
         
         try:
-            # Send new notification only if not already active
-            if not self.error_active:
-                msg = await send_message(bot, INFO_CHANNEL_ID, notification_text)
-                self.notification_message_id = msg.id
-                self.error_active = True
-                logger.warning(f"Bale upload error notification sent to channel {INFO_CHANNEL_ID}")
+            # Send new notification
+            msg = await send_message(bot, INFO_CHANNEL_ID, notification_text)
+            self.notification_message_id = msg.id
+            self.error_active = True
+            logger.warning(f"Bale upload error notification sent to channel {INFO_CHANNEL_ID}")
             
             # Call album download cancellation callback if provided
             if album_download_callback:
-                await album_download_callback()
+                try:
+                    await album_download_callback()
+                except Exception as e:
+                    logger.error(f"Error in album download callback: {e}")
                 
         except Exception as e:
             logger.error(f"Failed to send upload error notification: {e}")
@@ -122,6 +130,7 @@ async def cancel_album_download_on_upload_error(user_id: int, collection_id: int
     
     # Set flag to indicate upload error occurred
     album_upload_error_flag[key] = True
+    logger.info(f"Upload error flag set for user {user_id}, collection {collection_id}")
     
     # Cancel the album download
     album_tracker.cancel_download(user_id, collection_id)
@@ -782,6 +791,7 @@ class AlbumDownloadTracker:
         key = (user_id, collection_id)
         if key in self.active_downloads:
             self.active_downloads[key]["cancelled"] = True
+            logger.info(f"Album download cancelled for key {key}")
 
 
 album_tracker = AlbumDownloadTracker()
@@ -855,13 +865,15 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
             logger.warning(f"send_audio attempt {attempt}/{max_retries} failed: {error_str}")
 
             # Check if this is an upload-related error
-            if any(keyword in error_str.lower() for keyword in ['upload', 'timeout', 'connection', 'network']):
+            if any(keyword in error_str.lower() for keyword in ['upload', 'timeout', 'connection', 'network', 'file_id', 'audio']):
                 # Create callback to cancel album download if this is an album download
                 cancel_callback = None
                 if user_id and collection_id:
-                    cancel_callback = lambda: cancel_album_download_on_upload_error(user_id, collection_id, bot, chat_id)
+                    async def cancel_album():
+                        await cancel_album_download_on_upload_error(user_id, collection_id, bot, chat_id)
+                    cancel_callback = cancel_album
                 
-                # Notify about upload error (will only send if not already active)
+                # Notify about upload error (will send to info channel)
                 await bale_error_notifier.notify_upload_error(bot, error_str, cancel_callback)
 
             if attempt < max_retries:
@@ -945,10 +957,10 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
         except Exception as e:
             logger.error(f"Cache send failed: {e}, will re-download")
             # Notify about upload error with album cancellation callback (will only send if not already active)
-            cancel_callback = None
             if user_id and collection_id:
-                cancel_callback = lambda: cancel_album_download_on_upload_error(user_id, collection_id, bot, chat_id)
-            await bale_error_notifier.notify_upload_error(bot, str(e), cancel_callback)
+                async def cancel_album():
+                    await cancel_album_download_on_upload_error(user_id, collection_id, bot, chat_id)
+                await bale_error_notifier.notify_upload_error(bot, str(e), cancel_album)
 
     if OFFLINE_MODE:
         if True:
@@ -1155,13 +1167,16 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
     stopped_by_upload_error = False
 
     for idx, track in enumerate(tracks, 1):
+        # Check for upload error flag before each track
+        key = (user_id, collection_id)
+        if album_upload_error_flag.get(key, False):
+            logger.info(f"Upload error detected, stopping album download for {collection_name}")
+            stopped_by_upload_error = True
+            album_tracker.cancel_download(user_id, collection_id)
+            album_upload_error_flag.pop(key, None)
+            break
+        
         if album_tracker.is_cancelled(user_id, collection_id):
-            # Check if cancelled due to upload error
-            key = (user_id, collection_id)
-            if album_upload_error_flag.get(key, False):
-                stopped_by_upload_error = True
-                album_upload_error_flag.pop(key, None)
-            
             await update_status_with_close(status_msg,
                                            f"⏹️ *دانلود آلبوم لغو شد*\n{album_tracker.get_progress_text(user_id, collection_id)}")
             album_tracker.finish_download(user_id, collection_id, success_count, len(failed_tracks))
@@ -1193,7 +1208,8 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
             failed_tracks.append({"name": track_name, "error": error_msg})
             
             # Check if this is an upload error that should stop the album download
-            if "آپلود" in error_msg or "upload" in error_msg.lower():
+            if "آپلود" in error_msg or "upload" in error_msg.lower() or "بله" in error_msg:
+                logger.info(f"Upload error detected in track {track_name}, stopping album download")
                 album_tracker.cancel_download(user_id, collection_id)
                 stopped_by_upload_error = True
                 break
@@ -1202,6 +1218,12 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
                                        reply_markup=cancel_markup, no=True)
 
         await asyncio.sleep(2)
+    
+    # Check one more time after loop if flag was set
+    key = (user_id, collection_id)
+    if album_upload_error_flag.get(key, False):
+        stopped_by_upload_error = True
+        album_upload_error_flag.pop(key, None)
 
     final_text = f"✅ *دانلود آلبوم {collection_name} به پایان رسید*\n\n"
     final_text += f"📊 جمع کل: {len(tracks)} قطعه\n"
