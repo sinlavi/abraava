@@ -27,7 +27,6 @@ jobs:
       # ========== WARP (Cloudflare proxy) - Fresh IP each time ==========
       - name: Get WARP image digest
         id: warp-digest
-        continue-on-error: true
         run: |
           docker pull --quiet caomingjun/warp
           DIGEST=$(docker inspect caomingjun/warp --format='{{.Id}}')
@@ -36,14 +35,12 @@ jobs:
       - name: Cache WARP Docker image
         id: cache-warp
         uses: actions/cache@v4
-        continue-on-error: true
         with:
           path: /tmp/warp-image.tar
           key: warp-image-${{ steps.warp-digest.outputs.digest }}
 
       - name: Load or pull WARP container
         id: warp-pull
-        continue-on-error: true
         run: |
           if [[ -f /tmp/warp-image.tar ]]; then
             docker load < /tmp/warp-image.tar
@@ -62,7 +59,6 @@ jobs:
 
       - name: Start Cloudflare WARP proxy (new IP)
         id: warp-start
-        continue-on-error: true
         run: |
           docker network inspect warp-net >/dev/null 2>&1 || docker network create warp-net
           docker run -d --name warp --restart=always --network warp-net \
@@ -71,50 +67,43 @@ jobs:
             --sysctl net.ipv4.conf.all.src_valid_mark=1 \
             -v warp-data:/var/lib/cloudflare-warp \
             caomingjun/warp
-          sleep 15  # Increased sleep for proper registration
+          sleep 15
           
-          # Get and display the new IP
-          echo "New WARP IP address:"
-          curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 10 | grep "ip=" || true
-          
-          # Verify connection works
-          curl -x socks5h://127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace --max-time 10 || true
+          # Test proxy connection
+          echo "Testing WARP proxy connection..."
+          if curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 10 | grep -q "warp=on"; then
+            echo "WARP proxy is working!"
+            curl -x socks5h://127.0.0.1:1080 https://cloudflare.com/cdn-cgi/trace --max-time 10 | grep "ip="
+          else
+            echo "WARP proxy failed to connect"
+            exit 1
+          fi
 
       # ========== FFmpeg caching ==========
       - name: Cache FFmpeg binaries
         id: cache-ffmpeg
         uses: actions/cache@v4
-        continue-on-error: true
         with:
           path: ~/tool_cache/ffmpeg
           key: ffmpeg-release-${{ runner.os }}
 
       - name: Set up FFmpeg
         id: ffmpeg-setup
-        uses: FedericoCarboni/setup-ffmpeg@v3
-        continue-on-error: true
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        uses: FedericoCarboni/setup-ffmpeg@v3
         with:
           ffmpeg-version: release
           architecture: ''
           linking-type: env
-          github-token: ${{ github.server_url == 'https://github.com' && github.token || '' }}
+          github-token: ${{ github.server_url == 'https://github.com && github.token || '' }}
 
-      # ========== Auto-Restart Check ==========
-      - name: Restart job if WARP or FFmpeg failed
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify FFmpeg installation
+        id: verify-ffmpeg
         run: |
-          if [[ "${{ steps.warp-digest.outcome }}" == "failure" ]] || \
-             [[ "${{ steps.cache-warp.outcome }}" == "failure" ]] || \
-             [[ "${{ steps.warp-pull.outcome }}" == "failure" ]] || \
-             [[ "${{ steps.warp-start.outcome }}" == "failure" ]] || \
-             [[ "${{ steps.cache-ffmpeg.outcome }}" == "failure" ]] || \
-             [[ "${{ steps.ffmpeg-setup.outcome }}" == "failure" ]]; then
-          
-            echo "WARP or FFmpeg related action failed! Triggering a restart..."
-            gh workflow run "${{ github.workflow }}" --ref "${{ github.ref_name }}"
+          if command -v ffmpeg &> /dev/null; then
+            echo "FFmpeg installed: $(ffmpeg -version | head -n1)"
+          else
+            echo "FFmpeg not found in PATH"
             exit 1
           fi
 
@@ -131,10 +120,27 @@ jobs:
       # ========== Run bot ==========
       - name: Run bot
         id: bot
-        continue-on-error: true
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           OFFLINE_MODE: ${{ secrets.OFFLINE_MODE }}
           DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
           INFO_CHANNEL_ID: ${{ secrets.INFO_CHANNEL_ID }}
         run: python main.py
+
+      # ========== Restart on Failure ==========
+      - name: Restart workflow on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Workflow failed! Triggering a restart..."
+          echo "Failed step: ${{ github.job }}"
+          
+          # Wait a moment before restarting
+          sleep 10
+          
+          # Trigger new workflow run
+          gh workflow run "${{ github.workflow }}" --ref "${{ github.ref_name }}"
+          
+          # Exit with error to mark this run as failed
+          exit 1
