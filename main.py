@@ -1583,7 +1583,8 @@ async def on_initialize():
 
 @bot.on_shutdown()
 async def on_shutdown():
-    global HTTP_SESSION    if HTTP_SESSION and not HTTP_SESSION.closed:
+    global HTTP_SESSION    
+    if HTTP_SESSION and not HTTP_SESSION.closed:
         await HTTP_SESSION.close()
 
     if api_client.session and not api_client.session.closed:
