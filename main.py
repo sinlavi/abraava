@@ -42,47 +42,50 @@ class BaleUploadErrorNotifier:
         self.last_error_time = 0
         self.error_cooldown = 300  # 5 minutes cooldown between notifications
 
-    async def notify_upload_error(self, bot: Client, error_message: str = ""):
+    async def notify_upload_error(self, bot: Client, error_message: str = "", album_download_callback: callable = None):
         """Send notification to info channel about Bale upload issues"""
         if not INFO_CHANNEL_ID:
             return
         
         current_time = time.time()
         
-        # Check cooldown to avoid spam
+        # If error is already active, don't send another notification
+        if self.error_active:
+            logger.info("Upload error notification already active, skipping duplicate notification")
+            # Still trigger album cancellation if needed
+            if album_download_callback:
+                await album_download_callback()
+            return
+        
+        # Check cooldown to avoid spam (even if not active, but for safety)
         if current_time - self.last_error_time < self.error_cooldown:
+            logger.info(f"Upload error notification on cooldown, skipping (last error: {self.last_error_time})")
+            if album_download_callback:
+                await album_download_callback()
             return
         
         self.last_error_time = current_time
         
         notification_text = (
-            "⚠️ *اخطار: اختلال در سرویس آپلود بله* ⚠️\n\n"
+            "⚠️ *اختلال در سرویس آپلود بله* ⚠️\n\n"
             "در حال حاضر سرویس آپلود فایل پیام‌رسان بله با مشکل مواجه شده است.\n"
             "این مشکل از سمت بله می‌باشد و به محض رفع مشکل، ربات به حالت عادی بازخواهد گشت.\n\n"
-            f"زمان: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"خطا: {error_message[:200] if error_message else 'خطای ناشناخته در آپلود فایل'}\n\n"
-            "✅ به محض رفع مشکل، این پیام حذف خواهد شد."
+            "✅ به محض رفع مشکل، این پیام حذف خواهد شد.\n\n"
+            "#اطلاع_رسانی"
         )
         
         try:
+            # Send new notification only if not already active
             if not self.error_active:
-                # Send new notification
                 msg = await send_message(bot, INFO_CHANNEL_ID, notification_text)
                 self.notification_message_id = msg.id
                 self.error_active = True
                 logger.warning(f"Bale upload error notification sent to channel {INFO_CHANNEL_ID}")
-            else:
-                # Update existing notification
-                try:
-                    await bot.edit_message(
-                        chat_id=INFO_CHANNEL_ID,
-                        message_id=self.notification_message_id,
-                        text=notification_text
-                    )
-                except:
-                    # If edit fails, send new one
-                    msg = await send_message(bot, INFO_CHANNEL_ID, notification_text)
-                    self.notification_message_id = msg.id
+            
+            # Call album download cancellation callback if provided
+            if album_download_callback:
+                await album_download_callback()
+                
         except Exception as e:
             logger.error(f"Failed to send upload error notification: {e}")
 
@@ -107,6 +110,23 @@ class BaleUploadErrorNotifier:
 
 
 bale_error_notifier = BaleUploadErrorNotifier()
+
+
+# Global flag to track if we're in album download mode for current user/collection
+album_upload_error_flag = {}
+
+
+async def cancel_album_download_on_upload_error(user_id: int, collection_id: int, bot: Client, chat_id: int):
+    """Cancel album download when upload error occurs"""
+    key = (user_id, collection_id)
+    
+    # Set flag to indicate upload error occurred
+    album_upload_error_flag[key] = True
+    
+    # Cancel the album download
+    album_tracker.cancel_download(user_id, collection_id)
+    
+    logger.info(f"Album download cancelled for user {user_id}, collection {collection_id} due to upload error")
 
 
 # ============================================================================
@@ -309,11 +329,6 @@ class APIClient:
 
     async def get_active_users(self, limit: int = None) -> Dict:
         return await self._request('get_active_users', {'limit': limit})
-
-    # Update the membership check in handle_message function
-    # Find this section in handle_message and replace with:
-
-    # Private chat - check channel membership
 
 
 api_client = APIClient(API_BASE_URL, API_TOKEN)
@@ -521,11 +536,6 @@ user_quick_mode = {}
 
 
 # ============================================================================
-# Channel Membership Check
-# ============================================================================
-
-
-# ============================================================================
 # User Registration
 # ============================================================================
 async def register_user(message: Message):
@@ -623,16 +633,6 @@ async def process_broadcast_message(message: Message):
         try:
             user_id = user['id']
             await bot.forward_message(chat_id=user_id, message_id=message.id, from_chat_id=message.chat.id)
-            """
-            if photo_file_id:
-                await send_photo(bot, user_id, photo=photo_file_id, caption=broadcast_text)
-            elif message.video:
-                await send_message(bot, user_id, broadcast_text + "\n\n🎥 *این پیام حاوی ویدیو است*")
-            elif message.document:
-                await send_message(bot, user_id, broadcast_text + "\n\n📄 *این پیام حاوی فایل است*")
-            else:
-                await send_message(bot, user_id, broadcast_text)
-                """
             successful += 1
             await asyncio.sleep(0.05)  # Small delay to avoid rate limiting
         except Exception as e:
@@ -746,11 +746,6 @@ class AlbumDownloadTracker:
         else:
             eta = ""
 
-        progress_percent = (t["current_idx"] / t["total"]) * 100
-        progress_bar_length = 20
-        filled = int(progress_bar_length * t["current_idx"] / t["total"])
-        bar = "█" * filled + "░" * (progress_bar_length - filled)
-
         text = f"📀 *دانلود آلبوم: {t['collection_name']}*\n"
         if t["current_idx"] < t["total"] and t["tracks"] and t["current_idx"] < len(t["tracks"]):
             current_track = t["tracks"][t["current_idx"]]
@@ -821,9 +816,67 @@ async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: s
                                     f"quick_retry:{term}", status_msg)
 
 
+async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file_name: str, caption: str,
+                                max_retries=2, direct=False, track_id=None, user_id=None, collection_id=None):
+    last_exception = None
+    abs_audio_path = os.path.abspath(str(audio_path))
+
+    exists = await asyncio.to_thread(os.path.exists, abs_audio_path)
+    if not exists:
+        logger.error(f"File not found for upload: {abs_audio_path}")
+        raise FileNotFoundError(f"File not found: {abs_audio_path}")
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            with open(abs_audio_path, 'rb') as audio_file:
+                logger.info(f'Sending audio, attempt {attempt}/{max_retries}...')
+                markup = [[InlineKeyboardButton(
+                    text="📂 نمایش در مینی اپ",
+                    web_app="https://player.abraava.ir?id=" + track_id
+                )], [InlineKeyboardButton(
+                    text="📋 کپی پیوند",
+                    copy_text="https://player.abraava.ir?id=" + track_id
+                )]]
+                msg = await send_audio(
+                    bot,
+                    chat_id=chat_id,
+                    audio=audio_file,
+                    caption=caption,
+                    reply_markup=markup,
+                )
+
+                await set_mirror('track', str(track_id), 'audioUrl',
+                                 'https://tapi.bale.ai/file/bot<token>/' + str(msg.audio.id))
+                return msg
+
+        except Exception as e:
+            error_str = str(e)
+            last_exception = e
+            logger.warning(f"send_audio attempt {attempt}/{max_retries} failed: {error_str}")
+
+            # Check if this is an upload-related error
+            if any(keyword in error_str.lower() for keyword in ['upload', 'timeout', 'connection', 'network']):
+                # Create callback to cancel album download if this is an album download
+                cancel_callback = None
+                if user_id and collection_id:
+                    cancel_callback = lambda: cancel_album_download_on_upload_error(user_id, collection_id, bot, chat_id)
+                
+                # Notify about upload error (will only send if not already active)
+                await bale_error_notifier.notify_upload_error(bot, error_str, cancel_callback)
+
+            if attempt < max_retries:
+                wait_time = attempt * 2  # Reduced wait time: 2, 4 seconds
+                logger.info(f"Retrying in {wait_time} seconds...")
+                await asyncio.sleep(wait_time)
+            else:
+                raise Exception("آپلود در بله به مشکل مواجه شد. لطفاً بعداً تلاش کنید یا آهنگ دیگری انتخاب کنید.")
+
+    raise last_exception if last_exception else Exception("آپلود در بله به مشکل مواجه شد")
+
+
 async def download_and_send_single_track(bot: Client, chat_id: int, track_id: int, user_id: int = None,
                                          status_msg: Message = None, is_batch: bool = False, 
-                                         album_cover_bytes: bytes = None):
+                                         album_cover_bytes: bytes = None, collection_id: int = None):
     # اگر در حالت آلبوم هستیم، پیام وضعیت جدید ایجاد نمی‌کنیم
     if is_batch or status_msg is None:
         status_msg = await send_message(bot, chat_id, text=f"⏳ *در حال آماده‌سازی دانلود از {BOT_NAME}...*")
@@ -891,8 +944,11 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
             return
         except Exception as e:
             logger.error(f"Cache send failed: {e}, will re-download")
-            # Notify about upload error
-            await bale_error_notifier.notify_upload_error(bot, str(e))
+            # Notify about upload error with album cancellation callback (will only send if not already active)
+            cancel_callback = None
+            if user_id and collection_id:
+                cancel_callback = lambda: cancel_album_download_on_upload_error(user_id, collection_id, bot, chat_id)
+            await bale_error_notifier.notify_upload_error(bot, str(e), cancel_callback)
 
     if OFFLINE_MODE:
         if True:
@@ -905,8 +961,6 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     a_name = track.get("artistName", "Unknown Artist")
     collection_name = track.get("collectionName", "")
     cover_url = get_high_res_artwork(track.get("artworkUrl100", track.get("artworkUrl")), size=600)
-
-    query = f'"{t_name}" by {a_name} collection {collection_name} {ye}'
 
     await update_status_with_close(status_msg, f"🔍 *جستجوی سورس باکیفیت آهنگ در یوتیوب موزیک...*")
 
@@ -926,10 +980,8 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
         try:
             async with DOWNLOAD_SEMAPHORE:
                 await update_status_with_close(status_msg, f"⏳ *در حال دانلود و پردازش (روش‌های پیشرفته ضدتحریم)...*")
-                # استفاده از تابع امن به جای download_audio اصلی
                 mp3_path_str = await download_audio(video_url)
 
-                # ذخیره دایرکتوری والد برای پاکسازی بعدی
                 temp_dir_to_clean = os.path.dirname(mp3_path_str)
 
                 if not mp3_path_str or not os.path.exists(mp3_path_str):
@@ -963,15 +1015,15 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
 
                 try:
                     await send_audio_with_retry(
-                        bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, track_id=str(track['trackId'])
+                        bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, 
+                        track_id=str(track['trackId']), user_id=user_id, collection_id=collection_id
                     )
                     # Clear any error notification on successful upload
                     await bale_error_notifier.check_and_clear_if_resolved(bot, test_success=True)
                 except Exception as upload_error:
                     error_str = str(upload_error)
                     logger.error(f"Upload failed: {error_str}")
-                    await bale_error_notifier.notify_upload_error(bot, error_str)
-                    raise  # Re-raise to be caught by outer try-except
+                    raise
 
                 await api_client.log_download(
                     user_id=user_id,
@@ -988,8 +1040,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                     try:
                         await status_msg.delete()
                     except:
-                        print('')
-                        
+                        pass
 
         except Exception as e:
             logger.exception("Download error")
@@ -997,7 +1048,6 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                 await send_error_with_retry(bot, chat_id, f"خطا در عملیات: {str(e)[:100]}",
                                             f"download_retry:{track_id}", status_msg)
         finally:
-            # پاکسازی دایرکتوری موقت
             if temp_dir_to_clean and os.path.exists(temp_dir_to_clean):
                 try:
                     import shutil
@@ -1023,58 +1073,6 @@ def _delete_file_sync(path_str):
             p.unlink()
     except Exception as e:
         logger.error(f"Failed to delete temp file {path_str}: {e}")
-
-
-async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file_name: str, caption: str,
-                                max_retries=3, direct=False, track_id=None):
-    last_exception = None
-    abs_audio_path = os.path.abspath(str(audio_path))
-
-    exists = await asyncio.to_thread(os.path.exists, abs_audio_path)
-    if not exists:
-        logger.error(f"File not found for upload: {abs_audio_path}")
-        raise FileNotFoundError(f"File not found: {abs_audio_path}")
-
-    for attempt in range(1, max_retries + 1):
-        try:
-            with open(abs_audio_path, 'rb') as audio_file:
-                logger.info(f'Sending audio, attempt {attempt}/{max_retries}...')
-                markup = [[InlineKeyboardButton(
-                    text="📂 نمایش در مینی اپ",
-                    web_app="https://player.abraava.ir?id=" + track_id
-                )], [InlineKeyboardButton(
-                    text="📋 کپی پیوند",
-                    copy_text="https://player.abraava.ir?id=" + track_id
-                )]]
-                msg = await send_audio(
-                    bot,
-                    chat_id=chat_id,
-                    audio=audio_file,
-                    caption=caption,
-                    reply_markup=markup,
-                )
-
-                await set_mirror('track', str(track_id), 'audioUrl',
-                                 'https://tapi.bale.ai/file/bot<token>/' + str(msg.audio.id))
-                return msg
-
-        except Exception as e:
-            error_str = str(e)
-            last_exception = e
-            logger.warning(f"send_audio attempt {attempt}/{max_retries} failed: {error_str}")
-
-            # Check if this is an upload-related error
-            if any(keyword in error_str.lower() for keyword in ['upload', 'timeout', 'connection', 'network']):
-                await bale_error_notifier.notify_upload_error(bot, error_str)
-
-            if attempt < max_retries:
-                wait_time = attempt * 3
-                logger.info(f"Retrying in {wait_time} seconds...")
-                await asyncio.sleep(wait_time)
-            else:
-                raise Exception("آپلود در بله به مشکل مواجه شد. لطفاً بعداً تلاش کنید یا آهنگ دیگری انتخاب کنید.")
-
-    raise last_exception if last_exception else Exception("آپلود در بله به مشکل مواجه شد")
 
 
 async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None):
@@ -1154,9 +1152,16 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
     success_count = 0
     failed_tracks = []
     stopped_by_rate_limit = False
+    stopped_by_upload_error = False
 
     for idx, track in enumerate(tracks, 1):
         if album_tracker.is_cancelled(user_id, collection_id):
+            # Check if cancelled due to upload error
+            key = (user_id, collection_id)
+            if album_upload_error_flag.get(key, False):
+                stopped_by_upload_error = True
+                album_upload_error_flag.pop(key, None)
+            
             await update_status_with_close(status_msg,
                                            f"⏹️ *دانلود آلبوم لغو شد*\n{album_tracker.get_progress_text(user_id, collection_id)}")
             album_tracker.finish_download(user_id, collection_id, success_count, len(failed_tracks))
@@ -1175,9 +1180,9 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
             break
 
         try:
-            # Pass album cover bytes to each track download
             await download_and_send_single_track(bot, chat_id, track_id, user_id, status_msg, 
-                                                 is_batch=True, album_cover_bytes=album_cover_bytes)
+                                                 is_batch=True, album_cover_bytes=album_cover_bytes, 
+                                                 collection_id=collection_id)
             download_rate_limiter.record_download(user_id)
             album_tracker.update_track_result(user_id, collection_id, track_name, True)
             success_count += 1
@@ -1186,6 +1191,12 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
             logger.error(f"Failed to download track {track_name}: {error_msg}")
             album_tracker.update_track_result(user_id, collection_id, track_name, False, error_msg)
             failed_tracks.append({"name": track_name, "error": error_msg})
+            
+            # Check if this is an upload error that should stop the album download
+            if "آپلود" in error_msg or "upload" in error_msg.lower():
+                album_tracker.cancel_download(user_id, collection_id)
+                stopped_by_upload_error = True
+                break
 
         await update_status_with_close(status_msg, album_tracker.get_progress_text(user_id, collection_id),
                                        reply_markup=cancel_markup, no=True)
@@ -1204,6 +1215,8 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
             final_text += f"... و {len(failed_tracks) - 10} قطعه دیگر\n"
     if stopped_by_rate_limit:
         final_text += "\n🚫 *توقف به دلیل محدودیت ۱۰۰ دانلود در ساعت.*"
+    if stopped_by_upload_error:
+        final_text += "\n⚠️ *توقف دانلود آلبوم به دلیل اختلال در سرویس آپلود بله.*"
 
     await edit_or_send(bot, chat_id, status_msg, final_text, owner_id=user_id)
     album_tracker.finish_download(user_id, collection_id, success_count, len(failed_tracks))
@@ -1224,7 +1237,6 @@ async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
                                         f"artist_retry:{artist_id}", status_msg)
             return
         artist_data = artist_data['results'][0]
-        artist_image = None
         artist_image = get_artist_image(artist_data.get('artistName'))
 
         text = f"*🎤 هنرمند:* {artist_data.get('artistName', 'نامشخص')}\n"
@@ -1363,7 +1375,6 @@ async def show_track_page(chat_id: int, track_id: int, message_to_edit: Optional
             text += f"*🔗 لینک آیتونز:* [مشاهده در آیتونز]({track['trackViewUrl']})\n"
 
         markup = []
-        logger.info(track)
         download = [InlineKeyboardButton(text="⬇️ دانلود", callback_data=f"download:{track_id}")]
         if track.get("previewUrl"):
             download.append(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}"))
@@ -1462,7 +1473,7 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
 
     text = header
 
-    msg = await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup, owner_id=owner_id)
+    await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup, owner_id=owner_id)
 
 
 async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
@@ -1480,25 +1491,13 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
 
         if cache_id:
             data = await get_mirror(entity_type, cache_id, 'artworkUrl')
-            logger.info(data)
             if data.get("mirrors", {}).get('artworkUrl', False):
                 artwork_cache = data["mirrors"]['artworkUrl']['url'].split('<token>/')[1]
 
         try:
-            # Check if we have it in cache, otherwise download it
-            photo_to_send=artwork_url
+            photo_to_send = artwork_url
             if artwork_cache:
                 photo_to_send = artwork_cache
-            elif False:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(artwork_url) as resp:
-                        if resp.status == 200:
-                            photo_bytes = await resp.read()
-                            photo_to_send = io.BytesIO(photo_bytes)
-                            photo_to_send.name = "artwork.jpg"  # Most frameworks require a filename
-                        else:
-                            # Fallback to URL if download fails
-                            photo_to_send = None
 
             if photo_to_send:
                 msg = await send_photo(bot, chat_id, photo=photo_to_send, caption=text, reply_markup=markup)
@@ -1508,7 +1507,6 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
             if cache_id and not artwork_cache and msg and photo_to_send:
                 data = await set_mirror(entity_type, cache_id, 'artworkUrl',
                                         'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
-                logger.info(data)
 
         except Exception as e:
             logger.error(f"Failed to send photo: {e}")
@@ -1672,6 +1670,7 @@ async def handle_message(message):
     msg_text = message.content or ""
     user_id = message.author.id
     chat_id = message.chat.id
+    
     if not is_group:
         is_member, missing = await verify_all_memberships(user_id)
         if not is_member and not msg_text.startswith("/start"):
@@ -1691,20 +1690,7 @@ async def handle_message(message):
                 f"پس از عضویت، دوباره تلاش کنید."
             )
             return
-    """
-    # Check rate limit
-    allowed, wait_time = await rate_limiter.check_user(user_id)
-    
-    if not allowed:
-        if is_group:
-            return
-        await reply_message(message,
-                            f"⚠️ *محدودیت نرخ درخواست*\n\n"
-                            f"شما حداکثر {rate_limiter.max_requests} درخواست در دقیقه مجاز هستید.\n"
-                            f"لطفاً {wait_time} ثانیه صبر کنید."
-                            )
-        return
-    """
+
     # Process group messages
     if is_group:
         bot_mention = f"@{bot.user.username}"
@@ -1777,7 +1763,6 @@ async def handle_message(message):
                             f"فقط کاربری که ربات را صدا زده می‌تواند روی دکمه‌ها کلیک کند\n\n"
                             f"🔒 محدودیت جستجو: {rate_limiter.max_requests} درخواست در دقیقه\n"
                             f"⬇️ محدودیت دانلود: ۱۰۰ فایل در هر ساعت"
-                            f"",
                             )
 
     elif msg_text.startswith("/about"):
@@ -1789,7 +1774,6 @@ async def handle_message(message):
                             f"📀 *دانلود آلبوم:* قابلیت دانلود تمام قطعات یک آلبوم به صورت یکجا\n\n"
                             f"🔒 محدودیت جستجو: {rate_limiter.max_requests} req/min per user\n"
                             f"⬇️ محدودیت دانلود: ۱۰۰ فایل در هر  ساعت"
-                            f"",
                             )
 
     elif msg_text.startswith("/settings"):
@@ -1850,20 +1834,6 @@ async def on_callback(callback_query: CallbackQuery):
     message_id = callback_query.message.id
     is_group = callback_query.message.chat.type in ["group", "supergroup"]
 
-    # Ownership check for group messages
-    """if is_group:
-        owner = get_message_owner(message_id)
-        if owner is not None and owner != user_id:
-            await bot.answer_callback_query(callback_query.id, "❌ شما اجازه تعامل با این پیام را ندارید.",
-                                            show_alert=True)
-            return
-     
-    # Rate limit check
-    allowed, wait_time = await rate_limiter.check_user(user_id)
-    if not allowed:
-        await bot.answer_callback_query(callback_query.id, f"⏳ لطفاً {wait_time} ثانیه صبر کنید", show_alert=True)
-        return
-    """
     if data == "ignore":
         await bot.answer_callback_query(callback_query.id)
         return
@@ -1961,14 +1931,13 @@ async def on_callback(callback_query: CallbackQuery):
             track_id = int(parts[1])
             await show_track_page(chat_id, track_id, callback_query.message, user_id)
         elif data.startswith("download:"):
-        	track_id = int(parts[1])
-        	can_dl, wait_sec = await download_rate_limiter.can_download(user_id)
-        	if not can_dl:
-		        await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت دانلود: {wait_sec} ثانیه صبر کنید", show_alert=True)
-		        return
-        	await bot.answer_callback_query(callback_query.id, "در حال پردازش دانلود...")
-    # اجرای دانلود در تسک جداگانه
-        	asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
+            track_id = int(parts[1])
+            can_dl, wait_sec = await download_rate_limiter.can_download(user_id)
+            if not can_dl:
+                await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت دانلود: {wait_sec} ثانیه صبر کنید", show_alert=True)
+                return
+            await bot.answer_callback_query(callback_query.id, "در حال پردازش دانلود...")
+            asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
       
         elif data.startswith("download_album:"):
             collection_id = int(parts[1])
