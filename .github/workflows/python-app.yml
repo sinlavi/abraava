@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
@@ -79,43 +79,67 @@ jobs:
             exit 1
           fi
 
-      # ========== FFmpeg caching ==========
+      # ========== FFmpeg setup (fast, with caching) ==========
       - name: Cache FFmpeg binaries
         id: cache-ffmpeg
         uses: actions/cache@v4
         with:
-          path: ~/tool_cache/ffmpeg
-          key: ffmpeg-release-${{ runner.os }}
+          path: /opt/hostedtoolcache/ffmpeg
+          key: ffmpeg-ubuntu-latest-release
+          restore-keys: |
+            ffmpeg-ubuntu-latest-
 
-      - name: Set up FFmpeg
-        id: ffmpeg-setup
+      - name: Install FFmpeg
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         uses: FedericoCarboni/setup-ffmpeg@v3
         with:
           ffmpeg-version: release
-          architecture: ''
-          linking-type: env
-          github-token: ${{ github.server_url == 'https://github.com && github.token' || '' }}
+          github-token: ${{ github.token }}
+
+      - name: Add FFmpeg to PATH (from cache)
+        if: steps.cache-ffmpeg.outputs.cache-hit == 'true'
+        run: |
+          # Find the actual ffmpeg directory in tool cache
+          FFMPEG_DIR=$(find /opt/hostedtoolcache/ffmpeg -name "ffmpeg" -type f -exec dirname {} \; | head -1)
+          if [ -n "$FFMPEG_DIR" ]; then
+            echo "$FFMPEG_DIR" >> $GITHUB_PATH
+            echo "Added $FFMPEG_DIR to PATH"
+          else
+            echo "::warning::FFmpeg binary not found in cache, will reinstall"
+            # Force reinstall if binary missing
+            echo "cache-hit=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Reinstall FFmpeg if cache invalid
+        if: steps.cache-ffmpeg.outputs.cache-hit == 'true' && steps.verify-ffmpeg.outcome == 'failure'
+        uses: FedericoCarboni/setup-ffmpeg@v3
+        with:
+          ffmpeg-version: release
+          github-token: ${{ github.token }}
 
       - name: Verify FFmpeg installation
         id: verify-ffmpeg
         run: |
           if command -v ffmpeg &> /dev/null; then
-            echo "FFmpeg installed: $(ffmpeg -version | head -n1)"
+            echo "✓ FFmpeg installed: $(ffmpeg -version | head -n1)"
+            echo "✓ FFmpeg path: $(which ffmpeg)"
+            echo "✓ FFprobe path: $(which ffprobe)"
           else
-            echo "FFmpeg not found in PATH"
+            echo "✗ FFmpeg not found in PATH"
             exit 1
           fi
 
       # ========== Python & dependencies ==========
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
       - name: Install Python dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
       # ========== Run bot ==========
       - name: Run bot
@@ -129,11 +153,11 @@ jobs:
 
       # ========== Restart on Failure ==========
       - name: Restart workflow on failure
-        if: failure()
+        if: failure() && github.event_name != 'schedule'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Workflow failed! Triggering a restart..."
+          echo "⚠️ Workflow failed! Triggering a restart..."
           echo "Failed step: ${{ github.job }}"
           
           # Wait a moment before restarting
