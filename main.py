@@ -900,7 +900,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                     text="📋 کپی پیوند",
                     copy_text="https://player.abraava.ir?id=" + str(track_id)
                 )
-            ] 
+            ]]
             
             await send_audio(bot, chat_id, audio=audio_cache, caption=caption, reply_markup=markup)
             await status_msg.delete()
@@ -1544,7 +1544,7 @@ async def show_settings_message(chat_id: int, user_id: int, message_to_delete: M
         f"⚡ *حالت سریع:* {'فعال' if quick_mode else 'غیرفعال'}\n"
         f"   ارسال خودکار اولین نتیجه جستجو\n\n"
         f"🎵 *کیفیت دانلود:* {quality_text}\n"
-
+  
         f"🖼️ *نمایش کاور:* {'فعال' if show_artwork else 'غیرفعال'}\n\n"
         f"⚡ *دانلود خودکار:* {'فعال' if auto_download else 'غیرفعال'}\n\n"
         f"🔔 *دریافت اعلان:* {'فعال' if notifications else 'غیرفعال'}\n\n"
