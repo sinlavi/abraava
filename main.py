@@ -55,7 +55,6 @@ user_show_artwork = {}
 user_quick_mode = {}
 user_auto_download = {}
 user_notifications = {}
-user_ask_quality_before_download = {}  # تنظیم جدید: پرسیدن کیفیت قبل از دانلود
 
 
 # ============================================================================
@@ -225,9 +224,6 @@ class APIClient:
 
     async def update_notifications(self, user_id: int, enabled: bool) -> Dict:
         return await self._request('update_notifications', {'user_id': user_id, 'enabled': enabled})
-
-    async def update_ask_quality_before_download(self, user_id: int, enabled: bool) -> Dict:
-        return await self._request('update_ask_quality', {'user_id': user_id, 'enabled': enabled})
 
     async def log_search(self, user_id: int, search_type: str, search_term: str, result_count: int) -> Dict:
         return await self._request('log_search', {
@@ -434,7 +430,6 @@ def set_default_user_settings(user_id: int):
     user_show_artwork[user_id] = True
     user_auto_download[user_id] = False
     user_notifications[user_id] = True
-    user_ask_quality_before_download[user_id] = False
     logger.info(f"Set default settings for user {user_id}")
 
 
@@ -448,7 +443,6 @@ async def load_user_settings(user_id: int):
             user_show_artwork[user_id] = bool(settings.get('show_artwork', True))
             user_auto_download[user_id] = bool(settings.get('auto_download', False))
             user_notifications[user_id] = bool(settings.get('notifications', True))
-            user_ask_quality_before_download[user_id] = bool(settings.get('ask_quality_before_download', False))
 
             quality_str = settings.get('download_quality', '192')
             if quality_str == "320":
@@ -462,8 +456,7 @@ async def load_user_settings(user_id: int):
 
             logger.info(f"Loaded settings for user {user_id}: quick_mode={user_quick_mode[user_id]}, "
                         f"quality={quality_str}, show_artwork={user_show_artwork[user_id]}, "
-                        f"auto_download={user_auto_download[user_id]}, notifications={user_notifications[user_id]}, "
-                        f"ask_quality={user_ask_quality_before_download[user_id]}")
+                        f"auto_download={user_auto_download[user_id]}, notifications={user_notifications[user_id]}")
         else:
             set_default_user_settings(user_id)
     except Exception as e:
@@ -488,8 +481,7 @@ async def register_user(message: Message):
         'download_quality': user_download_quality.get(user.id, DownloadQuality.MEDIUM).value,
         'show_artwork': user_show_artwork.get(user.id, True),
         'auto_download': user_auto_download.get(user.id, False),
-        'notifications': user_notifications.get(user.id, True),
-        'ask_quality_before_download': user_ask_quality_before_download.get(user.id, False)
+        'notifications': user_notifications.get(user.id, True)
     }
 
     result = await api_client.register_user(user_data)
@@ -735,18 +727,17 @@ async def ask_quality_for_download(chat_id: int, user_id: int, track_id: int, tr
     
     if is_album:
         text = f"📀 *انتخاب کیفیت برای دانلود آلبوم*\n\n"
-        text += f"🎵 *آلبوم:* {collection_name}\n"
-        text += f"🎤 *تعداد قطعات:* در حال دریافت...\n\n"
+        text += f"🎵 *آلبوم:* {collection_name}\n\n"
         text += f"کیفیت مورد نظر خود را انتخاب کنید:\n\n"
         text += f"🎵 *۳۲۰ kbps* - کیفیت استودیویی (مصرف ۳ واحد به ازای هر قطعه)\n"
         text += f"🎶 *۱۹۲ kbps* - کیفیت عالی (مصرف ۲ واحد به ازای هر قطعه)\n"
         text += f"🎧 *۱۲۸ kbps* - کیفیت خوب (مصرف ۱ واحد به ازای هر قطعه)\n\n"
-        text += f"کیفیت فعلی شما: {current_quality.value} kbps"
+        text += f"⚠️ *توجه:* کیفیت انتخاب شده برای تمام قطعات آلبوم اعمال خواهد شد."
         
         markup = [
-            [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.HIGH else ''}🎵 ۳۲۰ kbps", callback_data=f"album_quality:320:{collection_id}:{collection_name}")],
-            [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.MEDIUM else ''}🎶 ۱۹۲ kbps", callback_data=f"album_quality:192:{collection_id}:{collection_name}")],
-            [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.LOW else ''}🎧 ۱۲۸ kbps", callback_data=f"album_quality:128:{collection_id}:{collection_name}")],
+            [InlineKeyboardButton(text=f"🎵 ۳۲۰ kbps", callback_data=f"album_quality:320:{collection_id}:{collection_name}")],
+            [InlineKeyboardButton(text=f"🎶 ۱۹۲ kbps", callback_data=f"album_quality:192:{collection_id}:{collection_name}")],
+            [InlineKeyboardButton(text=f"🎧 ۱۲۸ kbps", callback_data=f"album_quality:128:{collection_id}:{collection_name}")],
             [InlineKeyboardButton(text="🔙 انصراف", callback_data="ignore")]
         ]
     else:
@@ -755,13 +746,12 @@ async def ask_quality_for_download(chat_id: int, user_id: int, track_id: int, tr
         text += f"کیفیت مورد نظر خود را انتخاب کنید:\n\n"
         text += f"🎵 *۳۲۰ kbps* - کیفیت استودیویی (مصرف ۳ واحد)\n"
         text += f"🎶 *۱۹۲ kbps* - کیفیت عالی (مصرف ۲ واحد)\n"
-        text += f"🎧 *۱۲۸ kbps* - کیفیت خوب (مصرف ۱ واحد)\n\n"
-        text += f"کیفیت فعلی شما: {current_quality.value} kbps"
+        text += f"🎧 *۱۲۸ kbps* - کیفیت خوب (مصرف ۱ واحد)\n"
         
         markup = [
-            [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.HIGH else ''}🎵 ۳۲۰ kbps", callback_data=f"track_quality:320:{track_id}")],
-            [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.MEDIUM else ''}🎶 ۱۹۲ kbps", callback_data=f"track_quality:192:{track_id}")],
-            [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.LOW else ''}🎧 ۱۲۸ kbps", callback_data=f"track_quality:128:{track_id}")],
+            [InlineKeyboardButton(text=f"🎵 ۳۲۰ kbps", callback_data=f"track_quality:320:{track_id}")],
+            [InlineKeyboardButton(text=f"🎶 ۱۹۲ kbps", callback_data=f"track_quality:192:{track_id}")],
+            [InlineKeyboardButton(text=f"🎧 ۱۲۸ kbps", callback_data=f"track_quality:128:{track_id}")],
             [InlineKeyboardButton(text="🔙 انصراف", callback_data="ignore")]
         ]
     
@@ -782,13 +772,8 @@ async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: s
             track_id = track.get('trackId')
             if track_id:
                 if user_auto_download.get(user_id, False):
-                    # اگر تنظیم پرسیدن کیفیت فعال است، ابتدا کیفیت را بپرس
-                    if user_ask_quality_before_download.get(user_id, False):
-                        await ask_quality_for_download(chat_id, user_id, track_id, track.get('trackName', 'آهنگ'), is_album=False)
-                        await status_msg.delete()
-                    else:
-                        asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
-                        await status_msg.delete()
+                    await ask_quality_for_download(chat_id, user_id, track_id, track.get('trackName', 'آهنگ'), is_album=False)
+                    await status_msg.delete()
                 else:
                     await show_track_page(chat_id, track_id, original_message, user_id)
                     await status_msg.delete()
@@ -812,7 +797,7 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
     if not exists:
         raise FileNotFoundError(f"File not found: {abs_audio_path}")
 
-    # دکمه کپی پیوند برای آهنگ‌های کش شده
+    # دکمه کپی پیوند برای آهنگ‌ها
     markup = [[
         InlineKeyboardButton(
             text="📂 نمایش در مینی اپ",
@@ -1314,7 +1299,6 @@ async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
 
             chat = await bot.get_chat(chat_id)
             if chat.type != "group" and chat.type != "supergroup" and tracks:
-                # دکمه دانلود آلبوم با آیکون دانلود
                 markup.append([InlineKeyboardButton(text="⬇️ دانلود کل آلبوم", callback_data=f"download_album:{collection_id}")])
 
         if collection_data.get("artistId"):
@@ -1360,7 +1344,6 @@ async def show_track_page(chat_id: int, track_id: int, message_to_edit: Optional
 
         markup = []
         
-        # دکمه دانلود با آیکون دانلود
         download_btn = [InlineKeyboardButton(text="⬇️ دانلود", callback_data=f"download:{track_id}")]
         if track.get("previewUrl"):
             download_btn.append(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}"))
@@ -1559,7 +1542,6 @@ async def show_settings_message(chat_id: int, user_id: int, message_to_delete: M
     show_artwork = user_show_artwork.get(user_id, True)
     auto_download = user_auto_download.get(user_id, False)
     notifications = user_notifications.get(user_id, True)
-    ask_quality = user_ask_quality_before_download.get(user_id, False)
 
     settings_text = (
         f"⚙️ *تنظیمات ربات {BOT_NAME}*\n\n"
@@ -1573,8 +1555,6 @@ async def show_settings_message(chat_id: int, user_id: int, message_to_delete: M
         f"   { 'دانلود فوری پس از جستجو' if auto_download else 'نمایش اطلاعات قبل از دانلود' }\n\n"
         f"🔔 *دریافت اعلان:* {'فعال' if notifications else 'غیرفعال'}\n"
         f"   { 'دریافت پیام‌های اطلاع‌رسانی' if notifications else 'عدم دریافت پیام‌های اطلاع‌رسانی' }\n\n"
-        f"❓ *پرسیدن کیفیت قبل از دانلود:* {'فعال' if ask_quality else 'غیرفعال'}\n"
-        f"   { 'هر بار کیفیت مورد نظر را انتخاب کنید' if ask_quality else 'استفاده از کیفیت پیش‌فرض' }\n\n"
         f"📊 برای مشاهده آمار دقیق، روی دکمه «آمار من» کلیک کنید."
     )
 
@@ -1584,7 +1564,6 @@ async def show_settings_message(chat_id: int, user_id: int, message_to_delete: M
         [InlineKeyboardButton(text=f"{'🖼️' if show_artwork else '🚫'} نمایش کاور", callback_data="menu_artwork")],
         [InlineKeyboardButton(text=f"{'⚡' if auto_download else '⏸️'} دانلود خودکار", callback_data="menu_auto_download")],
         [InlineKeyboardButton(text=f"{'🔔' if notifications else '🔕'} دریافت اعلان", callback_data="menu_notifications")],
-        [InlineKeyboardButton(text=f"{'❓' if ask_quality else '⚡'} پرسیدن کیفیت", callback_data="menu_ask_quality")],
         [InlineKeyboardButton(text="📊 آمار من", callback_data="show_stats")],
     ]
 
@@ -1649,7 +1628,6 @@ async def update_settings_message(callback_query: CallbackQuery, user_id: int):
 
 async def show_quality_menu(callback_query: CallbackQuery, user_id: int):
     current_quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
-    ask_quality = user_ask_quality_before_download.get(user_id, False)
 
     updating_msg = await send_message(bot, callback_query.message.chat.id, "🔄 *در حال بارگذاری منوی کیفیت...*")
 
@@ -1659,14 +1637,13 @@ async def show_quality_menu(callback_query: CallbackQuery, user_id: int):
         pass
 
     quality_text = (
-        "🎵 *انتخاب کیفیت دانلود*\n\n"
-        "هر کیفیت، مقدار مشخصی از سهمیه دانلود شما را مصرف می‌کند:\n\n"
+        "🎵 *تنظیم کیفیت دانلود*\n\n"
+        "کیفیت دانلود پیش‌فرض خود را انتخاب کنید:\n\n"
         "🎵 *۳۲۰ kbps* - کیفیت استودیویی (مصرف ۳ واحد)\n"
         "🎶 *۱۹۲ kbps* - کیفیت عالی (مصرف ۲ واحد)\n"
         "🎧 *۱۲۸ kbps* - کیفیت خوب (مصرف ۱ واحد)\n\n"
-        f"سهمیه فعلی شما: {download_rate_limiter.get_remaining(user_id)}/{download_rate_limiter.max_downloads} واحد\n\n"
-        f"⚙️ *تنظیم پرسیدن کیفیت:* {'فعال' if ask_quality else 'غیرفعال'}\n"
-        f"در صورت فعال بودن، قبل از هر دانلود کیفیت مورد نظر را انتخاب می‌کنید."
+        f"کیفیت فعلی شما: {current_quality.value} kbps\n\n"
+        "⚠️ *توجه:* در حالت دانلود خودکار (حالت سریع)، قبل از هر دانلود کیفیت مورد نظر از شما پرسیده می‌شود."
     )
 
     markup = [
@@ -1692,7 +1669,6 @@ async def show_stats_message(callback_query: CallbackQuery, user_id: int):
     show_artwork = user_show_artwork.get(user_id, True)
     auto_download = user_auto_download.get(user_id, False)
     notifications = user_notifications.get(user_id, True)
-    ask_quality = user_ask_quality_before_download.get(user_id, False)
 
     user_data = await api_client.get_user(user_id)
     total_searches = user_data.get('data', {}).get('total_searches', 0) if user_data.get('success') else 0
@@ -1712,8 +1688,7 @@ async def show_stats_message(callback_query: CallbackQuery, user_id: int):
         f"   🔹 کیفیت دانلود: {current_quality.value} kbps\n"
         f"   🔹 نمایش کاور: {'فعال' if show_artwork else 'غیرفعال'}\n"
         f"   🔹 دانلود خودکار: {'فعال' if auto_download else 'غیرفعال'}\n"
-        f"   🔹 دریافت اعلان: {'فعال' if notifications else 'غیرفعال'}\n"
-        f"   🔹 پرسیدن کیفیت: {'فعال' if ask_quality else 'غیرفعال'}\n\n"
+        f"   🔹 دریافت اعلان: {'فعال' if notifications else 'غیرفعال'}\n\n"
         f"📈 *آمار کلی:*\n"
         f"   🔹 جستجوها: {total_searches}\n"
         f"   🔹 دانلودها: {total_downloads}"
@@ -1860,7 +1835,7 @@ async def handle_message(message):
             f"🔹 تنظیم کیفیت دانلود (۳۲۰/۱۹۲/۱۲۸ kbps)\n"
             f"🔹 حالت سریع و دانلود خودکار\n"
             f"🔹 غیرفعال کردن کاور آلبوم برای افزایش سرعت\n"
-            f"🔹 قابلیت پرسیدن کیفیت قبل از هر دانلود\n\n"
+            f"🔹 پرسیدن کیفیت قبل از هر دانلود در حالت خودکار\n\n"
             f"🔧 تنظیمات: /settings\n"
             f"📊 آمار: /stats\n"
             f"🆘 راهنما: /help"
@@ -1957,11 +1932,6 @@ async def on_callback(callback_query: CallbackQuery):
         await show_confirmation_menu(callback_query, "notifications", current, "دریافت اعلان", "🔔")
         return
 
-    if data == "menu_ask_quality":
-        current = user_ask_quality_before_download.get(user_id, False)
-        await show_confirmation_menu(callback_query, "ask_quality", current, "پرسیدن کیفیت قبل از دانلود", "❓")
-        return
-
     if data.startswith("confirm_quick_mode:"):
         value = int(data.split(":")[1])
         user_quick_mode[user_id] = bool(value)
@@ -1990,14 +1960,6 @@ async def on_callback(callback_query: CallbackQuery):
         value = int(data.split(":")[1])
         user_notifications[user_id] = bool(value)
         await api_client.update_notifications(user_id, bool(value))
-        await update_settings_message(callback_query, user_id)
-        await bot.answer_callback_query(callback_query.id, "✅ تنظیمات ذخیره شد")
-        return
-
-    if data.startswith("confirm_ask_quality:"):
-        value = int(data.split(":")[1])
-        user_ask_quality_before_download[user_id] = bool(value)
-        await api_client.update_ask_quality_before_download(user_id, bool(value))
         await update_settings_message(callback_query, user_id)
         await bot.answer_callback_query(callback_query.id, "✅ تنظیمات ذخیره شد")
         return
@@ -2125,21 +2087,15 @@ async def on_callback(callback_query: CallbackQuery):
             track_id = int(parts[1])
             quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
             
-            # بررسی تنظیم پرسیدن کیفیت
-            if user_ask_quality_before_download.get(user_id, False):
-                track_data = await get_track(track_id)
-                if track_data and track_data.get("results"):
-                    track_name = track_data["results"][0].get('trackName', 'آهنگ')
-                    await ask_quality_for_download(chat_id, user_id, track_id, track_name, is_album=False)
-                    await bot.answer_callback_query(callback_query.id, "🎵 کیفیت مورد نظر را انتخاب کنید")
-                    return
-            else:
-                can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality.value)
-                if not can_dl:
-                    await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت: {wait_sec} ثانیه", show_alert=True)
-                    return
-                await bot.answer_callback_query(callback_query.id, "🎵 در حال پردازش...")
-                asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
+            can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality.value)
+            if not can_dl:
+                await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت: {wait_sec} ثانیه", show_alert=True)
+                return
+            
+            # در حالت عادی (غیر خودکار) مستقیماً با کیفیت پیش‌فرض دانلود می‌شود
+            # در حالت خودکار، قبل از دانلود کیفیت پرسیده می‌شود (در تابع quick_search_and_send هندل می‌شود)
+            await bot.answer_callback_query(callback_query.id, "🎵 در حال پردازش...")
+            asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
 
         elif data.startswith("download_album:"):
             collection_id = int(parts[1])
@@ -2148,32 +2104,17 @@ async def on_callback(callback_query: CallbackQuery):
                 await bot.answer_callback_query(callback_query.id, "❌ دانلود آلبوم در گروه ممنوع", show_alert=True)
                 return
             
-            # بررسی تنظیم پرسیدن کیفیت
-            if user_ask_quality_before_download.get(user_id, False):
-                collection_data = await get_or_crawl_collection(collection_id, None, False)
-                collection_name = collection_data['results'][0].get('collectionName', 'آلبوم') if collection_data else 'آلبوم'
-                await ask_quality_for_download(chat_id, user_id, None, None, is_album=True, collection_id=collection_id, collection_name=collection_name)
-                await bot.answer_callback_query(callback_query.id, "🎵 کیفیت مورد نظر را انتخاب کنید")
+            quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
+            can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality.value)
+            if not can_dl:
+                await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت: {wait_sec} ثانیه", show_alert=True)
                 return
-            else:
-                quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
-                can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality.value)
-                if not can_dl:
-                    await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت: {wait_sec} ثانیه", show_alert=True)
-                    return
-                await bot.answer_callback_query(callback_query.id, "📀 در حال آماده‌سازی...")
-
-                collection_data = await get_or_crawl_collection(collection_id, None, False)
-                tracks_data = await get_or_crawl_collection_tracks(collection_id)
-                tracks = tracks_data["results"] if tracks_data else []
-
-                if not tracks:
-                    await bot.answer_callback_query(callback_query.id, "❌ قطعه‌ای یافت نشد", show_alert=True)
-                    return
-
-                collection_name = collection_data['results'][0].get('collectionName', 'آلبوم') if collection_data else 'آلبوم'
-                status_msg = await send_message(bot, chat_id, f"🎵 *شروع دانلود آلبوم: {collection_name}*")
-                asyncio.create_task(download_and_send_album(bot, chat_id, collection_id, user_id, collection_name, tracks, status_msg))
+            
+            # قبل از دانلود آلبوم، کیفیت را می‌پرسیم
+            collection_data = await get_or_crawl_collection(collection_id, None, False)
+            collection_name = collection_data['results'][0].get('collectionName', 'آلبوم') if collection_data else 'آلبوم'
+            await ask_quality_for_download(chat_id, user_id, None, None, is_album=True, collection_id=collection_id, collection_name=collection_name)
+            await bot.answer_callback_query(callback_query.id, "🎵 کیفیت مورد نظر را انتخاب کنید")
 
         elif data.startswith("preview:"):
             track_id = int(parts[1])
