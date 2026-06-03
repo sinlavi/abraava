@@ -2164,9 +2164,7 @@ async def on_callback(callback_query: CallbackQuery):
         return
 
     # ========== تنظیمات منوها (فقط در پیوی) ==========
-    if is_group:
-        await bot.answer_callback_query(callback_query.id, "❌ این دکمه فقط در پیوی کار می‌کند", show_alert=True)
-        return
+
 
     if data == "menu_quick_mode":
         current = user_quick_mode.get(user_id, False)
