@@ -188,7 +188,7 @@ class APIClient:
 
         headers = {
             'Authorization': f'Bearer {self.token}',
-            'Content-Type':application/json'
+            'Content-Type':'application/json'
         }
 
         try:
