@@ -47,9 +47,6 @@ QUALITY_MULTIPLIER = {
     "128": 1
 }
 
-# Quality priority order
-QUALITY_PRIORITY = ["320", "192", "128"]
-
 # Store user preferences
 user_download_quality = {}
 user_show_artwork = {}
@@ -1045,7 +1042,7 @@ async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
             text += f"\n📀 *آلبوم‌ها (مجموع {total_items} آلبوم):*\n"
             for collection in page_items:
                 if collection['wrapperType'] == 'collection':
-                    btn_text = f"📀 {collection.get('collectionName', 'نامشخص')[:45]} - {collection.get('artistName', 'نامشخص')[:30]}"
+                    btn_text = f"📀 {collection.get('collectionName', 'نامشخص')[:40]} - {collection.get('artistName', 'نامشخص')[:30]}"
                     markup.append([InlineKeyboardButton(text=btn_text, callback_data=f"collection:{collection['collectionId']}:1")])
 
             if total_pages > 1:
@@ -1054,7 +1051,7 @@ async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
         
         markup.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
-                           owner_id=owner_id, artwork_url=artist_image, artist_id=artist_id)
+                           owner_id=owner_id, artwork_url=artist_image, artist_id=artist_id, keep_original=True)
         await status_msg.delete()
 
     except Exception as e:
@@ -1115,7 +1112,7 @@ async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
         
         artwork_url = get_high_res_artwork(collection_data.get("artworkUrl100"))
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
-                           artwork_url=artwork_url, cache_id=collection_id, owner_id=owner_id)
+                           artwork_url=artwork_url, cache_id=collection_id, owner_id=owner_id, keep_original=True)
         await status_msg.delete()
 
     except Exception as e:
@@ -1156,7 +1153,7 @@ async def show_track_page(chat_id: int, track_id: int, message_to_edit: Optional
         
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup, artwork_url=artwork_url,
-                           cache_id=track.get('collectionId'), owner_id=owner_id)
+                           cache_id=track.get('collectionId'), owner_id=owner_id, keep_original=True)
         await status_msg.delete()
 
     except Exception as e:
@@ -1228,6 +1225,7 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
                    InlineKeyboardButton("🔍 هنرمندان", f"refine:artist:{refine_term}"),
                    InlineKeyboardButton("🔍 آهنگ‌ها", f"refine:track:{refine_term}")])
 
+    # برای نتایج جستجو، پیام قبلی را نگه می‌داریم (حذف نمی‌کنیم)
     await edit_or_send(bot, chat_id, message_to_edit, header, markup=markup, owner_id=owner_id, keep_original=True)
 
 
@@ -1263,7 +1261,7 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
     if owner_id and msg and msg.chat.type in ["group", "supergroup"]:
         set_message_owner(msg.id, owner_id)
 
-    # فقط زمانی که keep_original=False باشد و message_to_edit وجود داشته باشد، پیام قبلی حذف می‌شود
+    # فقط زمانی که keep_original=False باشد، پیام قبلی حذف می‌شود
     if message_to_edit and not keep_original:
         try:
             if message_to_edit.id in MESSAGE_OWNER:
