@@ -42,9 +42,9 @@ class DownloadQuality(Enum):
 
 # Quality multipliers for rate limiting
 QUALITY_MULTIPLIER = {
-    "320": 3,  # 320kbps uses 3 download slots
-    "192": 2,  # 192kbps uses 2 download slots
-    "128": 1   # 128kbps uses 1 download slot
+    "320": 3,
+    "192": 2,
+    "128": 1
 }
 
 # Store user preferences
@@ -209,8 +209,6 @@ user_download_lock = asyncio.Lock()
 
 async def acquire_user_download_lock(user_id: int, quality: str = "192") -> bool:
     async with user_download_lock:
-        multiplier = QUALITY_MULTIPLIER.get(quality, 1)
-        # Check if user has enough capacity
         if user_id in user_active_downloads:
             return False
         user_active_downloads.add(user_id)
@@ -275,10 +273,8 @@ class DownloadRateLimiter:
     async def can_download(self, user_id: int, quality: str = "192") -> tuple[bool, int]:
         now = time.time()
         multiplier = QUALITY_MULTIPLIER.get(quality, 1)
-        # Clean old entries
         self.users[user_id] = [ts for ts in self.users[user_id] if now - ts < self.time_window]
         
-        # Calculate total used slots
         total_used = len(self.users[user_id])
         available_slots = self.max_downloads - total_used
         
@@ -291,7 +287,6 @@ class DownloadRateLimiter:
     def record_download(self, user_id: int, quality: str = "192"):
         now = time.time()
         multiplier = QUALITY_MULTIPLIER.get(quality, 1)
-        # Add multiplier number of entries
         for _ in range(multiplier):
             self.users[user_id].append(now)
 
@@ -437,22 +432,20 @@ class AlbumDownloadTracker:
         failed = sum(1 for tr in t["tracks"] if not tr.success and tr.error is not None)
         elapsed = time.time() - t["start_time"]
 
-        text = f"📀 *دانلود آلبوم: {t['collection_name']}*\n"
+        text = f"📀 *دانلود آلبوم: {t['collection_name']}*\n\n"
         text += f"🎵 *پیشرفت:* {t['current_idx']}/{t['total']} قطعه\n"
         text += f"✅ *موفق:* {completed}\n"
-        text += f"❌ *ناموفق:* {failed}\n"
+        text += f"❌ *ناموفق:* {failed}\n\n"
         
-        # Show current track with timer if downloading
         if t["current_idx"] < t["total"] and t["tracks"] and t["current_idx"] < len(t["tracks"]):
             current_track = t["tracks"][t["current_idx"]]
             if current_track.start_time > 0:
                 track_elapsed = int(time.time() - current_track.start_time)
                 text += f"🎵 *در حال دانلود:* {current_track.name}\n"
-                text += f"⏱️ *زمان سپری شده:* {track_elapsed} ثانیه\n"
+                text += f"⏱️ *زمان سپری شده:* {track_elapsed} ثانیه\n\n"
             else:
-                text += f"🎵 *در صف:* {current_track.name}\n"
+                text += f"🎵 *در صف:* {current_track.name}\n\n"
         
-        # Show ETA
         if t["current_idx"] > 0 and completed + failed > 0:
             avg_time = elapsed / (completed + failed)
             remaining_tracks = t["total"] - (completed + failed)
@@ -576,7 +569,6 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
     quality_value = quality.value
     
-    # Format caption like before
     caption_lines = []
     caption_lines.append(f"🎵 *نام آهنگ:* {track.get('trackName', 'Unknown Title')}")
     caption_lines.append(f"🎤 *نام هنرمند:* {track.get('artistName', 'Unknown Artist')}")
@@ -622,7 +614,6 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
         temp_dir_to_clean = None
         try:
             async with DOWNLOAD_SEMAPHORE:
-                # Mark track start time for album download
                 if collection_id:
                     album_tracker.start_track(user_id, collection_id, t_name)
                 
@@ -774,13 +765,13 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
         await asyncio.sleep(1)
 
     final_text = f"✅ *دانلود آلبوم {collection_name} به پایان رسید*\n\n"
-    final_text += f"📊 *جمع کل:* {len(tracks)} قطعه\n"
+    final_text += f"🎵 *جمع کل:* {len(tracks)} قطعه\n"
     final_text += f"✅ *موفق:* {success_count}\n"
     if failed_tracks:
         final_text += f"❌ *ناموفق:* {len(failed_tracks)}\n\n"
         final_text += "⚠️ *قطعات ناموفق:*\n"
         for ft in failed_tracks[:10]:
-            final_text += f"- {ft['name']}\n"
+            final_text += f"🔸 {ft['name']}\n"
         if len(failed_tracks) > 10:
             final_text += f"... و {len(failed_tracks) - 10} قطعه دیگر\n"
     if stopped_by_rate_limit:
@@ -1009,7 +1000,12 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
                    InlineKeyboardButton("🔍 هنرمندان", f"refine:artist:{refine_term}"),
                    InlineKeyboardButton("🔍 آهنگ‌ها", f"refine:track:{refine_term}")])
 
-    await edit_or_send(bot, chat_id, message_to_edit, header, markup=markup, owner_id=owner_id, delete_old=True)
+    # فقط برای pagination پیام قبلی حذف میشه، برای refine و نتایج حذف نمیشه
+    should_delete_old = False
+    if message_to_edit and "page:" in str(message_to_edit.content or ""):
+        should_delete_old = True
+    
+    await edit_or_send(bot, chat_id, message_to_edit, header, markup=markup, owner_id=owner_id, delete_old=should_delete_old)
 
 
 async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
@@ -1031,7 +1027,8 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
     if owner_id and msg and msg.chat.type in ["group", "supergroup"]:
         set_message_owner(msg.id, owner_id)
 
-    if message_to_edit and (delete_old or message_to_edit != msg):
+    # فقط زمانی که delete_old=True باشه پیام قبلی حذف میشه
+    if message_to_edit and delete_old and message_to_edit != msg:
         try:
             await message_to_edit.delete()
         except:
@@ -1089,15 +1086,15 @@ async def show_settings_message(chat_id: int, user_id: int, message_to_delete: M
     
     settings_text = (
         f"⚙️ *تنظیمات ربات {BOT_NAME}*\n\n"
-        f"🔹 *حالت سریع:* {'فعال' if quick_mode else 'غیرفعال'}\n"
+        f"⚡ *حالت سریع:* {'فعال' if quick_mode else 'غیرفعال'}\n"
         f"   ارسال خودکار اولین نتیجه جستجو\n\n"
-        f"🔹 *کیفیت دانلود:* {quality.value} kbps\n"
+        f"🎵 *کیفیت دانلود:* {quality.value} kbps\n"
         f"   کیفیت بالاتر = حجم بیشتر و مصرف بیشتر سهمیه دانلود\n\n"
-        f"🔹 *نمایش کاور:* {'فعال' if show_artwork else 'غیرفعال'}\n"
+        f"🖼️ *نمایش کاور:* {'فعال' if show_artwork else 'غیرفعال'}\n"
         f"   { 'نمایش تصاویر آلبوم' if show_artwork else 'افزایش سرعت پاسخگویی' }\n\n"
-        f"🔹 *دانلود خودکار:* {'فعال' if auto_download else 'غیرفعال'}\n"
+        f"⚡ *دانلود خودکار:* {'فعال' if auto_download else 'غیرفعال'}\n"
         f"   { 'دانلود فوری پس از جستجو' if auto_download else 'نمایش اطلاعات قبل از دانلود' }\n\n"
-        f"🔹 *دریافت اعلان:* {'فعال' if notifications else 'غیرفعال'}\n"
+        f"🔔 *دریافت اعلان:* {'فعال' if notifications else 'غیرفعال'}\n"
         f"   { 'دریافت پیام‌های اطلاع‌رسانی' if notifications else 'عدم دریافت پیام‌های اطلاع‌رسانی' }\n\n"
         f"📊 برای مشاهده آمار دقیق، روی دکمه «آمار من» کلیک کنید."
     )
@@ -1122,13 +1119,13 @@ async def show_settings_message(chat_id: int, user_id: int, message_to_delete: M
     return msg
 
 
-async def show_confirmation_menu(callback_query: CallbackQuery, setting_type: str, current_value: bool, display_name: str):
+async def show_confirmation_menu(callback_query: CallbackQuery, setting_type: str, current_value: bool, display_name: str, emoji: str = "⚙️"):
     status_text = "فعال" if current_value else "غیرفعال"
     new_status = not current_value
     new_status_text = "غیرفعال" if current_value else "فعال"
     
     confirmation_text = (
-        f"⚙️ *تغییر تنظیمات*\n\n"
+        f"{emoji} *تغییر تنظیمات*\n\n"
         f"تنظیمات: *{display_name}*\n"
         f"وضعیت فعلی: *{status_text}*\n\n"
         f"آیا می‌خواهید این تنظیم را به *{new_status_text}* تغییر دهید؟"
@@ -1139,10 +1136,8 @@ async def show_confirmation_menu(callback_query: CallbackQuery, setting_type: st
         [InlineKeyboardButton(text="❌ خیر، انصراف", callback_data="back_to_settings")],
     ]
     
-    # Send updating message
     updating_msg = await send_message(bot, callback_query.message.chat.id, "🔄 *در حال بارگذاری...*")
     
-    # Delete old message
     try:
         await callback_query.message.delete()
     except:
@@ -1150,7 +1145,6 @@ async def show_confirmation_menu(callback_query: CallbackQuery, setting_type: st
     
     msg = await send_message(bot, callback_query.message.chat.id, confirmation_text, reply_markup=markup)
     
-    # Delete updating message
     try:
         await updating_msg.delete()
     except:
@@ -1158,19 +1152,15 @@ async def show_confirmation_menu(callback_query: CallbackQuery, setting_type: st
 
 
 async def update_settings_message(callback_query: CallbackQuery, user_id: int):
-    # Send updating message
     updating_msg = await send_message(bot, callback_query.message.chat.id, "🔄 *در حال بروزرسانی تنظیمات...*")
     
-    # Delete old message
     try:
         await callback_query.message.delete()
     except:
         pass
     
-    # Show new settings message
     await show_settings_message(callback_query.message.chat.id, user_id)
     
-    # Delete updating message
     try:
         await updating_msg.delete()
     except:
@@ -1180,10 +1170,8 @@ async def update_settings_message(callback_query: CallbackQuery, user_id: int):
 async def show_quality_menu(callback_query: CallbackQuery, user_id: int):
     current_quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
     
-    # Send updating message
     updating_msg = await send_message(bot, callback_query.message.chat.id, "🔄 *در حال بارگذاری منوی کیفیت...*")
     
-    # Delete old message
     try:
         await callback_query.message.delete()
     except:
@@ -1207,7 +1195,6 @@ async def show_quality_menu(callback_query: CallbackQuery, user_id: int):
     
     msg = await send_message(bot, callback_query.message.chat.id, quality_text, reply_markup=markup)
     
-    # Delete updating message
     try:
         await updating_msg.delete()
     except:
@@ -1230,29 +1217,27 @@ async def show_stats_message(callback_query: CallbackQuery, user_id: int):
     stats_text = (
         f"📊 *آمار و تنظیمات شما*\n\n"
         f"🔍 *محدودیت جستجو:*\n"
-        f"   ┣ باقی‌مانده: {remaining} درخواست\n"
-        f"   ┗ حداکثر: {rate_limiter.max_requests} در دقیقه\n\n"
+        f"   🔹 باقی‌مانده: {remaining} درخواست\n"
+        f"   🔹 حداکثر: {rate_limiter.max_requests} در دقیقه\n\n"
         f"⬇️ *محدودیت دانلود:*\n"
-        f"   ┣ باقی‌مانده: {downloads_remaining} واحد\n"
-        f"   ┗ حداکثر: {download_rate_limiter.max_downloads} واحد در ساعت\n"
-        f"   ※ کیفیت ۳۲۰ = ۳ واحد، ۱۹۲ = ۲ واحد، ۱۲۸ = ۱ واحد\n\n"
+        f"   🔹 باقی‌مانده: {downloads_remaining} واحد\n"
+        f"   🔹 حداکثر: {download_rate_limiter.max_downloads} واحد در ساعت\n"
+        f"   🔹 کیفیت ۳۲۰ = ۳ واحد، ۱۹۲ = ۲ واحد، ۱۲۸ = ۱ واحد\n\n"
         f"⚙️ *تنظیمات فعال:*\n"
-        f"   ┣ حالت سریع: {'فعال' if quick_mode else 'غیرفعال'}\n"
-        f"   ┣ کیفیت دانلود: {current_quality.value} kbps\n"
-        f"   ┣ نمایش کاور: {'فعال' if show_artwork else 'غیرفعال'}\n"
-        f"   ┣ دانلود خودکار: {'فعال' if auto_download else 'غیرفعال'}\n"
-        f"   ┗ دریافت اعلان: {'فعال' if notifications else 'غیرفعال'}\n\n"
+        f"   🔹 حالت سریع: {'فعال' if quick_mode else 'غیرفعال'}\n"
+        f"   🔹 کیفیت دانلود: {current_quality.value} kbps\n"
+        f"   🔹 نمایش کاور: {'فعال' if show_artwork else 'غیرفعال'}\n"
+        f"   🔹 دانلود خودکار: {'فعال' if auto_download else 'غیرفعال'}\n"
+        f"   🔹 دریافت اعلان: {'فعال' if notifications else 'غیرفعال'}\n\n"
         f"📈 *آمار کلی:*\n"
-        f"   ┣ جستجوها: {total_searches}\n"
-        f"   ┗ دانلودها: {total_downloads}"
+        f"   🔹 جستجوها: {total_searches}\n"
+        f"   🔹 دانلودها: {total_downloads}"
     )
     
     markup = [[InlineKeyboardButton(text="🔙 بازگشت به تنظیمات", callback_data="back_to_settings")]]
     
-    # Send updating message
     updating_msg = await send_message(bot, callback_query.message.chat.id, "🔄 *در حال بارگذاری آمار...*")
     
-    # Delete old message
     try:
         await callback_query.message.delete()
     except:
@@ -1260,7 +1245,6 @@ async def show_stats_message(callback_query: CallbackQuery, user_id: int):
     
     msg = await send_message(bot, callback_query.message.chat.id, stats_text, reply_markup=markup)
     
-    # Delete updating message
     try:
         await updating_msg.delete()
     except:
@@ -1386,7 +1370,6 @@ async def handle_message(message):
     user_id = message.author.id
     chat_id = message.chat.id
 
-    # Check membership for private chats
     if not is_group and not msg_text.startswith("/start"):
         is_member, missing = await verify_all_memberships(user_id)
         if not is_member:
@@ -1418,11 +1401,11 @@ async def handle_message(message):
             f"من اینجام تا آهنگ‌های مورد علاقت رو برات پیدا کنم و بفرستم.\n"
             f"فقط کافیه اسم آهنگ رو بگی، خودم بلدم چیکار کنم 😉\n\n"
             f"✨ *امکانات ربات:*\n"
-            f"• جستجو در آیتونز و دانلود از یوتیوب موزیک\n"
-            f"• قابلیت دانلود آلبوم به صورت یکجا\n"
-            f"• تنظیم کیفیت دانلود (۳۲۰/۱۹۲/۱۲۸ kbps)\n"
-            f"• حالت سریع و دانلود خودکار\n"
-            f"• غیرفعال کردن کاور آلبوم برای افزایش سرعت\n\n"
+            f"🔹 جستجو در آیتونز و دانلود از یوتیوب موزیک\n"
+            f"🔹 قابلیت دانلود آلبوم به صورت یکجا\n"
+            f"🔹 تنظیم کیفیت دانلود (۳۲۰/۱۹۲/۱۲۸ kbps)\n"
+            f"🔹 حالت سریع و دانلود خودکار\n"
+            f"🔹 غیرفعال کردن کاور آلبوم برای افزایش سرعت\n\n"
             f"🔧 برای تنظیمات از `/settings` استفاده کنید.\n"
             f"📊 برای مشاهده آمار از `/stats` استفاده کنید.\n"
             f"🆘 برای راهنما از `/help` استفاده کنید."
@@ -1435,19 +1418,19 @@ async def handle_message(message):
         await reply_message(message,
             f"🛠 *راهنمای استفاده از {BOT_NAME}*\n\n"
             f"🔍 *دستورات جستجو:*\n"
-            f"• `/track [نام آهنگ]` - جستجوی آهنگ\n"
-            f"• `/album [نام آلبوم]` - جستجوی آلبوم\n"
-            f"• `/artist [نام هنرمند]` - جستجوی هنرمند\n"
-            f"• `/quick [نام آهنگ]` - دانلود سریع اولین نتیجه\n"
-            f"• یا به سادگی نام آهنگ را بنویسید\n\n"
+            f"🔹 `/track [نام آهنگ]` - جستجوی آهنگ\n"
+            f"🔹 `/album [نام آلبوم]` - جستجوی آلبوم\n"
+            f"🔹 `/artist [نام هنرمند]` - جستجوی هنرمند\n"
+            f"🔹 `/quick [نام آهنگ]` - دانلود سریع اولین نتیجه\n"
+            f"🔹 یا به سادگی نام آهنگ را بنویسید\n\n"
             f"⚙️ *تنظیمات:*\n"
-            f"• `/settings` - تنظیمات ربات\n"
-            f"• `/stats` - آمار کاربری\n\n"
+            f"🔹 `/settings` - تنظیمات ربات\n"
+            f"🔹 `/stats` - آمار کاربری\n\n"
             f"💡 *نکات مهم:*\n"
-            f"• در گروه‌ها حتما ربات را تگ کنید\n"
-            f"• محدودیت جستجو: {rate_limiter.max_requests} درخواست در دقیقه\n"
-            f"• محدودیت دانلود: {download_rate_limiter.max_downloads} واحد در ساعت\n"
-            f"• کیفیت ۳۲۰ = ۳ واحد، ۱۹۲ = ۲ واحد، ۱۲۸ = ۱ واحد"
+            f"🔹 در گروه‌ها حتما ربات را تگ کنید\n"
+            f"🔹 محدودیت جستجو: {rate_limiter.max_requests} درخواست در دقیقه\n"
+            f"🔹 محدودیت دانلود: {download_rate_limiter.max_downloads} واحد در ساعت\n"
+            f"🔹 کیفیت ۳۲۰ = ۳ واحد، ۱۹۲ = ۲ واحد، ۱۲۸ = ۱ واحد"
         )
 
     elif msg_text.startswith("/about"):
@@ -1455,12 +1438,12 @@ async def handle_message(message):
             f"ℹ️ *درباره {BOT_NAME}*\n\n"
             f"ربات دانلود موزیک با قابلیت جستجو در iTunes و دانلود از YouTube Music\n\n"
             f"✨ *ویژگی‌ها:*\n"
-            f"• دانلود با کیفیت ۳۲۰/۱۹۲/۱۲۸ kbps\n"
-            f"• دانلود آلبوم به صورت یکجا با نمایش تایمر\n"
-            f"• تگ‌گذاری خودکار (کاور و اطلاعات)\n"
-            f"• قابلیت غیرفعال کردن کاور برای سرعت بیشتر\n"
-            f"• دانلود خودکار در حالت سریع\n"
-            f"• سیستم سهمیه دانلود بر اساس کیفیت\n\n"
+            f"🔹 دانلود با کیفیت ۳۲۰/۱۹۲/۱۲۸ kbps\n"
+            f"🔹 دانلود آلبوم به صورت یکجا با نمایش تایمر\n"
+            f"🔹 تگ‌گذاری خودکار (کاور و اطلاعات)\n"
+            f"🔹 قابلیت غیرفعال کردن کاور برای سرعت بیشتر\n"
+            f"🔹 دانلود خودکار در حالت سریع\n"
+            f"🔹 سیستم سهمیه دانلود بر اساس کیفیت\n\n"
             f"📝 *نسخه:* 2.1\n"
             f"👨‍💻 *توسعه:* ابرآوا"
         )
@@ -1479,15 +1462,15 @@ async def handle_message(message):
         await reply_message(message,
             f"📊 *آمار شما*\n\n"
             f"🔍 *جستجو:*\n"
-            f"   ┣ باقی‌مانده: {remaining} درخواست\n"
-            f"   ┗ حداکثر: {rate_limiter.max_requests} در دقیقه\n\n"
+            f"   🔹 باقی‌مانده: {remaining} درخواست\n"
+            f"   🔹 حداکثر: {rate_limiter.max_requests} در دقیقه\n\n"
             f"⬇️ *دانلود:*\n"
-            f"   ┣ باقی‌مانده: {downloads_remaining} واحد\n"
-            f"   ┗ حداکثر: {download_rate_limiter.max_downloads} واحد در ساعت\n"
-            f"   ※ کیفیت فعلی: {current_quality.value} kbps\n\n"
+            f"   🔹 باقی‌مانده: {downloads_remaining} واحد\n"
+            f"   🔹 حداکثر: {download_rate_limiter.max_downloads} واحد در ساعت\n"
+            f"   🔹 کیفیت فعلی: {current_quality.value} kbps\n\n"
             f"📈 *آمار کلی:*\n"
-            f"   ┣ جستجوها: {total_searches}\n"
-            f"   ┗ دانلودها: {total_downloads}"
+            f"   🔹 جستجوها: {total_searches}\n"
+            f"   🔹 دانلودها: {total_downloads}"
         )
 
     else:
@@ -1514,28 +1497,26 @@ async def on_callback(callback_query: CallbackQuery):
         await bot.answer_callback_query(callback_query.id)
         return
 
-    # Settings menu handlers
     if data == "menu_quick_mode":
         current = user_quick_mode.get(user_id, False)
-        await show_confirmation_menu(callback_query, "quick_mode", current, "حالت سریع")
+        await show_confirmation_menu(callback_query, "quick_mode", current, "حالت سریع", "⚡")
         return
     
     if data == "menu_artwork":
         current = user_show_artwork.get(user_id, True)
-        await show_confirmation_menu(callback_query, "show_artwork", current, "نمایش کاور")
+        await show_confirmation_menu(callback_query, "show_artwork", current, "نمایش کاور", "🖼️")
         return
     
     if data == "menu_auto_download":
         current = user_auto_download.get(user_id, False)
-        await show_confirmation_menu(callback_query, "auto_download", current, "دانلود خودکار")
+        await show_confirmation_menu(callback_query, "auto_download", current, "دانلود خودکار", "⚡")
         return
     
     if data == "menu_notifications":
         current = user_notifications.get(user_id, True)
-        await show_confirmation_menu(callback_query, "notifications", current, "دریافت اعلان")
+        await show_confirmation_menu(callback_query, "notifications", current, "دریافت اعلان", "🔔")
         return
     
-    # Confirmation handlers
     if data.startswith("confirm_quick_mode:"):
         value = int(data.split(":")[1])
         user_quick_mode[user_id] = bool(value)
@@ -1593,7 +1574,6 @@ async def on_callback(callback_query: CallbackQuery):
         await update_settings_message(callback_query, user_id)
         return
 
-    # Handle retry callbacks
     if data.startswith("retry:"):
         retry_data = data[6:]
         if retry_data.startswith("search_retry:"):
@@ -1614,7 +1594,6 @@ async def on_callback(callback_query: CallbackQuery):
             pass
         return
 
-    # Handle album download cancellation
     if data.startswith("cancel_album:"):
         parts = data.split(":")
         if len(parts) >= 3:
@@ -1646,10 +1625,7 @@ async def on_callback(callback_query: CallbackQuery):
         elif data.startswith("refine:"):
             entity = parts[1]
             term = parts[2]
-            try:
-                await callback_query.message.delete()
-            except:
-                pass
+            # برای refine پیام قبلی حذف نمیشه، فقط صفحه جدید ارسال میشه
             await handle_search_command(chat_id, user_id, entity, term, owner_id=user_id)
         elif data.startswith("artist:"):
             artist_id = int(parts[1])
