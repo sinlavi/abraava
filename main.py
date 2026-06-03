@@ -40,15 +40,15 @@ class DownloadQuality(Enum):
     MEDIUM = "192"
     LOW = "128"
 
-# Quality priority order (higher is better)
-QUALITY_PRIORITY = ["320", "192", "128"]
-
 # Quality multipliers for rate limiting
 QUALITY_MULTIPLIER = {
     "320": 3,
     "192": 2,
     "128": 1
 }
+
+# Quality priority order
+QUALITY_PRIORITY = ["320", "192", "128"]
 
 # Store user preferences
 user_download_quality = {}
@@ -59,8 +59,123 @@ user_notifications = {}
 
 
 # ============================================================================
+# Bale Upload Error Notification System
+# ============================================================================
+class BaleUploadErrorNotifier:
+    def __init__(self):
+        self.notification_message_id = None
+        self.error_active = False
+        self.last_error_time = 0
+        self.error_cooldown = 300
+
+    async def notify_upload_error(self, bot: Client, error_message: str = "", album_download_callback: callable = None):
+        if not INFO_CHANNEL_ID:
+            return
+        
+        current_time = time.time()
+        
+        if self.error_active:
+            logger.info("Upload error notification already active, skipping duplicate notification")
+            if album_download_callback:
+                try:
+                    await album_download_callback()
+                except Exception as e:
+                    logger.error(f"Error in album download callback: {e}")
+            return
+        
+        if current_time - self.last_error_time < self.error_cooldown:
+            logger.info(f"Upload error notification on cooldown, skipping")
+            if album_download_callback:
+                try:
+                    await album_download_callback()
+                except Exception as e:
+                    logger.error(f"Error in album download callback: {e}")
+            return
+        
+        self.last_error_time = current_time
+        
+        notification_text = (
+            "⚠️ *اختلال در سرویس آپلود بله* ⚠️\n\n"
+            "در حال حاضر سرویس آپلود فایل پیام‌رسان بله با مشکل مواجه شده است.\n"
+            "این مشکل از سمت بله می‌باشد و به محض رفع مشکل، ربات به حالت عادی بازخواهد گشت.\n\n"
+            "✅ به محض رفع مشکل، این پیام حذف خواهد شد.\n\n"
+            "#اطلاع_رسانی"
+        )
+        
+        try:
+            msg = await send_message(bot, INFO_CHANNEL_ID, notification_text)
+            self.notification_message_id = msg.id
+            self.error_active = True
+            logger.warning(f"Bale upload error notification sent")
+            
+            if album_download_callback:
+                try:
+                    await album_download_callback()
+                except Exception as e:
+                    logger.error(f"Error in album download callback: {e}")
+                
+        except Exception as e:
+            logger.error(f"Failed to send upload error notification: {e}")
+
+    async def clear_upload_error_notification(self, bot: Client):
+        if not INFO_CHANNEL_ID or not self.error_active:
+            return
+        
+        try:
+            await bot.delete_message(INFO_CHANNEL_ID, self.notification_message_id)
+            logger.info("Bale upload error notification cleared")
+        except Exception as e:
+            logger.error(f"Failed to delete error notification: {e}")
+        finally:
+            self.error_active = False
+            self.notification_message_id = None
+
+    async def check_and_clear_if_resolved(self, bot: Client, test_success: bool = False):
+        if self.error_active and test_success:
+            await self.clear_upload_error_notification(bot)
+
+
+bale_error_notifier = BaleUploadErrorNotifier()
+album_upload_error_flag = {}
+
+
+async def cancel_album_download_on_upload_error(user_id: int, collection_id: int, bot: Client, chat_id: int):
+    key = (user_id, collection_id)
+    album_upload_error_flag[key] = True
+    logger.info(f"Upload error flag set for user {user_id}, collection {collection_id}")
+    album_tracker.cancel_download(user_id, collection_id)
+
+
+# ============================================================================
 # API Client for PHP Backend
 # ============================================================================
+async def check_channel_membership(user_id: int, channel_id: str) -> bool:
+    try:
+        chat_member = await bot.get_chat_member(channel_id, user_id)
+        if chat_member and chat_member.status in ['member', 'administrator', 'creator']:
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Failed to check membership: {e}")
+        return False
+
+
+async def verify_all_memberships(user_id: int) -> tuple[bool, List[Dict]]:
+    result = await api_client.get_required_channels()
+    if not result.get('success'):
+        return True, []
+
+    channels = result.get('data', [])
+    missing_channels = []
+
+    for channel in channels:
+        channel_id = channel.get('channel_id')
+        if not await check_channel_membership(user_id, channel_id):
+            missing_channels.append(channel)
+
+    return len(missing_channels) == 0, missing_channels
+
+
 class APIClient:
     def __init__(self, base_url: str, token: str):
         self.base_url = base_url.rstrip('/')
@@ -210,7 +325,7 @@ user_active_downloads = set()
 user_download_lock = asyncio.Lock()
 
 
-async def acquire_user_download_lock(user_id: int, quality: str = "192") -> bool:
+async def acquire_user_download_lock(user_id: int) -> bool:
     async with user_download_lock:
         if user_id in user_active_downloads:
             return False
@@ -224,7 +339,7 @@ def release_user_download_lock(user_id: int):
 
 
 # ============================================================================
-# Rate Limiting with Quality Multiplier
+# Rate Limiting
 # ============================================================================
 class RateLimiter:
     def __init__(self, max_requests: int = 30, time_window: int = 60):
@@ -348,7 +463,7 @@ async def register_user(message: Message):
 
 
 # ============================================================================
-# Album Download Tracker with Timer
+# Album Download Tracker
 # ============================================================================
 @dataclass
 class TrackDownloadStatus:
@@ -495,114 +610,54 @@ album_tracker = AlbumDownloadTracker()
 
 
 # ============================================================================
-# Mirror Helper Functions
+# Mirror Helper Functions - مثل کد اصلی خودت
 # ============================================================================
-async def get_cached_audio(track_id: int, desired_quality: str) -> Optional[tuple[str, str]]:
-    """Get cached audio URL from mirror for desired quality or better"""
+async def get_cached_audio(track_id: int) -> Optional[str]:
+    """Get cached audio URL from mirror - مثل کد اصلی خودت"""
     try:
-        data = await get_mirror('track', str(track_id), 'audioUrl')
-        if data and data.get("mirrors", {}).get('audioUrl', False):
-            mirrors = data["mirrors"]['audioUrl']
-            
-            # Check if mirrors is a dict with quality keys
-            if isinstance(mirrors, dict):
-                # Find best available quality (equal or better than desired)
-                desired_index = QUALITY_PRIORITY.index(desired_quality)
-                for quality in QUALITY_PRIORITY[:desired_index + 1]:  # Check better or equal qualities first
-                    if quality in mirrors:
-                        url = mirrors[quality]
-                        if url:
-                            logger.info(f"Found cached audio for track {track_id} with quality {quality}")
-                            return quality, url
-                
-                # If no better quality, check lower qualities
-                for quality in QUALITY_PRIORITY[desired_index + 1:]:
-                    if quality in mirrors:
-                        url = mirrors[quality]
-                        if url:
-                            logger.info(f"Found cached audio for track {track_id} with lower quality {quality}")
-                            return quality, url
-            
-            # Legacy format (single URL without quality)
-            elif isinstance(mirrors, str):
-                logger.info(f"Found legacy cached audio for track {track_id}")
-                return "legacy", mirrors
+        if track_id:
+            data = await get_mirror('track', str(track_id), 'audioUrl')
+            if data.get("mirrors", {}).get('audioUrl', False):
+                cached_url = data["mirrors"]['audioUrl']['url']
+                if cached_url and '<token>' in cached_url:
+                    file_id = cached_url.split('<token>/')[1]
+                    return file_id
+                return cached_url
     except Exception as e:
         logger.error(f"Error getting cached audio: {e}")
-    return None, None
-
-
-async def save_cached_audio(track_id: int, quality: str, file_id: str):
-    """Save audio file ID to mirror with quality"""
-    try:
-        # First get existing mirrors
-        existing_data = await get_mirror('track', str(track_id), 'audioUrl')
-        mirrors = {}
-        
-        if existing_data and existing_data.get("mirrors", {}).get('audioUrl', False):
-            existing_mirrors = existing_data["mirrors"]['audioUrl']
-            if isinstance(existing_mirrors, dict):
-                mirrors = existing_mirrors
-            elif isinstance(existing_mirrors, str):
-                # Convert legacy format to new format
-                mirrors['legacy'] = existing_mirrors
-        
-        # Add/update quality
-        mirrors[quality] = f"https://tapi.bale.ai/file/bot<token>/{file_id}"
-        
-        # Save back
-        await set_mirror('track', str(track_id), 'audioUrl', mirrors)
-        logger.info(f"Saved cached audio for track {track_id} with quality {quality}")
-    except Exception as e:
-        logger.error(f"Error saving cached audio: {e}")
+    return None
 
 
 async def get_cached_artwork(entity_type: str, entity_id: int) -> Optional[str]:
-    """Get cached artwork URL from mirror"""
+    """Get cached artwork URL from mirror - مثل کد اصلی خودت"""
     try:
-        data = await get_mirror(entity_type, str(entity_id), 'artworkUrl')
-        if data and data.get("mirrors", {}).get('artworkUrl', False):
-            url = data["mirrors"]['artworkUrl']
-            if url:
-                logger.info(f"Found cached artwork for {entity_type} {entity_id}")
-                return url
+        if entity_id:
+            data = await get_mirror(entity_type, str(entity_id), 'artworkUrl')
+            if data.get("mirrors", {}).get('artworkUrl', False):
+                cached_url = data["mirrors"]['artworkUrl']['url']
+                if cached_url and '<token>' in cached_url:
+                    file_id = cached_url.split('<token>/')[1]
+                    return file_id
+                return cached_url
     except Exception as e:
         logger.error(f"Error getting cached artwork: {e}")
     return None
 
 
-async def save_cached_artwork(entity_type: str, entity_id: int, file_id: str):
-    """Save artwork file ID to mirror"""
-    try:
-        url = f"https://tapi.bale.ai/file/bot<token>/{file_id}"
-        await set_mirror(entity_type, str(entity_id), 'artworkUrl', url)
-        logger.info(f"Saved cached artwork for {entity_type} {entity_id}")
-    except Exception as e:
-        logger.error(f"Error saving cached artwork: {e}")
-
-
 async def get_cached_preview(track_id: int) -> Optional[str]:
-    """Get cached preview URL from mirror"""
+    """Get cached preview URL from mirror - مثل کد اصلی خودت"""
     try:
-        data = await get_mirror('track', str(track_id), 'previewUrl')
-        if data and data.get("mirrors", {}).get('previewUrl', False):
-            url = data["mirrors"]['previewUrl']
-            if url:
-                logger.info(f"Found cached preview for track {track_id}")
-                return url
+        if track_id:
+            data = await get_mirror('track', str(track_id), 'previewUrl')
+            if data.get("mirrors", {}).get('previewUrl', False):
+                cached_url = data["mirrors"]['previewUrl']['url']
+                if cached_url and '<token>' in cached_url:
+                    file_id = cached_url.split('<token>/')[1]
+                    return file_id
+                return cached_url
     except Exception as e:
         logger.error(f"Error getting cached preview: {e}")
     return None
-
-
-async def save_cached_preview(track_id: int, file_id: str):
-    """Save preview file ID to mirror"""
-    try:
-        url = f"https://tapi.bale.ai/file/bot<token>/{file_id}"
-        await set_mirror('track', str(track_id), 'previewUrl', url)
-        logger.info(f"Saved cached preview for track {track_id}")
-    except Exception as e:
-        logger.error(f"Error saving cached preview: {e}")
 
 
 # ============================================================================
@@ -654,12 +709,29 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
                     copy_text="https://player.abraava.ir?id=" + track_id
                 )]]
                 msg = await send_audio(bot, chat_id=chat_id, audio=audio_file, caption=caption, reply_markup=markup)
+                
+                # ذخیره در mirror بعد از آپلود موفق
+                if msg and track_id:
+                    await set_mirror('track', str(track_id), 'audioUrl',
+                                     'https://tapi.bale.ai/file/bot<token>/' + str(msg.audio.id))
                 return msg
 
         except Exception as e:
+            error_str = str(e)
             last_exception = e
+            logger.warning(f"send_audio attempt {attempt}/{max_retries} failed: {error_str}")
+
+            if any(keyword in error_str.lower() for keyword in ['upload', 'timeout', 'connection', 'network', 'file_id', 'audio']):
+                cancel_callback = None
+                if user_id and collection_id:
+                    async def cancel_album():
+                        await cancel_album_download_on_upload_error(user_id, collection_id, bot, chat_id)
+                    cancel_callback = cancel_album
+                await bale_error_notifier.notify_upload_error(bot, error_str, cancel_callback)
+
             if attempt < max_retries:
-                await asyncio.sleep(attempt * 2)
+                wait_time = attempt * 2
+                await asyncio.sleep(wait_time)
             else:
                 raise
 
@@ -680,60 +752,59 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     track = track_data["results"][0]
     release_year = track.get("releaseDate", "").split("-")[0] if track.get("releaseDate") else ""
 
-    desired_quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM).value
+    quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
+    quality_value = quality.value
     
-    caption_lines = []
-    caption_lines.append(f"🎵 *نام آهنگ:* {track.get('trackName', 'Unknown Title')}")
-    caption_lines.append(f"🎤 *نام هنرمند:* {track.get('artistName', 'Unknown Artist')}")
-    caption_lines.append(f"📀 *کیفیت دانلود:* {desired_quality} kbps")
+    caption_parts = [
+        f"🎵 *نام آهنگ:* {track.get('trackName', 'Unknown Title')}",
+        f"🎤 *نام هنرمند:* {track.get('artistName', 'Unknown Artist')}",
+        f"📀 *کیفیت دانلود:* {quality_value} kbps",
+    ]
     if track.get('collectionName'):
-        caption_lines.append(f"💿 *نام آلبوم:* {track.get('collectionName')}")
+        caption_parts.append(f"💿 *نام آلبوم:* {track.get('collectionName')}")
     if release_year:
-        caption_lines.append(f"📅 *سال انتشار:* {release_year}")
+        caption_parts.append(f"📅 *سال انتشار:* {release_year}")
     if track.get('primaryGenreName'):
-        caption_lines.append(f"🎸 *سبک:* {track.get('primaryGenreName')}")
+        caption_parts.append(f"🎸 *سبک:* {track.get('primaryGenreName')}")
     if track.get('trackExplicitness') == 'explicit':
-        caption_lines.append(f"🔞 *Explicit:* بله")
+        caption_parts.append(f"🔞 *Explicit:* بله")
     if track.get('trackTimeMillis'):
         duration_sec = int(track['trackTimeMillis']) // 1000
         minutes = duration_sec // 60
         seconds = duration_sec % 60
-        caption_lines.append(f"⏱️ *مدت زمان:* {minutes}:{seconds:02d}")
+        caption_parts.append(f"⏱️ *مدت زمان:* {minutes}:{seconds:02d}")
 
-    caption = "\n".join(caption_lines)
+    caption = "\n".join(caption_parts)
     markup = [[InlineKeyboardButton(
         text="📂 نمایش در مینی اپ",
         web_app="https://player.abraava.ir?id=" + str(track_id)
     )]]
 
-    # ========== بررسی کش آهنگ از mirror ==========
-    cached_quality, cached_url = await get_cached_audio(track_id, desired_quality)
-    
-    if cached_url:
+    # بررسی کش آهنگ از mirror
+    audio_cache = await get_cached_audio(track_id)
+
+    if audio_cache:
         try:
-            # Extract file_id from URL
-            file_id = None
-            if '/file/' in cached_url:
-                parts = cached_url.split('/file/')
-                if len(parts) > 1:
-                    file_part = parts[1]
-                    if '/' in file_part:
-                        file_id = file_part.split('/')[-1]
-                    else:
-                        file_id = file_part
-            
-            if file_id:
-                await update_status_with_close(status_msg, f"📤 *در حال ارسال فایل از حافظه کش (کیفیت {cached_quality})...*")
-                await send_audio(bot, chat_id, audio=file_id, caption=caption, reply_markup=markup)
-                await status_msg.delete()
-                await api_client.log_download(
-                    user_id=user_id, track_id=str(track_id), track_name=track.get('trackName', ''),
-                    artist_name=track.get('artistName', ''), album_name=track.get('collectionName', ''),
-                    file_size=0, download_source='cache', quality=cached_quality if cached_quality != 'legacy' else desired_quality
-                )
-                return
+            await update_status_with_close(status_msg, f"📤 *در حال ارسال فایل از حافظه کش...*")
+            await send_audio(bot, chat_id, audio=audio_cache, caption=caption, reply_markup=markup)
+            await status_msg.delete()
+            await api_client.log_download(
+                user_id=user_id, track_id=str(track_id), track_name=track.get('trackName', ''),
+                artist_name=track.get('artistName', ''), album_name=track.get('collectionName', ''),
+                file_size=0, download_source='cache', quality=quality_value
+            )
+            await bale_error_notifier.check_and_clear_if_resolved(bot, test_success=True)
+            return
         except Exception as e:
             logger.error(f"Cache send failed: {e}, will re-download")
+            if user_id and collection_id:
+                async def cancel_album():
+                    await cancel_album_download_on_upload_error(user_id, collection_id, bot, chat_id)
+                await bale_error_notifier.notify_upload_error(bot, str(e), cancel_album)
+
+    if OFFLINE_MODE:
+        await send_error_with_retry(bot, chat_id, "بات در حالت آفلاین است.", f"download_retry:{track_id}", status_msg)
+        return
 
     t_name = track.get("trackName", "Unknown Title")
     ye = track.get("releaseDate", "").split("-")[0]
@@ -746,7 +817,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     try:
         video_id = await search_youtube_track(t_name, a_name, collection_name, ye)
         if not video_id:
-            await send_error_with_retry(bot, chat_id, "متاسفانه لینک مناسبی یافت نشد.", f"download_retry:{track_id}", status_msg)
+            await send_error_with_retry(bot, chat_id, "لینک مناسبی یافت نشد.", f"download_retry:{track_id}", status_msg)
             return
 
         video_url = f"https://music.youtube.com/watch?v={video_id}"
@@ -759,8 +830,8 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                 if collection_id:
                     album_tracker.start_track(user_id, collection_id, t_name)
                 
-                await update_status_with_close(status_msg, f"⏳ *در حال دانلود با کیفیت {desired_quality}kbps...*")
-                mp3_path_str = await download_audio(video_url, quality=desired_quality)
+                await update_status_with_close(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*")
+                mp3_path_str = await download_audio(video_url, quality=quality_value)
                 temp_dir_to_clean = os.path.dirname(mp3_path_str)
 
                 if not mp3_path_str or not os.path.exists(mp3_path_str):
@@ -784,21 +855,15 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                 await asyncio.get_event_loop().run_in_executor(None, tag_mp3, mp3_path_str, track, cover_bytes)
                 await update_status_with_close(status_msg, f"☁️ *در حال آپلود روی سرورهای ابری...*")
 
-                # آپلود فایل و دریافت پیام
-                msg = await send_audio_with_retry(bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, 
+                await send_audio_with_retry(bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, 
                                             track_id=str(track['trackId']), user_id=user_id, collection_id=collection_id)
-                
-                # ذخیره در mirror بعد از آپلود موفق
-                if msg and hasattr(msg, 'audio') and msg.audio:
-                    file_id = msg.audio.id
-                    await save_cached_audio(track_id, desired_quality, file_id)
 
                 await api_client.log_download(
                     user_id=user_id, track_id=str(track_id), track_name=t_name, artist_name=a_name,
                     album_name=collection_name, file_size=int(file_size_mb * 1024 * 1024),
-                    download_source='youtube', quality=desired_quality
+                    download_source='youtube', quality=quality_value
                 )
-                download_rate_limiter.record_download(user_id, desired_quality)
+                download_rate_limiter.record_download(user_id, quality_value)
                 
                 try:
                     await status_msg.delete()
@@ -832,30 +897,20 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
         preview_url = track.get("previewUrl")
 
         if not preview_url:
-            await send_error_with_retry(bot, chat_id, "پیش‌نمایشی برای این آهنگ موجود نیست.", f"preview_retry:{track_id}", status_msg)
+            await send_error_with_retry(bot, chat_id, "پیش‌نمایشی موجود نیست.", f"preview_retry:{track_id}", status_msg)
             return
 
-        # Check cache
-        cached_preview = await get_cached_preview(track_id)
-        if cached_preview:
+        # بررسی کش preview
+        preview_cache = await get_cached_preview(track_id)
+        if preview_cache:
             try:
-                file_id = None
-                if '/file/' in cached_preview:
-                    parts = cached_preview.split('/file/')
-                    if len(parts) > 1:
-                        file_part = parts[1]
-                        if '/' in file_part:
-                            file_id = file_part.split('/')[-1]
-                        else:
-                            file_id = file_part
-                if file_id:
-                    await send_voice(bot, chat_id, voice=file_id, caption=f"🎧 *پیش‌نمایش آهنگ {track.get('trackName')}*")
-                    await status_msg.delete()
-                    return
+                await send_voice(bot, chat_id, voice=preview_cache, caption=f"🎧 *پیش‌نمایش آهنگ {track.get('trackName')}*")
+                await status_msg.delete()
+                return
             except Exception as e:
                 logger.error(f"Cache preview send failed: {e}")
 
-        # Download and send preview
+        # دانلود و ارسال preview
         async with HTTP_SESSION.get(preview_url) as resp:
             if resp.status == 200:
                 preview_data = io.BytesIO(await resp.read())
@@ -863,8 +918,9 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
                 
                 msg = await send_voice(bot, chat_id, voice=preview_data, caption=f"🎧 *پیش‌نمایش آهنگ {track.get('trackName')}*")
                 
-                if msg and hasattr(msg, 'voice') and msg.voice:
-                    await save_cached_preview(track_id, msg.voice.id)
+                if msg and track_id:
+                    await set_mirror('track', str(track_id), 'previewUrl',
+                                     'https://tapi.bale.ai/file/bot<token>/' + str(msg.voice.id))
                 
                 await status_msg.delete()
             else:
@@ -925,7 +981,7 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
         can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality.value)
         if not can_dl:
             stopped_by_rate_limit = True
-            error_msg = f"محدودیت دانلود: {wait_sec} ثانیه تا مجوز بعدی صبر کنید"
+            error_msg = f"محدودیت دانلود: {wait_sec} ثانیه صبر کنید"
             album_tracker.update_track_result(user_id, collection_id, track_name, False, error_msg)
             failed_tracks.append({"name": track_name, "error": error_msg})
             break
@@ -1009,7 +1065,7 @@ async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
         await status_msg.delete()
 
     except Exception as e:
-        await send_error_with_retry(bot, chat_id, f"خطا در نمایش هنرمند: {str(e)[:100]}", f"artist_retry:{artist_id}", status_msg)
+        await send_error_with_retry(bot, chat_id, f"خطا: {str(e)[:100]}", f"artist_retry:{artist_id}", status_msg)
 
 
 async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
@@ -1072,7 +1128,7 @@ async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
         await status_msg.delete()
 
     except Exception as e:
-        await send_error_with_retry(bot, chat_id, f"خطا در نمایش آلبوم: {str(e)[:100]}", f"collection_retry:{collection_id}", status_msg)
+        await send_error_with_retry(bot, chat_id, f"خطا: {str(e)[:100]}", f"collection_retry:{collection_id}", status_msg)
 
 
 async def show_track_page(chat_id: int, track_id: int, message_to_edit: Optional[Message] = None, owner_id: int = None):
@@ -1113,60 +1169,7 @@ async def show_track_page(chat_id: int, track_id: int, message_to_edit: Optional
         await status_msg.delete()
 
     except Exception as e:
-        await send_error_with_retry(bot, chat_id, f"خطا در نمایش آهنگ: {str(e)[:100]}", f"track_retry:{track_id}", status_msg)
-
-
-async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
-                       markup=None, artwork_url: str = None, cache_id=None, owner_id=None, artist_id=None, delete_old=False):
-    if markup is None:
-        markup = []
-
-    msg = None
-    show_artwork = user_show_artwork.get(owner_id, True) if owner_id else True
-    
-    # Check artwork cache
-    artwork_file_id = None
-    if artwork_url and show_artwork and cache_id:
-        entity_type = "artist" if artist_id else "collection"
-        cached_artwork = await get_cached_artwork(entity_type, cache_id)
-        if cached_artwork:
-            try:
-                if '/file/' in cached_artwork:
-                    parts = cached_artwork.split('/file/')
-                    if len(parts) > 1:
-                        file_part = parts[1]
-                        if '/' in file_part:
-                            artwork_file_id = file_part.split('/')[-1]
-                        else:
-                            artwork_file_id = file_part
-            except:
-                pass
-    
-    if artwork_url and show_artwork:
-        try:
-            if artwork_file_id:
-                msg = await send_photo(bot, chat_id, photo=artwork_file_id, caption=text, reply_markup=markup)
-            else:
-                msg = await send_photo(bot, chat_id, photo=artwork_url, caption=text, reply_markup=markup)
-                if msg and hasattr(msg, 'photo') and msg.photo and cache_id:
-                    entity_type = "artist" if artist_id else "collection"
-                    await save_cached_artwork(entity_type, cache_id, msg.photo[0].id)
-        except Exception as e:
-            logger.error(f"Failed to send photo: {e}")
-            msg = await send_message(bot, chat_id, text=text, reply_markup=markup)
-    else:
-        msg = await send_message(bot, chat_id, text, reply_markup=markup)
-
-    if owner_id and msg and msg.chat.type in ["group", "supergroup"]:
-        set_message_owner(msg.id, owner_id)
-
-    if message_to_edit and delete_old and message_to_edit != msg:
-        try:
-            await message_to_edit.delete()
-        except:
-            pass
-
-    return msg
+        await send_error_with_retry(bot, chat_id, f"خطا: {str(e)[:100]}", f"track_retry:{track_id}", status_msg)
 
 
 async def handle_search_command(chat_id: int, user_id: int, type_: str, term: str, original_message: Message = None,
@@ -1191,7 +1194,7 @@ async def handle_search_command(chat_id: int, user_id: int, type_: str, term: st
         else:
             await send_error_with_retry(bot, chat_id, f"هیچ نتیجه‌ای برای '{term}' یافت نشد.", f"search_retry:{type_}:{term}", status_msg)
     except Exception as e:
-        await send_error_with_retry(bot, chat_id, f"خطا در جستجو: {str(e)[:100]}", f"search_retry:{type_}:{term}", status_msg)
+        await send_error_with_retry(bot, chat_id, f"خطا: {str(e)[:100]}", f"search_retry:{type_}:{term}", status_msg)
 
 
 async def send_search_page(chat_id: int, type_: str, term: str, results: dict, page: int,
@@ -1234,11 +1237,51 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
                    InlineKeyboardButton("🔍 هنرمندان", f"refine:artist:{refine_term}"),
                    InlineKeyboardButton("🔍 آهنگ‌ها", f"refine:track:{refine_term}")])
 
-    should_delete_old = False
-    if message_to_edit and "page:" in str(message_to_edit.content or ""):
-        should_delete_old = True
+    await edit_or_send(bot, chat_id, message_to_edit, header, markup=markup, owner_id=owner_id)
+
+
+async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
+                       markup=None, artwork_url: str = None, cache_id=None, owner_id=None, artist_id=None):
+    if markup is None:
+        markup = []
+
+    msg = None
+    show_artwork = user_show_artwork.get(owner_id, True) if owner_id else True
     
-    await edit_or_send(bot, chat_id, message_to_edit, header, markup=markup, owner_id=owner_id, delete_old=should_delete_old)
+    # بررسی کش artwork
+    artwork_cache = None
+    if artwork_url and show_artwork and cache_id:
+        entity_type = "artist" if artist_id else "collection"
+        artwork_cache = await get_cached_artwork(entity_type, cache_id)
+    
+    if artwork_url and show_artwork:
+        try:
+            if artwork_cache:
+                msg = await send_photo(bot, chat_id, photo=artwork_cache, caption=text, reply_markup=markup)
+            else:
+                msg = await send_photo(bot, chat_id, photo=artwork_url, caption=text, reply_markup=markup)
+                if msg and cache_id and not artwork_cache:
+                    entity_type = "artist" if artist_id else "collection"
+                    await set_mirror(entity_type, str(cache_id), 'artworkUrl',
+                                     'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
+        except Exception as e:
+            logger.error(f"Failed to send photo: {e}")
+            msg = await send_message(bot, chat_id, text=text, reply_markup=markup)
+    else:
+        msg = await send_message(bot, chat_id, text, reply_markup=markup)
+
+    if owner_id and msg and msg.chat.type in ["group", "supergroup"]:
+        set_message_owner(msg.id, owner_id)
+
+    if message_to_edit:
+        try:
+            if message_to_edit.id in MESSAGE_OWNER:
+                MESSAGE_OWNER.pop(message_to_edit.id, None)
+            await message_to_edit.delete()
+        except Exception as e:
+            pass
+
+    return msg
 
 
 async def store_search_cache(search_id: str, type_: str, term: str, results: dict, owner_id: int):
@@ -1279,7 +1322,7 @@ def get_message_owner(message_id: int) -> Optional[int]:
 
 
 # ============================================================================
-# Settings Message Functions with Confirmation Menus
+# Settings Message Functions
 # ============================================================================
 async def show_settings_message(chat_id: int, user_id: int, message_to_delete: Message = None):
     quick_mode = user_quick_mode.get(user_id, False)
@@ -1500,36 +1543,6 @@ async def parse_search_query(text: str) -> Optional[tuple[str, str]]:
 
 
 # ============================================================================
-# Channel Membership Check
-# ============================================================================
-async def check_channel_membership(user_id: int, channel_id: str) -> bool:
-    try:
-        chat_member = await bot.get_chat_member(channel_id, user_id)
-        if chat_member and chat_member.status in ['member', 'administrator', 'creator']:
-            return True
-        return False
-    except Exception as e:
-        logger.error(f"Failed to check membership: {e}")
-        return False
-
-
-async def verify_all_memberships(user_id: int) -> tuple[bool, List[Dict]]:
-    result = await api_client.get_required_channels()
-    if not result.get('success'):
-        return True, []
-
-    channels = result.get('data', [])
-    missing_channels = []
-
-    for channel in channels:
-        channel_id = channel.get('channel_id')
-        if not await check_channel_membership(user_id, channel_id):
-            missing_channels.append(channel)
-
-    return len(missing_channels) == 0, missing_channels
-
-
-# ============================================================================
 # Bale Bot Initialization & Handlers
 # ============================================================================
 bot = Client(token=BOT_TOKEN)
@@ -1543,7 +1556,6 @@ async def on_initialize():
     logger.info(f'ربات "{BOT_NAME}" با موفقیت روشن شد')
     logger.info(f"محدودیت جستجو: {rate_limiter.max_requests} درخواست در دقیقه")
     logger.info(f"محدودیت دانلود: {download_rate_limiter.max_downloads} واحد در ساعت")
-    logger.info("کیفیت ۳۲۰ = ۳ واحد، ۱۹۲ = ۲ واحد، ۱۲۸ = ۱ واحد")
 
 
 @bot.on_shutdown()
@@ -1610,9 +1622,9 @@ async def handle_message(message):
             f"🔹 تنظیم کیفیت دانلود (۳۲۰/۱۹۲/۱۲۸ kbps)\n"
             f"🔹 حالت سریع و دانلود خودکار\n"
             f"🔹 غیرفعال کردن کاور آلبوم برای افزایش سرعت\n\n"
-            f"🔧 برای تنظیمات از `/settings` استفاده کنید.\n"
-            f"📊 برای مشاهده آمار از `/stats` استفاده کنید.\n"
-            f"🆘 برای راهنما از `/help` استفاده کنید."
+            f"🔧 تنظیمات: /settings\n"
+            f"📊 آمار: /stats\n"
+            f"🆘 راهنما: /help"
         )
         if INFO_CHANNEL_ID:
             welcome_text += f"\n\n📢 *کانال اطلاع‌رسانی:* ble.ir/join/4T95Zt7P5X"
@@ -1625,16 +1637,9 @@ async def handle_message(message):
             f"🔹 `/track [نام آهنگ]` - جستجوی آهنگ\n"
             f"🔹 `/album [نام آلبوم]` - جستجوی آلبوم\n"
             f"🔹 `/artist [نام هنرمند]` - جستجوی هنرمند\n"
-            f"🔹 `/quick [نام آهنگ]` - دانلود سریع اولین نتیجه\n"
-            f"🔹 یا به سادگی نام آهنگ را بنویسید\n\n"
-            f"⚙️ *تنظیمات:*\n"
-            f"🔹 `/settings` - تنظیمات ربات\n"
-            f"🔹 `/stats` - آمار کاربری\n\n"
-            f"💡 *نکات مهم:*\n"
-            f"🔹 در گروه‌ها حتما ربات را تگ کنید\n"
-            f"🔹 محدودیت جستجو: {rate_limiter.max_requests} درخواست در دقیقه\n"
-            f"🔹 محدودیت دانلود: {download_rate_limiter.max_downloads} واحد در ساعت\n"
-            f"🔹 کیفیت ۳۲۰ = ۳ واحد، ۱۹۲ = ۲ واحد، ۱۲۸ = ۱ واحد"
+            f"🔹 `/quick [نام آهنگ]` - دانلود سریع\n\n"
+            f"⚙️ تنظیمات: /settings\n"
+            f"📊 آمار: /stats"
         )
 
     elif msg_text.startswith("/about"):
@@ -1647,9 +1652,7 @@ async def handle_message(message):
             f"🔹 تگ‌گذاری خودکار (کاور و اطلاعات)\n"
             f"🔹 قابلیت غیرفعال کردن کاور برای سرعت بیشتر\n"
             f"🔹 دانلود خودکار در حالت سریع\n"
-            f"🔹 سیستم سهمیه دانلود بر اساس کیفیت\n\n"
-            f"📝 *نسخه:* 2.1\n"
-            f"👨‍💻 *توسعه:* ابرآوا"
+            f"🔹 سیستم سهمیه دانلود بر اساس کیفیت"
         )
 
     elif msg_text.startswith("/settings"):
@@ -1661,20 +1664,14 @@ async def handle_message(message):
         user_data = await api_client.get_user(user_id)
         total_searches = user_data.get('data', {}).get('total_searches', 0) if user_data.get('success') else 0
         total_downloads = user_data.get('data', {}).get('total_downloads', 0) if user_data.get('success') else 0
-        current_quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
         
         await reply_message(message,
             f"📊 *آمار شما*\n\n"
-            f"🔍 *جستجو:*\n"
-            f"   🔹 باقی‌مانده: {remaining} درخواست\n"
-            f"   🔹 حداکثر: {rate_limiter.max_requests} در دقیقه\n\n"
-            f"⬇️ *دانلود:*\n"
-            f"   🔹 باقی‌مانده: {downloads_remaining} واحد\n"
-            f"   🔹 حداکثر: {download_rate_limiter.max_downloads} واحد در ساعت\n"
-            f"   🔹 کیفیت فعلی: {current_quality.value} kbps\n\n"
-            f"📈 *آمار کلی:*\n"
-            f"   🔹 جستجوها: {total_searches}\n"
-            f"   🔹 دانلودها: {total_downloads}"
+            f"🔍 جستجوی باقی‌مانده: {remaining}/{rate_limiter.max_requests}\n"
+            f"⬇️ دانلود باقی‌مانده: {downloads_remaining}/{download_rate_limiter.max_downloads}\n\n"
+            f"📈 آمار کلی:\n"
+            f"🔹 جستجوها: {total_searches}\n"
+            f"🔹 دانلودها: {total_downloads}"
         )
 
     else:
@@ -1726,7 +1723,7 @@ async def on_callback(callback_query: CallbackQuery):
         user_quick_mode[user_id] = bool(value)
         await api_client.update_quick_mode(user_id, bool(value))
         await update_settings_message(callback_query, user_id)
-        await bot.answer_callback_query(callback_query.id, "✅ تنظیمات با موفقیت ذخیره شد")
+        await bot.answer_callback_query(callback_query.id, "✅ تنظیمات ذخیره شد")
         return
     
     if data.startswith("confirm_show_artwork:"):
@@ -1734,7 +1731,7 @@ async def on_callback(callback_query: CallbackQuery):
         user_show_artwork[user_id] = bool(value)
         await api_client.update_show_artwork(user_id, bool(value))
         await update_settings_message(callback_query, user_id)
-        await bot.answer_callback_query(callback_query.id, "✅ تنظیمات با موفقیت ذخیره شد")
+        await bot.answer_callback_query(callback_query.id, "✅ تنظیمات ذخیره شد")
         return
     
     if data.startswith("confirm_auto_download:"):
@@ -1742,7 +1739,7 @@ async def on_callback(callback_query: CallbackQuery):
         user_auto_download[user_id] = bool(value)
         await api_client.update_auto_download(user_id, bool(value))
         await update_settings_message(callback_query, user_id)
-        await bot.answer_callback_query(callback_query.id, "✅ تنظیمات با موفقیت ذخیره شد")
+        await bot.answer_callback_query(callback_query.id, "✅ تنظیمات ذخیره شد")
         return
     
     if data.startswith("confirm_notifications:"):
@@ -1750,7 +1747,7 @@ async def on_callback(callback_query: CallbackQuery):
         user_notifications[user_id] = bool(value)
         await api_client.update_notifications(user_id, bool(value))
         await update_settings_message(callback_query, user_id)
-        await bot.answer_callback_query(callback_query.id, "✅ تنظیمات با موفقیت ذخیره شد")
+        await bot.answer_callback_query(callback_query.id, "✅ تنظیمات ذخیره شد")
         return
     
     if data == "show_stats":
@@ -1771,13 +1768,14 @@ async def on_callback(callback_query: CallbackQuery):
             user_download_quality[user_id] = DownloadQuality.LOW
         await api_client.update_download_quality(user_id, quality_value)
         await update_settings_message(callback_query, user_id)
-        await bot.answer_callback_query(callback_query.id, f"✅ کیفیت دانلود به {quality_value} kbps تغییر کرد")
+        await bot.answer_callback_query(callback_query.id, f"✅ کیفیت به {quality_value} kbps تغییر کرد")
         return
     
     if data == "back_to_settings":
         await update_settings_message(callback_query, user_id)
         return
 
+    # Handle retry callbacks
     if data.startswith("retry:"):
         retry_data = data[6:]
         if retry_data.startswith("search_retry:"):
@@ -1798,16 +1796,17 @@ async def on_callback(callback_query: CallbackQuery):
             pass
         return
 
+    # Handle album download cancellation
     if data.startswith("cancel_album:"):
         parts = data.split(":")
         if len(parts) >= 3:
             owner_id_from_cb = int(parts[1])
             collection_id = int(parts[2])
             if user_id != owner_id_from_cb:
-                await bot.answer_callback_query(callback_query.id, "❌ شما مالک این دانلود نیستید", show_alert=True)
+                await bot.answer_callback_query(callback_query.id, "❌ شما مالک نیستید", show_alert=True)
                 return
             album_tracker.cancel_download(owner_id_from_cb, collection_id)
-            await update_status_with_close(callback_query.message, "⏹️ *در حال توقف دانلود آلبوم...*\nلطفاً چند لحظه صبر کنید.")
+            await update_status_with_close(callback_query.message, "⏹️ *در حال توقف دانلود آلبوم...*")
             await bot.answer_callback_query(callback_query.id)
         return
 
@@ -1820,12 +1819,12 @@ async def on_callback(callback_query: CallbackQuery):
             cached = await get_search_cache(search_id)
             if cached:
                 if is_group and cached["owner_id"] != user_id:
-                    await bot.answer_callback_query(callback_query.id, "❌ این جستجو متعلق به شما نیست", show_alert=True)
+                    await bot.answer_callback_query(callback_query.id, "❌ مالک شما نیستید", show_alert=True)
                     return
                 await send_search_page(chat_id, cached["type"], cached["term"], cached["results"], page,
                                        callback_query.message, owner_id=cached["owner_id"])
             else:
-                await bot.answer_callback_query(callback_query.id, "⏳ نتایج جستجو منقضی شده‌اند", show_alert=True)
+                await bot.answer_callback_query(callback_query.id, "⏳ نتایج منقضی شده", show_alert=True)
         elif data.startswith("refine:"):
             entity = parts[1]
             term = parts[2]
@@ -1846,34 +1845,34 @@ async def on_callback(callback_query: CallbackQuery):
             quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
             can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality.value)
             if not can_dl:
-                await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت دانلود: {wait_sec} ثانیه صبر کنید\nکیفیت {quality.value} مصرف {QUALITY_MULTIPLIER.get(quality.value, 1)} واحد دارد", show_alert=True)
+                await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت: {wait_sec} ثانیه", show_alert=True)
                 return
-            await bot.answer_callback_query(callback_query.id, "🎵 در حال پردازش دانلود...")
+            await bot.answer_callback_query(callback_query.id, "🎵 در حال پردازش...")
             asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
       
         elif data.startswith("download_album:"):
             collection_id = int(parts[1])
             chat = await bot.get_chat(chat_id)
             if chat.type == "group" or chat.type == "supergroup":
-                await bot.answer_callback_query(callback_query.id, "❌ دانلود آلبوم در گروه‌ها مجاز نیست", show_alert=True)
+                await bot.answer_callback_query(callback_query.id, "❌ دانلود آلبوم در گروه ممنوع", show_alert=True)
                 return
             quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
             can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality.value)
             if not can_dl:
-                await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت دانلود: {wait_sec} ثانیه صبر کنید", show_alert=True)
+                await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت: {wait_sec} ثانیه", show_alert=True)
                 return
-            await bot.answer_callback_query(callback_query.id, "📀 در حال آماده‌سازی دانلود آلبوم...")
+            await bot.answer_callback_query(callback_query.id, "📀 در حال آماده‌سازی...")
 
             collection_data = await get_or_crawl_collection(collection_id, None, False)
             tracks_data = await get_or_crawl_collection_tracks(collection_id)
             tracks = tracks_data["results"] if tracks_data else []
 
             if not tracks:
-                await bot.answer_callback_query(callback_query.id, "❌ هیچ قطعه‌ای در این آلبوم یافت نشد", show_alert=True)
+                await bot.answer_callback_query(callback_query.id, "❌ قطعه‌ای یافت نشد", show_alert=True)
                 return
 
             collection_name = collection_data['results'][0].get('collectionName', 'آلبوم') if collection_data else 'آلبوم'
-            status_msg = await send_message(bot, chat_id, f"🎵 *شروع دانلود آلبوم: {collection_name}*\nدر حال آماده‌سازی...")
+            status_msg = await send_message(bot, chat_id, f"🎵 *شروع دانلود آلبوم: {collection_name}*")
             asyncio.create_task(download_and_send_album(bot, chat_id, collection_id, user_id, collection_name, tracks, status_msg))
 
         elif data.startswith("preview:"):
@@ -1888,12 +1887,11 @@ async def on_callback(callback_query: CallbackQuery):
                 await show_collection_page(chat_id, id_, 1, callback_query.message, user_id, force=True)
 
     except Exception as e:
-        logger.error(f"خطا در پردازش: {e}")
-        await bot.answer_callback_query(callback_query.id, f"❌ خطا در پردازش", show_alert=True)
+        logger.error(f"خطا: {e}")
+        await bot.answer_callback_query(callback_query.id, "❌ خطا", show_alert=True)
 
 
 def signal_handler(signum, frame):
-    logger.info("دریافت سیگنال خاموشی...")
     sys.exit(0)
 
 
@@ -1906,9 +1904,7 @@ if __name__ == "__main__":
         try:
             bot.run()
         except KeyboardInterrupt:
-            logger.info("ربات توسط کاربر متوقف شد")
             break
         except Exception as e:
-            logger.exception(f"ربات با خطا مواجه شد: {e}")
-            logger.info("راه‌اندازی مجدد در ۶۰ ثانیه...")
+            logger.exception(f"ربات crashed: {e}")
             time.sleep(60)
