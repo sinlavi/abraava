@@ -40,14 +40,12 @@ class DownloadQuality(Enum):
     MEDIUM = "192"
     LOW = "128"
 
-# Quality multipliers for rate limiting
 QUALITY_MULTIPLIER = {
     "320": 3,
     "192": 2,
     "128": 1
 }
 
-# Store user preferences
 user_download_quality = {}
 user_show_artwork = {}
 user_quick_mode = {}
@@ -72,7 +70,7 @@ class BaleUploadErrorNotifier:
         current_time = time.time()
         
         if self.error_active:
-            logger.info("Upload error notification already active, skipping duplicate notification")
+            logger.info("Upload error notification already active")
             if album_download_callback:
                 try:
                     await album_download_callback()
@@ -81,7 +79,7 @@ class BaleUploadErrorNotifier:
             return
         
         if current_time - self.last_error_time < self.error_cooldown:
-            logger.info(f"Upload error notification on cooldown, skipping")
+            logger.info(f"Upload error notification on cooldown")
             if album_download_callback:
                 try:
                     await album_download_callback()
@@ -139,7 +137,6 @@ album_upload_error_flag = {}
 async def cancel_album_download_on_upload_error(user_id: int, collection_id: int, bot: Client, chat_id: int):
     key = (user_id, collection_id)
     album_upload_error_flag[key] = True
-    logger.info(f"Upload error flag set for user {user_id}, collection {collection_id}")
     album_tracker.cancel_download(user_id, collection_id)
 
 
@@ -1051,9 +1048,9 @@ async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
         
         markup.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
         
-        # صفحه هنرمند همیشه نگه داشته می‌شود (keep_original=True)
+        # صفحه هنرمند - صفحه قبلی حذف می‌شود (keep_original=False)
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
-                           owner_id=owner_id, artwork_url=artist_image, artist_id=artist_id, keep_original=True)
+                           owner_id=owner_id, artwork_url=artist_image, artist_id=artist_id, keep_original=False)
         await status_msg.delete()
 
     except Exception as e:
@@ -1114,9 +1111,9 @@ async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
         
         artwork_url = get_high_res_artwork(collection_data.get("artworkUrl100"))
         
-        # صفحه آلبوم همیشه نگه داشته می‌شود (keep_original=True)
+        # صفحه آلبوم - صفحه قبلی حذف می‌شود (keep_original=False)
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
-                           artwork_url=artwork_url, cache_id=collection_id, owner_id=owner_id, keep_original=True)
+                           artwork_url=artwork_url, cache_id=collection_id, owner_id=owner_id, keep_original=False)
         await status_msg.delete()
 
     except Exception as e:
@@ -1157,9 +1154,9 @@ async def show_track_page(chat_id: int, track_id: int, message_to_edit: Optional
         
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
         
-        # صفحه آهنگ همیشه نگه داشته می‌شود (keep_original=True)
+        # صفحه آهنگ - صفحه قبلی حذف می‌شود (keep_original=False)
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup, artwork_url=artwork_url,
-                           cache_id=track.get('collectionId'), owner_id=owner_id, keep_original=True)
+                           cache_id=track.get('collectionId'), owner_id=owner_id, keep_original=False)
         await status_msg.delete()
 
     except Exception as e:
@@ -1192,7 +1189,7 @@ async def handle_search_command(chat_id: int, user_id: int, type_: str, term: st
 
 
 async def send_search_page(chat_id: int, type_: str, term: str, results: dict, page: int,
-                           message_to_edit: Optional[Message] = None, owner_id: int = None, is_pagination: bool = False):
+                           message_to_edit: Optional[Message] = None, owner_id: int = None):
     results_list = results["results"]
     total_items = len(results_list)
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
@@ -1231,9 +1228,8 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
                    InlineKeyboardButton("🔍 هنرمندان", f"refine:artist:{refine_term}"),
                    InlineKeyboardButton("🔍 آهنگ‌ها", f"refine:track:{refine_term}")])
 
-    # اگر pagination است، پیام قبلی حذف شود (keep_original=False)
-    # در غیر این صورت (کلیک روی نتایج) پیام قبلی نگه داشته شود (keep_original=True)
-    await edit_or_send(bot, chat_id, message_to_edit, header, markup=markup, owner_id=owner_id, keep_original=not is_pagination)
+    # صفحه جستجو - صفحه قبلی حذف می‌شود (keep_original=False)
+    await edit_or_send(bot, chat_id, message_to_edit, header, markup=markup, owner_id=owner_id, keep_original=False)
 
 
 async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
@@ -1261,14 +1257,14 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
                                      'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
         except Exception as e:
             logger.error(f"Failed to send photo: {e}")
-            msg = await send_message(bot, chat_id, text=text, reply_markup=markup)
+            msg = await send_message(bot, chat_id, text=text, reply_markup=markup,no=True)
     else:
         msg = await send_message(bot, chat_id, text, reply_markup=markup)
 
     if owner_id and msg and msg.chat.type in ["group", "supergroup"]:
         set_message_owner(msg.id, owner_id)
 
-    # فقط زمانی که keep_original=False باشد، پیام قبلی حذف می‌شود (مثل pagination)
+    # فقط زمانی که keep_original=False باشد، پیام قبلی حذف می‌شود
     if message_to_edit and not keep_original:
         try:
             if message_to_edit.id in MESSAGE_OWNER:
@@ -1815,29 +1811,28 @@ async def on_callback(callback_query: CallbackQuery):
                 if is_group and cached["owner_id"] != user_id:
                     await bot.answer_callback_query(callback_query.id, "❌ مالک شما نیستید", show_alert=True)
                     return
-                # برای pagination، is_pagination=True ارسال می‌شود تا پیام قبلی حذف شود
                 await send_search_page(chat_id, cached["type"], cached["term"], cached["results"], page,
-                                       callback_query.message, owner_id=cached["owner_id"], is_pagination=True)
+                                       callback_query.message, owner_id=cached["owner_id"])
             else:
                 await bot.answer_callback_query(callback_query.id, "⏳ نتایج منقضی شده", show_alert=True)
         elif data.startswith("refine:"):
             entity = parts[1]
             term = parts[2]
-            # Refine - صفحه جدید ارسال می‌شود، صفحه قبلی نگه داشته می‌شود
+            # Refine - صفحه جدید ارسال می‌شود
             await handle_search_command(chat_id, user_id, entity, term, owner_id=user_id)
         elif data.startswith("artist:"):
             artist_id = int(parts[1])
             page = int(parts[2]) if len(parts) > 2 else 1
-            # کلیک روی هنرمند از نتایج جستجو - صفحه جستجو نگه داشته می‌شود
+            # کلیک روی هنرمند - صفحه جدید ارسال می‌شود
             await show_artist_page(chat_id, artist_id, page, callback_query.message, user_id)
         elif data.startswith("collection:"):
             collection_id = int(parts[1])
             page = int(parts[2]) if len(parts) > 2 else 1
-            # کلیک روی آلبوم از نتایج جستجو یا صفحه هنرمند - صفحه قبلی نگه داشته می‌شود
+            # کلیک روی آلبوم - صفحه جدید ارسال می‌شود
             await show_collection_page(chat_id, collection_id, page, callback_query.message, user_id)
         elif data.startswith("track:"):
             track_id = int(parts[1])
-            # کلیک روی آهنگ از نتایج جستجو یا صفحه آلبوم - صفحه قبلی نگه داشته می‌شود
+            # کلیک روی آهنگ - صفحه جدید ارسال می‌شود
             await show_track_page(chat_id, track_id, callback_query.message, user_id)
         elif data.startswith("download:"):
             track_id = int(parts[1])
