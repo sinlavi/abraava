@@ -40,6 +40,9 @@ class DownloadQuality(Enum):
     MEDIUM = "192"
     LOW = "128"
 
+# Quality priority order (higher is better)
+QUALITY_PRIORITY = ["320", "192", "128"]
+
 # Quality multipliers for rate limiting
 QUALITY_MULTIPLIER = {
     "320": 3,
@@ -492,6 +495,117 @@ album_tracker = AlbumDownloadTracker()
 
 
 # ============================================================================
+# Mirror Helper Functions
+# ============================================================================
+async def get_cached_audio(track_id: int, desired_quality: str) -> Optional[tuple[str, str]]:
+    """Get cached audio URL from mirror for desired quality or better"""
+    try:
+        data = await get_mirror('track', str(track_id), 'audioUrl')
+        if data and data.get("mirrors", {}).get('audioUrl', False):
+            mirrors = data["mirrors"]['audioUrl']
+            
+            # Check if mirrors is a dict with quality keys
+            if isinstance(mirrors, dict):
+                # Find best available quality (equal or better than desired)
+                desired_index = QUALITY_PRIORITY.index(desired_quality)
+                for quality in QUALITY_PRIORITY[:desired_index + 1]:  # Check better or equal qualities first
+                    if quality in mirrors:
+                        url = mirrors[quality]
+                        if url:
+                            logger.info(f"Found cached audio for track {track_id} with quality {quality}")
+                            return quality, url
+                
+                # If no better quality, check lower qualities
+                for quality in QUALITY_PRIORITY[desired_index + 1:]:
+                    if quality in mirrors:
+                        url = mirrors[quality]
+                        if url:
+                            logger.info(f"Found cached audio for track {track_id} with lower quality {quality}")
+                            return quality, url
+            
+            # Legacy format (single URL without quality)
+            elif isinstance(mirrors, str):
+                logger.info(f"Found legacy cached audio for track {track_id}")
+                return "legacy", mirrors
+    except Exception as e:
+        logger.error(f"Error getting cached audio: {e}")
+    return None, None
+
+
+async def save_cached_audio(track_id: int, quality: str, file_id: str):
+    """Save audio file ID to mirror with quality"""
+    try:
+        # First get existing mirrors
+        existing_data = await get_mirror('track', str(track_id), 'audioUrl')
+        mirrors = {}
+        
+        if existing_data and existing_data.get("mirrors", {}).get('audioUrl', False):
+            existing_mirrors = existing_data["mirrors"]['audioUrl']
+            if isinstance(existing_mirrors, dict):
+                mirrors = existing_mirrors
+            elif isinstance(existing_mirrors, str):
+                # Convert legacy format to new format
+                mirrors['legacy'] = existing_mirrors
+        
+        # Add/update quality
+        mirrors[quality] = f"https://tapi.bale.ai/file/bot<token>/{file_id}"
+        
+        # Save back
+        await set_mirror('track', str(track_id), 'audioUrl', mirrors)
+        logger.info(f"Saved cached audio for track {track_id} with quality {quality}")
+    except Exception as e:
+        logger.error(f"Error saving cached audio: {e}")
+
+
+async def get_cached_artwork(entity_type: str, entity_id: int) -> Optional[str]:
+    """Get cached artwork URL from mirror"""
+    try:
+        data = await get_mirror(entity_type, str(entity_id), 'artworkUrl')
+        if data and data.get("mirrors", {}).get('artworkUrl', False):
+            url = data["mirrors"]['artworkUrl']
+            if url:
+                logger.info(f"Found cached artwork for {entity_type} {entity_id}")
+                return url
+    except Exception as e:
+        logger.error(f"Error getting cached artwork: {e}")
+    return None
+
+
+async def save_cached_artwork(entity_type: str, entity_id: int, file_id: str):
+    """Save artwork file ID to mirror"""
+    try:
+        url = f"https://tapi.bale.ai/file/bot<token>/{file_id}"
+        await set_mirror(entity_type, str(entity_id), 'artworkUrl', url)
+        logger.info(f"Saved cached artwork for {entity_type} {entity_id}")
+    except Exception as e:
+        logger.error(f"Error saving cached artwork: {e}")
+
+
+async def get_cached_preview(track_id: int) -> Optional[str]:
+    """Get cached preview URL from mirror"""
+    try:
+        data = await get_mirror('track', str(track_id), 'previewUrl')
+        if data and data.get("mirrors", {}).get('previewUrl', False):
+            url = data["mirrors"]['previewUrl']
+            if url:
+                logger.info(f"Found cached preview for track {track_id}")
+                return url
+    except Exception as e:
+        logger.error(f"Error getting cached preview: {e}")
+    return None
+
+
+async def save_cached_preview(track_id: int, file_id: str):
+    """Save preview file ID to mirror"""
+    try:
+        url = f"https://tapi.bale.ai/file/bot<token>/{file_id}"
+        await set_mirror('track', str(track_id), 'previewUrl', url)
+        logger.info(f"Saved cached preview for track {track_id}")
+    except Exception as e:
+        logger.error(f"Error saving cached preview: {e}")
+
+
+# ============================================================================
 # Search and Download Functions
 # ============================================================================
 async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: str, original_message: Message = None):
@@ -566,13 +680,12 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     track = track_data["results"][0]
     release_year = track.get("releaseDate", "").split("-")[0] if track.get("releaseDate") else ""
 
-    quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
-    quality_value = quality.value
+    desired_quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM).value
     
     caption_lines = []
     caption_lines.append(f"🎵 *نام آهنگ:* {track.get('trackName', 'Unknown Title')}")
     caption_lines.append(f"🎤 *نام هنرمند:* {track.get('artistName', 'Unknown Artist')}")
-    caption_lines.append(f"📀 *کیفیت دانلود:* {quality_value} kbps")
+    caption_lines.append(f"📀 *کیفیت دانلود:* {desired_quality} kbps")
     if track.get('collectionName'):
         caption_lines.append(f"💿 *نام آلبوم:* {track.get('collectionName')}")
     if release_year:
@@ -592,6 +705,35 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
         text="📂 نمایش در مینی اپ",
         web_app="https://player.abraava.ir?id=" + str(track_id)
     )]]
+
+    # ========== بررسی کش آهنگ از mirror ==========
+    cached_quality, cached_url = await get_cached_audio(track_id, desired_quality)
+    
+    if cached_url:
+        try:
+            # Extract file_id from URL
+            file_id = None
+            if '/file/' in cached_url:
+                parts = cached_url.split('/file/')
+                if len(parts) > 1:
+                    file_part = parts[1]
+                    if '/' in file_part:
+                        file_id = file_part.split('/')[-1]
+                    else:
+                        file_id = file_part
+            
+            if file_id:
+                await update_status_with_close(status_msg, f"📤 *در حال ارسال فایل از حافظه کش (کیفیت {cached_quality})...*")
+                await send_audio(bot, chat_id, audio=file_id, caption=caption, reply_markup=markup)
+                await status_msg.delete()
+                await api_client.log_download(
+                    user_id=user_id, track_id=str(track_id), track_name=track.get('trackName', ''),
+                    artist_name=track.get('artistName', ''), album_name=track.get('collectionName', ''),
+                    file_size=0, download_source='cache', quality=cached_quality if cached_quality != 'legacy' else desired_quality
+                )
+                return
+        except Exception as e:
+            logger.error(f"Cache send failed: {e}, will re-download")
 
     t_name = track.get("trackName", "Unknown Title")
     ye = track.get("releaseDate", "").split("-")[0]
@@ -617,8 +759,8 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                 if collection_id:
                     album_tracker.start_track(user_id, collection_id, t_name)
                 
-                await update_status_with_close(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*")
-                mp3_path_str = await download_audio(video_url, quality=quality_value)
+                await update_status_with_close(status_msg, f"⏳ *در حال دانلود با کیفیت {desired_quality}kbps...*")
+                mp3_path_str = await download_audio(video_url, quality=desired_quality)
                 temp_dir_to_clean = os.path.dirname(mp3_path_str)
 
                 if not mp3_path_str or not os.path.exists(mp3_path_str):
@@ -642,15 +784,21 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                 await asyncio.get_event_loop().run_in_executor(None, tag_mp3, mp3_path_str, track, cover_bytes)
                 await update_status_with_close(status_msg, f"☁️ *در حال آپلود روی سرورهای ابری...*")
 
-                await send_audio_with_retry(bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, 
+                # آپلود فایل و دریافت پیام
+                msg = await send_audio_with_retry(bot, chat_id, mp3_path_str, f"{t_name}.mp3", caption, 
                                             track_id=str(track['trackId']), user_id=user_id, collection_id=collection_id)
+                
+                # ذخیره در mirror بعد از آپلود موفق
+                if msg and hasattr(msg, 'audio') and msg.audio:
+                    file_id = msg.audio.id
+                    await save_cached_audio(track_id, desired_quality, file_id)
 
                 await api_client.log_download(
                     user_id=user_id, track_id=str(track_id), track_name=t_name, artist_name=a_name,
                     album_name=collection_name, file_size=int(file_size_mb * 1024 * 1024),
-                    download_source='youtube', quality=quality_value
+                    download_source='youtube', quality=desired_quality
                 )
-                download_rate_limiter.record_download(user_id, quality_value)
+                download_rate_limiter.record_download(user_id, desired_quality)
                 
                 try:
                     await status_msg.delete()
@@ -687,10 +835,43 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
             await send_error_with_retry(bot, chat_id, "پیش‌نمایشی برای این آهنگ موجود نیست.", f"preview_retry:{track_id}", status_msg)
             return
 
-        await send_voice(bot, chat_id, voice=preview_url, caption=f"🎧 *پیش‌نمایش آهنگ {track.get('trackName')}*")
-        await status_msg.delete()
+        # Check cache
+        cached_preview = await get_cached_preview(track_id)
+        if cached_preview:
+            try:
+                file_id = None
+                if '/file/' in cached_preview:
+                    parts = cached_preview.split('/file/')
+                    if len(parts) > 1:
+                        file_part = parts[1]
+                        if '/' in file_part:
+                            file_id = file_part.split('/')[-1]
+                        else:
+                            file_id = file_part
+                if file_id:
+                    await send_voice(bot, chat_id, voice=file_id, caption=f"🎧 *پیش‌نمایش آهنگ {track.get('trackName')}*")
+                    await status_msg.delete()
+                    return
+            except Exception as e:
+                logger.error(f"Cache preview send failed: {e}")
+
+        # Download and send preview
+        async with HTTP_SESSION.get(preview_url) as resp:
+            if resp.status == 200:
+                preview_data = io.BytesIO(await resp.read())
+                preview_data.name = f"preview_{track_id}.mp3"
+                
+                msg = await send_voice(bot, chat_id, voice=preview_data, caption=f"🎧 *پیش‌نمایش آهنگ {track.get('trackName')}*")
+                
+                if msg and hasattr(msg, 'voice') and msg.voice:
+                    await save_cached_preview(track_id, msg.voice.id)
+                
+                await status_msg.delete()
+            else:
+                await send_error_with_retry(bot, chat_id, "دریافت پیش‌نمایش با خطا مواجه شد.", f"preview_retry:{track_id}", status_msg)
 
     except Exception as e:
+        logger.error(f"Failed to send preview: {e}")
         await send_error_with_retry(bot, chat_id, f"خطا: {str(e)[:100]}", f"preview_retry:{track_id}", status_msg)
 
 
@@ -935,6 +1116,59 @@ async def show_track_page(chat_id: int, track_id: int, message_to_edit: Optional
         await send_error_with_retry(bot, chat_id, f"خطا در نمایش آهنگ: {str(e)[:100]}", f"track_retry:{track_id}", status_msg)
 
 
+async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
+                       markup=None, artwork_url: str = None, cache_id=None, owner_id=None, artist_id=None, delete_old=False):
+    if markup is None:
+        markup = []
+
+    msg = None
+    show_artwork = user_show_artwork.get(owner_id, True) if owner_id else True
+    
+    # Check artwork cache
+    artwork_file_id = None
+    if artwork_url and show_artwork and cache_id:
+        entity_type = "artist" if artist_id else "collection"
+        cached_artwork = await get_cached_artwork(entity_type, cache_id)
+        if cached_artwork:
+            try:
+                if '/file/' in cached_artwork:
+                    parts = cached_artwork.split('/file/')
+                    if len(parts) > 1:
+                        file_part = parts[1]
+                        if '/' in file_part:
+                            artwork_file_id = file_part.split('/')[-1]
+                        else:
+                            artwork_file_id = file_part
+            except:
+                pass
+    
+    if artwork_url and show_artwork:
+        try:
+            if artwork_file_id:
+                msg = await send_photo(bot, chat_id, photo=artwork_file_id, caption=text, reply_markup=markup)
+            else:
+                msg = await send_photo(bot, chat_id, photo=artwork_url, caption=text, reply_markup=markup)
+                if msg and hasattr(msg, 'photo') and msg.photo and cache_id:
+                    entity_type = "artist" if artist_id else "collection"
+                    await save_cached_artwork(entity_type, cache_id, msg.photo[0].id)
+        except Exception as e:
+            logger.error(f"Failed to send photo: {e}")
+            msg = await send_message(bot, chat_id, text=text, reply_markup=markup)
+    else:
+        msg = await send_message(bot, chat_id, text, reply_markup=markup)
+
+    if owner_id and msg and msg.chat.type in ["group", "supergroup"]:
+        set_message_owner(msg.id, owner_id)
+
+    if message_to_edit and delete_old and message_to_edit != msg:
+        try:
+            await message_to_edit.delete()
+        except:
+            pass
+
+    return msg
+
+
 async def handle_search_command(chat_id: int, user_id: int, type_: str, term: str, original_message: Message = None,
                                 owner_id: int = None):
     type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ"}
@@ -1000,41 +1234,11 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
                    InlineKeyboardButton("🔍 هنرمندان", f"refine:artist:{refine_term}"),
                    InlineKeyboardButton("🔍 آهنگ‌ها", f"refine:track:{refine_term}")])
 
-    # فقط برای pagination پیام قبلی حذف میشه، برای refine و نتایج حذف نمیشه
     should_delete_old = False
     if message_to_edit and "page:" in str(message_to_edit.content or ""):
         should_delete_old = True
     
     await edit_or_send(bot, chat_id, message_to_edit, header, markup=markup, owner_id=owner_id, delete_old=should_delete_old)
-
-
-async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
-                       markup=None, artwork_url: str = None, cache_id=None, owner_id=None, artist_id=None, delete_old=False):
-    if markup is None:
-        markup = []
-
-    msg = None
-    show_artwork = user_show_artwork.get(owner_id, True) if owner_id else True
-    
-    if artwork_url and show_artwork:
-        try:
-            msg = await send_photo(bot, chat_id, photo=artwork_url, caption=text, reply_markup=markup)
-        except Exception as e:
-            msg = await send_message(bot, chat_id, text=text, reply_markup=markup)
-    else:
-        msg = await send_message(bot, chat_id, text, reply_markup=markup)
-
-    if owner_id and msg and msg.chat.type in ["group", "supergroup"]:
-        set_message_owner(msg.id, owner_id)
-
-    # فقط زمانی که delete_old=True باشه پیام قبلی حذف میشه
-    if message_to_edit and delete_old and message_to_edit != msg:
-        try:
-            await message_to_edit.delete()
-        except:
-            pass
-
-    return msg
 
 
 async def store_search_cache(search_id: str, type_: str, term: str, results: dict, owner_id: int):
@@ -1625,7 +1829,6 @@ async def on_callback(callback_query: CallbackQuery):
         elif data.startswith("refine:"):
             entity = parts[1]
             term = parts[2]
-            # برای refine پیام قبلی حذف نمیشه، فقط صفحه جدید ارسال میشه
             await handle_search_command(chat_id, user_id, entity, term, owner_id=user_id)
         elif data.startswith("artist:"):
             artist_id = int(parts[1])
