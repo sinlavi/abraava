@@ -381,7 +381,7 @@ async def process_broadcast_message(message: Message):
 
     for user in users:
         try:
-            user_id = user.get('user_id')
+            user_id = user.get('id')
             if user_id:
                 # Forward the message
                 await bot.forward_message(chat_id=user_id, message_id=message.id, from_chat_id=message.chat.id)
@@ -390,14 +390,6 @@ async def process_broadcast_message(message: Message):
         except Exception as e:
             logger.error(f"Failed to send broadcast to user {user.get('user_id')}: {e}")
             failed += 1
-
-    # Also forward to info channel if specified
-    if INFO_CHANNEL_ID:
-        try:
-            await bot.forward_message(INFO_CHANNEL_ID, message.chat.id, message.id)
-            logger.info(f"Broadcast message forwarded to info channel {INFO_CHANNEL_ID}")
-        except Exception as e:
-            logger.error(f"Failed to forward to info channel: {e}")
 
     # Log broadcast
     await api_client.log_broadcast(
