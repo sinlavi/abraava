@@ -2009,7 +2009,7 @@ async def handle_message(message):
     user_id = message.author.id
     chat_id = message.chat.id
 
-    if not is_group and not msg_text.startswith("/start"):
+    if not msg_text.startswith("/start"):
         is_member, missing = await verify_all_memberships(user_id)
         if not is_member:
             channels_text = ""
