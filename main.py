@@ -556,19 +556,20 @@ class AlbumDownloadTracker:
         failed = sum(1 for tr in t["tracks"] if not tr.success and tr.error is not None)
         elapsed = time.time() - t["start_time"]
 
-        text = f"📀 *دانلود آلبوم: {t['collection_name']}*\n\n"
+        text = f"▶️ *در حال دانلود آلبوم: {t['collection_name']}*\n\n"
         text += f"🎵 *پیشرفت:* {t['current_idx']}/{t['total']} قطعه\n"
         text += f"✅ *موفق:* {completed}\n"
         text += f"❌ *ناموفق:* {failed}\n\n"
         
         if t["current_idx"] < t["total"] and t["tracks"] and t["current_idx"] < len(t["tracks"]):
             current_track = t["tracks"][t["current_idx"]]
+            text += f"🎤 *در حال دانلود:* {current_track.name}\n"
+            
             if current_track.start_time > 0:
                 track_elapsed = int(time.time() - current_track.start_time)
-                text += f"🎵 *در حال دانلود:* {current_track.name}\n"
                 text += f"⏱️ *زمان سپری شده:* {track_elapsed} ثانیه\n\n"
             else:
-                text += f"🎵 *در صف:* {current_track.name}\n\n"
+                text += f"\n"
         
         if t["current_idx"] > 0 and completed + failed > 0:
             avg_time = elapsed / (completed + failed)
@@ -578,9 +579,27 @@ class AlbumDownloadTracker:
                 minutes = eta // 60
                 seconds = eta % 60
                 if minutes > 0:
-                    text += f"⏱️ *زمان باقیمانده:* {minutes} دقیقه {seconds} ثانیه\n"
+                    text += f"⏱️ *زمان باقیمانده:* {minutes} دقیقه {seconds} ثانیه"
                 else:
-                    text += f"⏱️ *زمان باقیمانده:* {seconds} ثانیه\n"
+                    text += f"⏱️ *زمان باقیمانده:* {seconds} ثانیه"
+        
+        return text
+
+    def get_simple_progress(self, user_id: int, collection_id: int, current_track_name: str, current_index: int) -> str:
+        """دریافت متن ساده پیشرفت برای نمایش در حین دانلود"""
+        key = (user_id, collection_id)
+        if key not in self.active_downloads:
+            return f"▶️ *در حال دانلود آلبوم...*"
+        
+        t = self.active_downloads[key]
+        
+        # اگر در حالت توقف باشد
+        if t.get("cancelled", False):
+            return f"⏹️ *در حال توقف دانلود آلبوم {t['collection_name']}...*"
+        
+        text = f"▶️ *در حال دانلود آلبوم {t['collection_name']}...*\n\n"
+        text += f"🎵 *پیشرفت:* {current_index}/{t['total']} قطعه\n"
+        text += f"🎤 *در حال دانلود:* {current_track_name}"
         
         return text
 
@@ -611,7 +630,6 @@ class AlbumDownloadTracker:
         if key in self.active_downloads:
             self.active_downloads[key]["cancelled"] = True
             self.active_downloads[key]["cancelled_time"] = time.time()
-
 
 album_tracker = AlbumDownloadTracker()
 
@@ -945,7 +963,9 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
         album_tracker.add_track(user_id, collection_id, track.get('trackName', 'Unknown'), idx)
 
     cancel_markup = [[InlineKeyboardButton(text="❌ لغو دانلود آلبوم", callback_data=f"cancel_album:{user_id}:{collection_id}")]]
-    await update_status_with_close(status_msg, album_tracker.get_progress_text(user_id, collection_id),
+    
+    # پیام اولیه با ایموجی پلی
+    await update_status_with_close(status_msg, f"▶️ *در حال دانلود آلبوم {collection_name}...*\n\n🎵 *آماده‌سازی...*", 
                                    reply_markup=cancel_markup, no=True)
 
     album_cover_bytes = None
@@ -968,11 +988,11 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
     stopped_by_rate_limit = False
     is_cancelled_by_user = False
 
-    for track in tracks:
+    for idx, track in enumerate(tracks, 1):
         if album_tracker.is_cancelled(user_id, collection_id):
             is_cancelled_by_user = True
-            # تغییر متن پیام وضعیت به "در حال توقف"
-            await update_status_with_close(status_msg, album_tracker.get_progress_text(user_id, collection_id),
+            # تغییر به پیام "در حال توقف"
+            await update_status_with_close(status_msg, f"⏹️ *در حال توقف دانلود آلبوم {collection_name}...*", 
                                            reply_markup=None, no=True)
             await asyncio.sleep(0.5)
             break
@@ -980,6 +1000,13 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
         track_id = track.get('trackId')
         track_name = track.get('trackName', 'Unknown')
         quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
+
+        # به‌روزرسانی پیام با پیشرفت
+        progress_text = f"▶️ *در حال دانلود آلبوم {collection_name}...*\n\n"
+        progress_text += f"🎵 *پیشرفت:* {idx-1}/{len(tracks)} قطعه\n"
+        progress_text += f"🎤 *در حال دانلود:* {track_name}"
+        
+        await update_status_with_close(status_msg, progress_text, reply_markup=cancel_markup, no=True)
 
         can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality.value)
         if not can_dl:
@@ -1000,36 +1027,28 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
             album_tracker.update_track_result(user_id, collection_id, track_name, False, error_msg)
             failed_tracks.append({"name": track_name, "error": error_msg})
 
-        # فقط اگر دانلود لغو نشده باشد، آپدیت کن
-        if not album_tracker.is_cancelled(user_id, collection_id):
-            await update_status_with_close(status_msg, album_tracker.get_progress_text(user_id, collection_id),
-                                           reply_markup=cancel_markup, no=True)
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.5)
 
     # اگر کاربر لغو کرده باشد
     if is_cancelled_by_user:
-        # تغییر پیام وضعیت به "متوقف شد"
-        await update_status_with_close(status_msg, f"⏹️ *دانلود آلبوم {collection_name} متوقف شد*\nدر حال نهایی‌سازی...", 
-                                       reply_markup=None, no=True)
-        
-        await asyncio.sleep(0.5)
-        
         # حذف پیام وضعیت قبلی
         try:
             await status_msg.delete()
         except:
             pass
         
-        # ارسال پیام نهایی لغو
-        final_text = f"⏹️ *دانلود آلبوم {collection_name} با موفقیت متوقف شد*\n\n"
+        # ارسال پیام جدید "متوقف شد"
+        final_text = f"⏹️ *دانلود آلبوم {collection_name} متوقف شد*\n\n"
         final_text += f"🎵 *جمع کل:* {len(tracks)} قطعه\n"
         final_text += f"✅ *موفق:* {success_count}\n"
         if failed_tracks:
             final_text += f"❌ *ناموفق:* {len(failed_tracks)}\n\n"
             if success_count > 0:
                 final_text += "⚠️ *قطعات دانلود شده:*\n"
-                for ft in failed_tracks[:10]:
+                for ft in failed_tracks[:5]:
                     final_text += f"🔸 {ft['name']}\n"
+                if len(failed_tracks) > 5:
+                    final_text += f"... و {len(failed_tracks) - 5} قطعه دیگر\n"
         
         await send_message(bot, chat_id, final_text)
         
@@ -1037,24 +1056,30 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
         release_user_download_lock(user_id)
         return
 
-    # ارسال پیام نهایی اتمام دانلود
-    final_text = f"✅ *دانلود آلبوم {collection_name} به پایان رسید*\n\n"
+    # دانلود کامل شد - حذف پیام قدیمی
+    try:
+        await status_msg.delete()
+    except:
+        pass
+    
+    # ارسال پیام موفقیت
+    final_text = f"✅ *دانلود آلبوم {collection_name} با موفقیت کامل شد*\n\n"
     final_text += f"🎵 *جمع کل:* {len(tracks)} قطعه\n"
     final_text += f"✅ *موفق:* {success_count}\n"
     if failed_tracks:
         final_text += f"❌ *ناموفق:* {len(failed_tracks)}\n\n"
         final_text += "⚠️ *قطعات ناموفق:*\n"
-        for ft in failed_tracks[:10]:
+        for ft in failed_tracks[:5]:
             final_text += f"🔸 {ft['name']}\n"
-        if len(failed_tracks) > 10:
-            final_text += f"... و {len(failed_tracks) - 10} قطعه دیگر\n"
+        if len(failed_tracks) > 5:
+            final_text += f"... و {len(failed_tracks) - 5} قطعه دیگر\n"
     if stopped_by_rate_limit:
         final_text += "\n🚫 *توقف به دلیل محدودیت دانلود (کیفیت بالا مصرف بیشتری دارد)*"
 
-    await edit_or_send(bot, chat_id, status_msg, final_text, owner_id=user_id, delete_old=True)
+    await send_message(bot, chat_id, final_text)
+    
     album_tracker.finish_download(user_id, collection_id, success_count, len(failed_tracks))
     release_user_download_lock(user_id)
-
 
 # ============================================================================
 # Display Functions
