@@ -788,7 +788,7 @@ async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url
     payload = {
         "entityType": entity_type,
         "entityId": entity_id,
-        "urlType": url_type,
+        "url_type": url_type,
         "mirrorUrl": mirror_url
     }
 
