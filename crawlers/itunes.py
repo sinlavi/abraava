@@ -789,6 +789,7 @@ async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url
         "entityType": entity_type,
         "entityId": entity_id,
         "url_type": url_type,
+        "urlType": url_type,
         "mirrorUrl": mirror_url
     }
 
@@ -817,6 +818,7 @@ async def get_mirror(entity_type: str, entity_id: str, url_type: str, quality: s
     params = {
         "entityType": entity_type,
         "entityId": entity_id,
+        "url_type": url_type,
         "urlType": url_type
     }
 
