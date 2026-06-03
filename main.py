@@ -55,6 +55,7 @@ user_show_artwork = {}
 user_quick_mode = {}
 user_auto_download = {}
 user_notifications = {}
+user_ask_quality_before_download = {}  # تنظیم جدید: پرسیدن کیفیت قبل از دانلود
 
 
 # ============================================================================
@@ -143,7 +144,6 @@ async def cancel_album_download_on_upload_error(user_id: int, collection_id: int
     album_upload_error_flag[key] = True
     album_tracker.cancel_download(user_id, collection_id)
 
-    # ارسال پیام اطلاع‌رسانی به کاربر
     try:
         await send_message(bot, chat_id, "⚠️ *دانلود آلبوم به دلیل مشکل در سرویس آپلود بله متوقف شد*\nبه محض رفع مشکل می‌توانید مجدداً تلاش کنید.")
     except:
@@ -225,6 +225,9 @@ class APIClient:
 
     async def update_notifications(self, user_id: int, enabled: bool) -> Dict:
         return await self._request('update_notifications', {'user_id': user_id, 'enabled': enabled})
+
+    async def update_ask_quality_before_download(self, user_id: int, enabled: bool) -> Dict:
+        return await self._request('update_ask_quality', {'user_id': user_id, 'enabled': enabled})
 
     async def log_search(self, user_id: int, search_type: str, search_term: str, result_count: int) -> Dict:
         return await self._request('log_search', {
@@ -431,6 +434,7 @@ def set_default_user_settings(user_id: int):
     user_show_artwork[user_id] = True
     user_auto_download[user_id] = False
     user_notifications[user_id] = True
+    user_ask_quality_before_download[user_id] = False
     logger.info(f"Set default settings for user {user_id}")
 
 
@@ -444,6 +448,7 @@ async def load_user_settings(user_id: int):
             user_show_artwork[user_id] = bool(settings.get('show_artwork', True))
             user_auto_download[user_id] = bool(settings.get('auto_download', False))
             user_notifications[user_id] = bool(settings.get('notifications', True))
+            user_ask_quality_before_download[user_id] = bool(settings.get('ask_quality_before_download', False))
 
             quality_str = settings.get('download_quality', '192')
             if quality_str == "320":
@@ -457,7 +462,8 @@ async def load_user_settings(user_id: int):
 
             logger.info(f"Loaded settings for user {user_id}: quick_mode={user_quick_mode[user_id]}, "
                         f"quality={quality_str}, show_artwork={user_show_artwork[user_id]}, "
-                        f"auto_download={user_auto_download[user_id]}, notifications={user_notifications[user_id]}")
+                        f"auto_download={user_auto_download[user_id]}, notifications={user_notifications[user_id]}, "
+                        f"ask_quality={user_ask_quality_before_download[user_id]}")
         else:
             set_default_user_settings(user_id)
     except Exception as e:
@@ -482,13 +488,13 @@ async def register_user(message: Message):
         'download_quality': user_download_quality.get(user.id, DownloadQuality.MEDIUM).value,
         'show_artwork': user_show_artwork.get(user.id, True),
         'auto_download': user_auto_download.get(user.id, False),
-        'notifications': user_notifications.get(user.id, True)
+        'notifications': user_notifications.get(user.id, True),
+        'ask_quality_before_download': user_ask_quality_before_download.get(user.id, False)
     }
 
     result = await api_client.register_user(user_data)
     if result.get('success'):
         logger.info(f"User {user.id} registered/updated")
-        # Load settings from database
         await load_user_settings(user.id)
     else:
         logger.error(f"Failed to register user {user.id}: {result.get('message')}")
@@ -588,7 +594,7 @@ class AlbumDownloadTracker:
         failed = sum(1 for tr in t["tracks"] if not tr.success and tr.error is not None)
         elapsed = time.time() - t["start_time"]
 
-        text = f"▶️ *در حال دانلود آلبوم: {t['collection_name']}*\n\n"
+        text = f"⬇️ *در حال دانلود آلبوم: {t['collection_name']}*\n\n"
         text += f"🎵 *پیشرفت:* {t['current_idx']}/{t['total']} قطعه\n"
         text += f"✅ *موفق:* {completed}\n"
         text += f"❌ *ناموفق:* {failed}\n\n"
@@ -620,14 +626,14 @@ class AlbumDownloadTracker:
     def get_simple_progress(self, user_id: int, collection_id: int, current_track_name: str, current_index: int) -> str:
         key = (user_id, collection_id)
         if key not in self.active_downloads:
-            return f"▶️ *در حال دانلود آلبوم...*"
+            return f"⬇️ *در حال دانلود آلبوم...*"
 
         t = self.active_downloads[key]
 
         if t.get("cancelled", False):
             return f"⏹️ *در حال توقف دانلود آلبوم {t['collection_name']}...*"
 
-        text = f"▶️ *در حال دانلود آلبوم {t['collection_name']}...*\n\n"
+        text = f"⬇️ *در حال دانلود آلبوم {t['collection_name']}...*\n\n"
         text += f"🎵 *پیشرفت:* {current_index}/{t['total']} قطعه\n"
         text += f"🎤 *در حال دانلود:* {current_track_name}"
 
@@ -721,6 +727,48 @@ async def get_cached_preview_with_quality(track_id: int) -> Optional[str]:
 
 
 # ============================================================================
+# Quality Selection Menu
+# ============================================================================
+async def ask_quality_for_download(chat_id: int, user_id: int, track_id: int, track_name: str, is_album: bool = False, collection_id: int = None, collection_name: str = None):
+    """نمایش منوی انتخاب کیفیت قبل از دانلود"""
+    current_quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
+    
+    if is_album:
+        text = f"📀 *انتخاب کیفیت برای دانلود آلبوم*\n\n"
+        text += f"🎵 *آلبوم:* {collection_name}\n"
+        text += f"🎤 *تعداد قطعات:* در حال دریافت...\n\n"
+        text += f"کیفیت مورد نظر خود را انتخاب کنید:\n\n"
+        text += f"🎵 *۳۲۰ kbps* - کیفیت استودیویی (مصرف ۳ واحد به ازای هر قطعه)\n"
+        text += f"🎶 *۱۹۲ kbps* - کیفیت عالی (مصرف ۲ واحد به ازای هر قطعه)\n"
+        text += f"🎧 *۱۲۸ kbps* - کیفیت خوب (مصرف ۱ واحد به ازای هر قطعه)\n\n"
+        text += f"کیفیت فعلی شما: {current_quality.value} kbps"
+        
+        markup = [
+            [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.HIGH else ''}🎵 ۳۲۰ kbps", callback_data=f"album_quality:320:{collection_id}:{collection_name}")],
+            [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.MEDIUM else ''}🎶 ۱۹۲ kbps", callback_data=f"album_quality:192:{collection_id}:{collection_name}")],
+            [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.LOW else ''}🎧 ۱۲۸ kbps", callback_data=f"album_quality:128:{collection_id}:{collection_name}")],
+            [InlineKeyboardButton(text="🔙 انصراف", callback_data="ignore")]
+        ]
+    else:
+        text = f"🎵 *انتخاب کیفیت برای دانلود آهنگ*\n\n"
+        text += f"🎤 *آهنگ:* {track_name}\n\n"
+        text += f"کیفیت مورد نظر خود را انتخاب کنید:\n\n"
+        text += f"🎵 *۳۲۰ kbps* - کیفیت استودیویی (مصرف ۳ واحد)\n"
+        text += f"🎶 *۱۹۲ kbps* - کیفیت عالی (مصرف ۲ واحد)\n"
+        text += f"🎧 *۱۲۸ kbps* - کیفیت خوب (مصرف ۱ واحد)\n\n"
+        text += f"کیفیت فعلی شما: {current_quality.value} kbps"
+        
+        markup = [
+            [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.HIGH else ''}🎵 ۳۲۰ kbps", callback_data=f"track_quality:320:{track_id}")],
+            [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.MEDIUM else ''}🎶 ۱۹۲ kbps", callback_data=f"track_quality:192:{track_id}")],
+            [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.LOW else ''}🎧 ۱۲۸ kbps", callback_data=f"track_quality:128:{track_id}")],
+            [InlineKeyboardButton(text="🔙 انصراف", callback_data="ignore")]
+        ]
+    
+    await send_message(bot, chat_id, text, reply_markup=markup)
+
+
+# ============================================================================
 # Search and Download Functions
 # ============================================================================
 async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: str, original_message: Message = None):
@@ -734,8 +782,13 @@ async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: s
             track_id = track.get('trackId')
             if track_id:
                 if user_auto_download.get(user_id, False):
-                    asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
-                    await status_msg.delete()
+                    # اگر تنظیم پرسیدن کیفیت فعال است، ابتدا کیفیت را بپرس
+                    if user_ask_quality_before_download.get(user_id, False):
+                        await ask_quality_for_download(chat_id, user_id, track_id, track.get('trackName', 'آهنگ'), is_album=False)
+                        await status_msg.delete()
+                    else:
+                        asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
+                        await status_msg.delete()
                 else:
                     await show_track_page(chat_id, track_id, original_message, user_id)
                     await status_msg.delete()
@@ -759,20 +812,24 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
     if not exists:
         raise FileNotFoundError(f"File not found: {abs_audio_path}")
 
+    # دکمه کپی پیوند برای آهنگ‌های کش شده
+    markup = [[
+        InlineKeyboardButton(
+            text="📂 نمایش در مینی اپ",
+            web_app="https://player.abraava.ir?id=" + str(track_id)
+        ),
+        InlineKeyboardButton(
+            text="📋 کپی پیوند",
+            copy_text="https://player.abraava.ir?id=" + str(track_id)
+        )
+    ]]
+
     for attempt in range(1, max_retries + 1):
         try:
             with open(abs_audio_path, 'rb') as audio_file:
-                markup = [[InlineKeyboardButton(
-                    text="📂 نمایش در مینی اپ",
-                    web_app="https://player.abraava.ir?id=" + track_id
-                )], [InlineKeyboardButton(
-                    text="📋 کپی پیوند",
-                    copy_text="https://player.abraava.ir?id=" + track_id
-                )]]
                 msg = await send_audio(bot, chat_id=chat_id, audio=audio_file, caption=caption, reply_markup=markup)
 
                 if msg and track_id:
-                    # ذخیره آینه با کیفیت
                     target_quality = quality or DEFAULT_QUALITY
                     await set_mirror(
                         'track', str(track_id), 'audioUrl',
@@ -805,7 +862,8 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
 
 async def download_and_send_single_track(bot: Client, chat_id: int, track_id: int, user_id: int = None,
                                          status_msg: Message = None, is_batch: bool = False,
-                                         album_cover_bytes: bytes = None, collection_id: int = None):
+                                         album_cover_bytes: bytes = None, collection_id: int = None,
+                                         selected_quality: str = None):
     if is_batch or status_msg is None:
         status_msg = await send_message(bot, chat_id, text="⏳ *در حال آماده‌سازی دانلود...*")
 
@@ -817,7 +875,17 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     track = track_data["results"][0]
     release_year = track.get("releaseDate", "").split("-")[0] if track.get("releaseDate") else ""
 
-    quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
+    # استفاده از کیفیت انتخاب شده یا کیفیت پیش‌فرض کاربر
+    if selected_quality:
+        if selected_quality == "320":
+            quality = DownloadQuality.HIGH
+        elif selected_quality == "192":
+            quality = DownloadQuality.MEDIUM
+        else:
+            quality = DownloadQuality.LOW
+    else:
+        quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
+    
     quality_value = quality.value
 
     caption_parts = [
@@ -839,10 +907,6 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
         caption_parts.append(f"⏱️ *مدت زمان:* {minutes}:{seconds:02d}")
     caption_parts.append(f"📀 *کیفیت دانلود:* {quality_value} kbps")
     caption = "\n".join(caption_parts)
-    markup = [[InlineKeyboardButton(
-        text="📂 نمایش در مینی اپ",
-        web_app="https://player.abraava.ir?id=" + str(track_id)
-    )]]
 
     # دریافت کش با کیفیت مشخص
     audio_cache = await get_cached_audio_with_quality(track_id, quality=quality_value)
@@ -850,6 +914,19 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     if audio_cache:
         try:
             await update_status_with_close(status_msg, f"📤 *در حال ارسال فایل از حافظه کش...*")
+            
+            # دکمه کپی پیوند برای آهنگ‌های کش شده
+            markup = [[
+                InlineKeyboardButton(
+                    text="📂 نمایش در مینی اپ",
+                    web_app="https://player.abraava.ir?id=" + str(track_id)
+                ),
+                InlineKeyboardButton(
+                    text="📋 کپی پیوند",
+                    copy_text="https://player.abraava.ir?id=" + str(track_id)
+                )
+            ]]
+            
             await send_audio(bot, chat_id, audio=audio_cache, caption=caption, reply_markup=markup)
             await status_msg.delete()
             await api_client.log_download(
@@ -995,7 +1072,8 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
 
 
 async def download_and_send_album(bot: Client, chat_id: int, collection_id: int, user_id: int,
-                                  collection_name: str, tracks: List[dict], status_msg: Message):
+                                  collection_name: str, tracks: List[dict], status_msg: Message,
+                                  selected_quality: str = None):
     if not await album_tracker.acquire_lock(user_id, collection_id):
         await update_status_with_close(status_msg, "❌ *در حال حاضر دانلود این آلبوم در حال انجام است*\nلطفاً چند لحظه صبر کنید.")
         album_tracker.finish_download(user_id, collection_id, 0, 0)
@@ -1009,7 +1087,7 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
 
     cancel_markup = [[InlineKeyboardButton(text="❌ لغو دانلود آلبوم", callback_data=f"cancel_album:{user_id}:{collection_id}")]]
 
-    await update_status_with_close(status_msg, f"▶️ *در حال دانلود آلبوم {collection_name}...*\n\n🎵 *آماده‌سازی...*",
+    await update_status_with_close(status_msg, f"⬇️ *در حال دانلود آلبوم {collection_name}...*\n\n🎵 *آماده‌سازی...*",
                                    reply_markup=cancel_markup, no=True)
 
     album_cover_bytes = None
@@ -1032,6 +1110,12 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
     stopped_by_rate_limit = False
     is_cancelled_by_user = False
 
+    # استفاده از کیفیت انتخاب شده یا کیفیت پیش‌فرض کاربر
+    if selected_quality:
+        quality_value = selected_quality
+    else:
+        quality_value = user_download_quality.get(user_id, DownloadQuality.MEDIUM).value
+
     for idx, track in enumerate(tracks, 1):
         if album_tracker.is_cancelled(user_id, collection_id):
             is_cancelled_by_user = True
@@ -1042,15 +1126,14 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
 
         track_id = track.get('trackId')
         track_name = track.get('trackName', 'Unknown')
-        quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
 
-        progress_text = f"▶️ *در حال دانلود آلبوم {collection_name}...*\n\n"
+        progress_text = f"⬇️ *در حال دانلود آلبوم {collection_name}...*\n\n"
         progress_text += f"🎵 *پیشرفت:* {idx-1}/{len(tracks)} قطعه\n"
         progress_text += f"🎤 *در حال دانلود:* {track_name}"
 
         await update_status_with_close(status_msg, progress_text, reply_markup=cancel_markup, no=True)
 
-        can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality.value)
+        can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality_value)
         if not can_dl:
             stopped_by_rate_limit = True
             error_msg = f"محدودیت دانلود: {wait_sec} ثانیه صبر کنید"
@@ -1061,7 +1144,7 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
         try:
             await download_and_send_single_track(bot, chat_id, track_id, user_id, status_msg,
                                                  is_batch=True, album_cover_bytes=album_cover_bytes,
-                                                 collection_id=collection_id)
+                                                 collection_id=collection_id, selected_quality=quality_value)
             album_tracker.update_track_result(user_id, collection_id, track_name, True)
             success_count += 1
         except Exception as e:
@@ -1231,6 +1314,7 @@ async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
 
             chat = await bot.get_chat(chat_id)
             if chat.type != "group" and chat.type != "supergroup" and tracks:
+                # دکمه دانلود آلبوم با آیکون دانلود
                 markup.append([InlineKeyboardButton(text="⬇️ دانلود کل آلبوم", callback_data=f"download_album:{collection_id}")])
 
         if collection_data.get("artistId"):
@@ -1275,10 +1359,12 @@ async def show_track_page(chat_id: int, track_id: int, message_to_edit: Optional
         text += f"📅 *سال انتشار:* {release_date}\n"
 
         markup = []
-        download = [InlineKeyboardButton(text="⬇️ دانلود", callback_data=f"download:{track_id}")]
+        
+        # دکمه دانلود با آیکون دانلود
+        download_btn = [InlineKeyboardButton(text="⬇️ دانلود", callback_data=f"download:{track_id}")]
         if track.get("previewUrl"):
-            download.append(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}"))
-        markup.append(download)
+            download_btn.append(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}"))
+        markup.append(download_btn)
 
         links = []
         if track.get('collectionId'):
@@ -1473,6 +1559,7 @@ async def show_settings_message(chat_id: int, user_id: int, message_to_delete: M
     show_artwork = user_show_artwork.get(user_id, True)
     auto_download = user_auto_download.get(user_id, False)
     notifications = user_notifications.get(user_id, True)
+    ask_quality = user_ask_quality_before_download.get(user_id, False)
 
     settings_text = (
         f"⚙️ *تنظیمات ربات {BOT_NAME}*\n\n"
@@ -1486,6 +1573,8 @@ async def show_settings_message(chat_id: int, user_id: int, message_to_delete: M
         f"   { 'دانلود فوری پس از جستجو' if auto_download else 'نمایش اطلاعات قبل از دانلود' }\n\n"
         f"🔔 *دریافت اعلان:* {'فعال' if notifications else 'غیرفعال'}\n"
         f"   { 'دریافت پیام‌های اطلاع‌رسانی' if notifications else 'عدم دریافت پیام‌های اطلاع‌رسانی' }\n\n"
+        f"❓ *پرسیدن کیفیت قبل از دانلود:* {'فعال' if ask_quality else 'غیرفعال'}\n"
+        f"   { 'هر بار کیفیت مورد نظر را انتخاب کنید' if ask_quality else 'استفاده از کیفیت پیش‌فرض' }\n\n"
         f"📊 برای مشاهده آمار دقیق، روی دکمه «آمار من» کلیک کنید."
     )
 
@@ -1495,6 +1584,7 @@ async def show_settings_message(chat_id: int, user_id: int, message_to_delete: M
         [InlineKeyboardButton(text=f"{'🖼️' if show_artwork else '🚫'} نمایش کاور", callback_data="menu_artwork")],
         [InlineKeyboardButton(text=f"{'⚡' if auto_download else '⏸️'} دانلود خودکار", callback_data="menu_auto_download")],
         [InlineKeyboardButton(text=f"{'🔔' if notifications else '🔕'} دریافت اعلان", callback_data="menu_notifications")],
+        [InlineKeyboardButton(text=f"{'❓' if ask_quality else '⚡'} پرسیدن کیفیت", callback_data="menu_ask_quality")],
         [InlineKeyboardButton(text="📊 آمار من", callback_data="show_stats")],
     ]
 
@@ -1559,6 +1649,7 @@ async def update_settings_message(callback_query: CallbackQuery, user_id: int):
 
 async def show_quality_menu(callback_query: CallbackQuery, user_id: int):
     current_quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
+    ask_quality = user_ask_quality_before_download.get(user_id, False)
 
     updating_msg = await send_message(bot, callback_query.message.chat.id, "🔄 *در حال بارگذاری منوی کیفیت...*")
 
@@ -1573,7 +1664,9 @@ async def show_quality_menu(callback_query: CallbackQuery, user_id: int):
         "🎵 *۳۲۰ kbps* - کیفیت استودیویی (مصرف ۳ واحد)\n"
         "🎶 *۱۹۲ kbps* - کیفیت عالی (مصرف ۲ واحد)\n"
         "🎧 *۱۲۸ kbps* - کیفیت خوب (مصرف ۱ واحد)\n\n"
-        f"سهمیه فعلی شما: {download_rate_limiter.get_remaining(user_id)}/{download_rate_limiter.max_downloads} واحد"
+        f"سهمیه فعلی شما: {download_rate_limiter.get_remaining(user_id)}/{download_rate_limiter.max_downloads} واحد\n\n"
+        f"⚙️ *تنظیم پرسیدن کیفیت:* {'فعال' if ask_quality else 'غیرفعال'}\n"
+        f"در صورت فعال بودن، قبل از هر دانلود کیفیت مورد نظر را انتخاب می‌کنید."
     )
 
     markup = [
@@ -1599,6 +1692,7 @@ async def show_stats_message(callback_query: CallbackQuery, user_id: int):
     show_artwork = user_show_artwork.get(user_id, True)
     auto_download = user_auto_download.get(user_id, False)
     notifications = user_notifications.get(user_id, True)
+    ask_quality = user_ask_quality_before_download.get(user_id, False)
 
     user_data = await api_client.get_user(user_id)
     total_searches = user_data.get('data', {}).get('total_searches', 0) if user_data.get('success') else 0
@@ -1618,7 +1712,8 @@ async def show_stats_message(callback_query: CallbackQuery, user_id: int):
         f"   🔹 کیفیت دانلود: {current_quality.value} kbps\n"
         f"   🔹 نمایش کاور: {'فعال' if show_artwork else 'غیرفعال'}\n"
         f"   🔹 دانلود خودکار: {'فعال' if auto_download else 'غیرفعال'}\n"
-        f"   🔹 دریافت اعلان: {'فعال' if notifications else 'غیرفعال'}\n\n"
+        f"   🔹 دریافت اعلان: {'فعال' if notifications else 'غیرفعال'}\n"
+        f"   🔹 پرسیدن کیفیت: {'فعال' if ask_quality else 'غیرفعال'}\n\n"
         f"📈 *آمار کلی:*\n"
         f"   🔹 جستجوها: {total_searches}\n"
         f"   🔹 دانلودها: {total_downloads}"
@@ -1764,7 +1859,8 @@ async def handle_message(message):
             f"🔹 قابلیت دانلود آلبوم به صورت یکجا\n"
             f"🔹 تنظیم کیفیت دانلود (۳۲۰/۱۹۲/۱۲۸ kbps)\n"
             f"🔹 حالت سریع و دانلود خودکار\n"
-            f"🔹 غیرفعال کردن کاور آلبوم برای افزایش سرعت\n\n"
+            f"🔹 غیرفعال کردن کاور آلبوم برای افزایش سرعت\n"
+            f"🔹 قابلیت پرسیدن کیفیت قبل از هر دانلود\n\n"
             f"🔧 تنظیمات: /settings\n"
             f"📊 آمار: /stats\n"
             f"🆘 راهنما: /help"
@@ -1861,6 +1957,11 @@ async def on_callback(callback_query: CallbackQuery):
         await show_confirmation_menu(callback_query, "notifications", current, "دریافت اعلان", "🔔")
         return
 
+    if data == "menu_ask_quality":
+        current = user_ask_quality_before_download.get(user_id, False)
+        await show_confirmation_menu(callback_query, "ask_quality", current, "پرسیدن کیفیت قبل از دانلود", "❓")
+        return
+
     if data.startswith("confirm_quick_mode:"):
         value = int(data.split(":")[1])
         user_quick_mode[user_id] = bool(value)
@@ -1893,12 +1994,50 @@ async def on_callback(callback_query: CallbackQuery):
         await bot.answer_callback_query(callback_query.id, "✅ تنظیمات ذخیره شد")
         return
 
+    if data.startswith("confirm_ask_quality:"):
+        value = int(data.split(":")[1])
+        user_ask_quality_before_download[user_id] = bool(value)
+        await api_client.update_ask_quality_before_download(user_id, bool(value))
+        await update_settings_message(callback_query, user_id)
+        await bot.answer_callback_query(callback_query.id, "✅ تنظیمات ذخیره شد")
+        return
+
     if data == "show_stats":
         await show_stats_message(callback_query, user_id)
         return
 
     if data == "show_quality_menu":
         await show_quality_menu(callback_query, user_id)
+        return
+
+    if data.startswith("track_quality:"):
+        parts = data.split(":")
+        quality_value = parts[1]
+        track_id = int(parts[2])
+        await bot.answer_callback_query(callback_query.id, f"🎵 در حال دانلود با کیفیت {quality_value}kbps...")
+        await callback_query.message.delete()
+        asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id, selected_quality=quality_value))
+        return
+
+    if data.startswith("album_quality:"):
+        parts = data.split(":")
+        quality_value = parts[1]
+        collection_id = int(parts[2])
+        collection_name = parts[3] if len(parts) > 3 else "آلبوم"
+        
+        await bot.answer_callback_query(callback_query.id, f"📀 در حال آماده‌سازی دانلود آلبوم با کیفیت {quality_value}kbps...")
+        
+        collection_data = await get_or_crawl_collection(collection_id, None, False)
+        tracks_data = await get_or_crawl_collection_tracks(collection_id)
+        tracks = tracks_data["results"] if tracks_data else []
+
+        if not tracks:
+            await bot.answer_callback_query(callback_query.id, "❌ قطعه‌ای یافت نشد", show_alert=True)
+            return
+
+        status_msg = await send_message(bot, chat_id, f"🎵 *شروع دانلود آلبوم: {collection_name}*")
+        await callback_query.message.delete()
+        asyncio.create_task(download_and_send_album(bot, chat_id, collection_id, user_id, collection_name, tracks, status_msg, selected_quality=quality_value))
         return
 
     if data.startswith("set_quality:"):
@@ -1985,12 +2124,22 @@ async def on_callback(callback_query: CallbackQuery):
         elif data.startswith("download:"):
             track_id = int(parts[1])
             quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
-            can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality.value)
-            if not can_dl:
-                await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت: {wait_sec} ثانیه", show_alert=True)
-                return
-            await bot.answer_callback_query(callback_query.id, "🎵 در حال پردازش...")
-            asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
+            
+            # بررسی تنظیم پرسیدن کیفیت
+            if user_ask_quality_before_download.get(user_id, False):
+                track_data = await get_track(track_id)
+                if track_data and track_data.get("results"):
+                    track_name = track_data["results"][0].get('trackName', 'آهنگ')
+                    await ask_quality_for_download(chat_id, user_id, track_id, track_name, is_album=False)
+                    await bot.answer_callback_query(callback_query.id, "🎵 کیفیت مورد نظر را انتخاب کنید")
+                    return
+            else:
+                can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality.value)
+                if not can_dl:
+                    await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت: {wait_sec} ثانیه", show_alert=True)
+                    return
+                await bot.answer_callback_query(callback_query.id, "🎵 در حال پردازش...")
+                asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
 
         elif data.startswith("download_album:"):
             collection_id = int(parts[1])
@@ -1998,24 +2147,33 @@ async def on_callback(callback_query: CallbackQuery):
             if chat.type == "group" or chat.type == "supergroup":
                 await bot.answer_callback_query(callback_query.id, "❌ دانلود آلبوم در گروه ممنوع", show_alert=True)
                 return
-            quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
-            can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality.value)
-            if not can_dl:
-                await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت: {wait_sec} ثانیه", show_alert=True)
+            
+            # بررسی تنظیم پرسیدن کیفیت
+            if user_ask_quality_before_download.get(user_id, False):
+                collection_data = await get_or_crawl_collection(collection_id, None, False)
+                collection_name = collection_data['results'][0].get('collectionName', 'آلبوم') if collection_data else 'آلبوم'
+                await ask_quality_for_download(chat_id, user_id, None, None, is_album=True, collection_id=collection_id, collection_name=collection_name)
+                await bot.answer_callback_query(callback_query.id, "🎵 کیفیت مورد نظر را انتخاب کنید")
                 return
-            await bot.answer_callback_query(callback_query.id, "📀 در حال آماده‌سازی...")
+            else:
+                quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
+                can_dl, wait_sec = await download_rate_limiter.can_download(user_id, quality.value)
+                if not can_dl:
+                    await bot.answer_callback_query(callback_query.id, f"⏳ محدودیت: {wait_sec} ثانیه", show_alert=True)
+                    return
+                await bot.answer_callback_query(callback_query.id, "📀 در حال آماده‌سازی...")
 
-            collection_data = await get_or_crawl_collection(collection_id, None, False)
-            tracks_data = await get_or_crawl_collection_tracks(collection_id)
-            tracks = tracks_data["results"] if tracks_data else []
+                collection_data = await get_or_crawl_collection(collection_id, None, False)
+                tracks_data = await get_or_crawl_collection_tracks(collection_id)
+                tracks = tracks_data["results"] if tracks_data else []
 
-            if not tracks:
-                await bot.answer_callback_query(callback_query.id, "❌ قطعه‌ای یافت نشد", show_alert=True)
-                return
+                if not tracks:
+                    await bot.answer_callback_query(callback_query.id, "❌ قطعه‌ای یافت نشد", show_alert=True)
+                    return
 
-            collection_name = collection_data['results'][0].get('collectionName', 'آلبوم') if collection_data else 'آلبوم'
-            status_msg = await send_message(bot, chat_id, f"🎵 *شروع دانلود آلبوم: {collection_name}*")
-            asyncio.create_task(download_and_send_album(bot, chat_id, collection_id, user_id, collection_name, tracks, status_msg))
+                collection_name = collection_data['results'][0].get('collectionName', 'آلبوم') if collection_data else 'آلبوم'
+                status_msg = await send_message(bot, chat_id, f"🎵 *شروع دانلود آلبوم: {collection_name}*")
+                asyncio.create_task(download_and_send_album(bot, chat_id, collection_id, user_id, collection_name, tracks, status_msg))
 
         elif data.startswith("preview:"):
             track_id = int(parts[1])
