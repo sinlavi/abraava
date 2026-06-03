@@ -1533,7 +1533,8 @@ async def show_user_stats(user_id: int, chat_id: int, message_id: int = None):
     
     if message_id:
         try:
-            await bot.edit_message_caption(
+            await edit_message(
+            bot,
                 chat_id=chat_id,
                 message_id=message_id,
                 caption=stats_text,
@@ -1707,19 +1708,20 @@ async def update_settings_message(callback_query: CallbackQuery, user_id: int):
             text=f"{'🔔✅' if notifications else '🔕❌'} دریافت اعلان", 
             callback_data="toggle_notifications"
         )],
-        [InlineKeyboardButton(text="📊 آمار من", callback_data="show_stats")],
-        [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
+        [InlineKeyboardButton(text="📊 آمار من", callback_data="show_stats")]
     ]
     
     try:
-        await bot.edit_message_caption(
+        await edit_message(
+        bot,
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.id,
             caption=settings_text,
             reply_markup=InlineKeyboard(markup)
         )
     except:
-        await bot.edit_message_text(
+        await edit_message(
+        bot,
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.id,
             text=settings_text,
@@ -1756,14 +1758,16 @@ async def show_quality_menu(callback_query: CallbackQuery, user_id: int):
     ]
     
     try:
-        await bot.edit_message_caption(
+        await edit_message(
+        bot,
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.id,
             caption=quality_text,
             reply_markup=InlineKeyboard(markup)
         )
     except:
-        await bot.edit_message_text(
+        await edit_message(
+        bot,
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.id,
             text=quality_text,
