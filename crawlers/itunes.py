@@ -121,6 +121,10 @@ ALTERNATIVE_ENDPOINTS = [
 # متدها بر اساس عملکردشان در طول زمان جابجا می‌شوند
 ITUNES_METHOD_ORDER = [1, 2, 3]  # روش‌های مختلف برای iTunes API
 
+# کیفیت‌های پشتیبانی شده صوتی
+SUPPORTED_AUDIO_QUALITIES = ["320", "192", "128"]
+DEFAULT_AUDIO_QUALITY = "192"
+
 # User-Agent list (مشابه کد دانلودر)
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -163,14 +167,14 @@ def _get_random_headers() -> dict:
 
 class iTunesEndpointManager:
     """مدیریت آندپوینت‌های iTunes با قابلیت تعویض خودکار و استفاده از متدهای مختلف"""
-    
+
     def __init__(self, default_endpoints: List[str]):
         self.default_endpoints = default_endpoints.copy()
         self.active_endpoint = default_endpoints[0]
         self.active_method = 1  # روش فعال (1, 2, 3)
         self.method_order = [1, 2, 3]  # ترتیب روش‌ها
         self.endpoint_stats = {}
-        
+
         for endpoint in default_endpoints:
             self.endpoint_stats[endpoint] = {
                 "success_count": 0,
@@ -184,24 +188,24 @@ class iTunesEndpointManager:
                 "avg_response_time": 0,
                 "total_response_time": 0
             }
-        
+
         self.last_endpoint_switch = time.time()
         self.switch_history = []
-        
+
     def get_proxy_for_method(self, method: int) -> Optional[str]:
         """دریافت پروکسی مناسب برای متد مورد نظر (مشابه کد دانلودر)"""
         proxy = _check_proxy()
-        
+
         # روش‌های 1, 2, 3 با پروکسی
         if method in [1, 2, 3] and proxy:
             return proxy
         # روش‌های دیگه بدون پروکسی
         return None
-        
+
     def get_headers_for_method(self, method: int) -> dict:
         """دریافت هدرهای مناسب برای متد مورد نظر"""
         headers = _get_random_headers()
-        
+
         # برای متدهای مختلف می‌توان هدرهای متفاوت داد
         if method == 2:
             # هدر شبیه موبایل
@@ -209,14 +213,14 @@ class iTunesEndpointManager:
         elif method == 3:
             # هدر شبیه تبلت
             headers["User-Agent"] = "Mozilla/5.0 (iPad; CPU OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"
-            
+
         return headers
-        
+
     def record_success(self, endpoint: str, method: int, response_time: float):
         """ثبت موفقیت برای یک آندپوینت و روش"""
         if endpoint not in self.endpoint_stats:
             return
-            
+
         stats = self.endpoint_stats[endpoint]
         stats["success_count"] += 1
         stats["last_success"] = time.time()
@@ -224,106 +228,106 @@ class iTunesEndpointManager:
         stats["consecutive_fails"] = 0
         stats["total_response_time"] += response_time
         stats["avg_response_time"] = stats["total_response_time"] / stats["success_count"]
-        
+
         # اگر آندپوینت blocked بوده، آزادش کن
         if stats["is_blocked"]:
             stats["is_blocked"] = False
             stats["blocked_until"] = None
             logger.info(f"🔓 Endpoint {endpoint} is no longer blocked")
-        
+
         # به روز رسانی ترتیب روش‌ها (روش موفق به اول لیست می‌ره)
         if method in self.method_order:
             self.method_order.remove(method)
             self.method_order.insert(0, method)
             logger.debug(f"Method {method} moved to front of order")
-        
+
         # بررسی تعویض آندپوینت
         if endpoint != self.active_endpoint:
             if stats["consecutive_successes"] >= 2:
                 self.switch_active_endpoint(endpoint, reason="better_performance")
-                
+
     def record_failure(self, endpoint: str, method: int, error_type: str = "unknown"):
         """ثبت شکست برای یک آندپوینت و روش"""
         if endpoint not in self.endpoint_stats:
             return
-            
+
         stats = self.endpoint_stats[endpoint]
         stats["fail_count"] += 1
         stats["last_fail"] = time.time()
         stats["consecutive_fails"] += 1
         stats["consecutive_successes"] = 0
-        
+
         # به روز رسانی ترتیب روش‌ها (روش ناموفق به آخر لیست می‌ره)
         if method in self.method_order:
             self.method_order.remove(method)
             self.method_order.append(method)
             logger.debug(f"Method {method} moved to end of order")
-        
+
         # اگر ۲ بار پشت سر هم شکست خورد، آندپوینت رو مسدود کن
         if stats["consecutive_fails"] >= 2:
             block_duration = min(30, 5 * stats["consecutive_fails"])
             stats["is_blocked"] = True
             stats["blocked_until"] = time.time() + block_duration
             logger.warning(f"🚫 Endpoint {endpoint} blocked for {block_duration}s")
-            
+
             # اگر آندپوینت فعلی مسدود شد، یه آندپوینت دیگه انتخاب کن
             if endpoint == self.active_endpoint:
                 self.find_best_endpoint()
-                
+
     def find_best_endpoint(self) -> str:
         """پیدا کردن بهترین آندپوینت موجود"""
         available_endpoints = []
-        
+
         for endpoint, stats in self.endpoint_stats.items():
             # آندپوینت‌های مسدود شده رو رد کن
             if stats["is_blocked"] and stats["blocked_until"] > time.time():
                 continue
-                
+
             # امتیازدهی به آندپوینت‌ها
             score = 0
             if stats["success_count"] > 0:
                 success_rate = stats["success_count"] / (stats["success_count"] + stats["fail_count"] + 1)
                 score += success_rate * 10
-                
+
                 if stats["avg_response_time"] > 0:
                     speed_score = max(0, 5 - (stats["avg_response_time"] / 0.5))
                     score += speed_score
-                    
+
                 score += min(3, stats["consecutive_successes"])
-                
+
             available_endpoints.append((score, endpoint))
-        
+
         if not available_endpoints:
             logger.warning("All endpoints are blocked, resetting to default")
             self.reset_all_blocks()
             return self.default_endpoints[0]
-            
+
         available_endpoints.sort(reverse=True, key=lambda x: x[0])
         best_endpoint = available_endpoints[0][1]
-        
+
         if best_endpoint != self.active_endpoint:
             self.switch_active_endpoint(best_endpoint, reason="best_available")
-            
+
         return self.active_endpoint
-        
+
     def switch_active_endpoint(self, new_endpoint: str, reason: str = "manual"):
         """تغییر آندپوینت فعال"""
         old_endpoint = self.active_endpoint
         self.active_endpoint = new_endpoint
         self.last_endpoint_switch = time.time()
-        
+
         self.switch_history.append({
             "timestamp": time.time(),
             "from": old_endpoint,
             "to": new_endpoint,
             "reason": reason
         })
-        
+
         if len(self.switch_history) > 50:
             self.switch_history = self.switch_history[-50:]
-            
+
         logger.info(f"🔄 iTunes endpoint switched: {old_endpoint} → {new_endpoint} (reason: {reason})")
-        
+
     def reset_all_blocks(self):
         """رفع مسدودیت همه آندپوینت‌ها"""
         for stats in self.endpoint_stats.values():
@@ -331,22 +335,22 @@ class iTunesEndpointManager:
             stats["blocked_until"] = None
             stats["consecutive_fails"] = 0
         logger.info("🔓 All iTunes endpoints unblocked")
-        
+
     def get_next_method(self) -> int:
         """دریافت روش بعدی برای امتحان"""
         return self.method_order[0] if self.method_order else 1
-        
+
     def should_reset_to_default(self) -> bool:
         """بررسی بازگشت به آندپوینت اصلی"""
         if self.active_endpoint not in self.default_endpoints:
             return True
-            
+
         if time.time() - self.last_endpoint_switch > 900:  # 15 دقیقه
             default_stats = self.endpoint_stats[self.default_endpoints[0]]
             if default_stats["consecutive_fails"] == 0:
                 return True
         return False
-        
+
     def reset_to_default_if_needed(self):
         """بازگشت به آندپوینت اصلی در صورت لزوم"""
         if self.should_reset_to_default():
@@ -448,7 +452,7 @@ async def fetch_with_smart_endpoint(
     Fetch using smart endpoint management with methods similar to downloader
     """
     params = params or {}
-    
+
     # تعیین نوع endpoint اصلی
     if endpoint == "search":
         api_path = "/search"
@@ -456,64 +460,64 @@ async def fetch_with_smart_endpoint(
         api_path = "/lookup"
     else:
         api_path = f"/{endpoint}"
-    
+
     # بررسی بازگشت به آندپوینت اصلی
     endpoint_manager.reset_to_default_if_needed()
-    
+
     # بهترین آندپوینت موجود
     best_endpoint = endpoint_manager.find_best_endpoint()
-    
+
     session = await HttpClient.get_session()
-    
+
     for attempt in range(max_attempts):
         # دریافت روش مناسب برای این تلاش
         current_method = endpoint_manager.get_next_method()
         current_endpoint = best_endpoint if attempt == 0 else random.choice(ALTERNATIVE_ENDPOINTS)
-        
+
         # بررسی مسدودیت آندپوینت
         if endpoint_manager.endpoint_stats[current_endpoint]["is_blocked"]:
             continue
-            
+
         url = f"{current_endpoint}{api_path}"
-        
+
         # دریافت پروکسی و هدرهای مناسب برای این روش
         proxy = endpoint_manager.get_proxy_for_method(current_method)
         headers = endpoint_manager.get_headers_for_method(current_method)
-        
+
         timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT, connect=3)
-        
+
         try:
             start_time = time.time()
             logger.info(f"Attempt {attempt + 1}: Trying {current_endpoint} with method {current_method}")
-            
+
             if method == "GET":
                 async with session.get(
-                    url, 
-                    params=params, 
-                    headers=headers,
-                    ssl=False, 
-                    proxy=proxy,
-                    timeout=timeout
+                        url,
+                        params=params,
+                        headers=headers,
+                        ssl=False,
+                        proxy=proxy,
+                        timeout=timeout
                 ) as resp:
                     elapsed = time.time() - start_time
-                    
+
                     if resp.status == 200:
                         logger.info(f"✅ Success from {current_endpoint} (method {current_method}) in {elapsed:.2f}s")
                         endpoint_manager.record_success(current_endpoint, current_method, elapsed)
-                        
+
                         text = await resp.text()
                         try:
                             response_data = json.loads(text)
-                            
+
                             if _should_cache_response(endpoint, params, response_data):
                                 _itunes_cache.set(endpoint, params, response_data)
-                            
+
                             return response_data
                         except json.JSONDecodeError:
                             logger.error(f"Failed to parse JSON from {url}")
                             endpoint_manager.record_failure(current_endpoint, current_method, "json_error")
                             continue
-                            
+
                     elif resp.status == 429:
                         logger.warning(f"⚠️ Rate limit (429) from {current_endpoint}")
                         endpoint_manager.record_failure(current_endpoint, current_method, "rate_limit")
@@ -522,19 +526,19 @@ async def fetch_with_smart_endpoint(
                         logger.warning(f"Status {resp.status} from {current_endpoint}")
                         endpoint_manager.record_failure(current_endpoint, current_method, f"http_{resp.status}")
                         continue
-                        
+
             elif method in ["POST", "PUT", "DELETE"]:
                 async with getattr(session, method.lower())(
-                    url, 
-                    params=params, 
-                    headers=headers,
-                    json=payload, 
-                    ssl=False, 
-                    proxy=proxy,
-                    timeout=timeout
+                        url,
+                        params=params,
+                        headers=headers,
+                        json=payload,
+                        ssl=False,
+                        proxy=proxy,
+                        timeout=timeout
                 ) as resp:
                     elapsed = time.time() - start_time
-                    
+
                     if resp.status == 200:
                         logger.info(f"✅ Success from {current_endpoint} (method {current_method}) in {elapsed:.2f}s")
                         endpoint_manager.record_success(current_endpoint, current_method, elapsed)
@@ -548,21 +552,21 @@ async def fetch_with_smart_endpoint(
                         logger.warning(f"Status {resp.status} from {current_endpoint}")
                         endpoint_manager.record_failure(current_endpoint, current_method, f"http_{resp.status}")
                         continue
-                        
+
         except asyncio.TimeoutError:
             elapsed = time.time() - start_time
             logger.warning(f"⏱️ Timeout after {elapsed:.2f}s from {current_endpoint}")
             endpoint_manager.record_failure(current_endpoint, current_method, "timeout")
             continue
-            
+
         except Exception as e:
             logger.warning(f"❌ Error from {current_endpoint}: {e}")
             endpoint_manager.record_failure(current_endpoint, current_method, "exception")
             continue
-        
+
         # تاخیر بین تلاش‌ها (مشابه کد دانلودر)
         await asyncio.sleep(random.uniform(1.0, 3.0))
-    
+
     logger.error(f"❌ All {max_attempts} attempts failed for {endpoint}")
     return None
 
@@ -596,7 +600,7 @@ async def fetch_itunes(
     # برای mirror endpoints از روش ساده استفاده کن
     if is_mirror:
         return await fetch_simple_mirror(endpoint, params, method, payload)
-    
+
     # برای iTunes search/lookup از روش هوشمند استفاده کن
     return await fetch_with_smart_endpoint(endpoint, params, method, payload)
 
@@ -611,10 +615,10 @@ async def fetch_simple_mirror(
     درخواست ساده برای mirror endpoints
     """
     from config import ITUNES_BASE_URL
-    
+
     session = await HttpClient.get_session()
     url = f"{ITUNES_BASE_URL}/{endpoint}"
-    
+
     try:
         if method == "GET":
             async with session.get(url, params=params, ssl=False, proxy=PROXY) as resp:
@@ -622,13 +626,13 @@ async def fetch_simple_mirror(
                     return await resp.json()
         else:
             async with getattr(session, method.lower())(
-                url, params=params, json=payload, ssl=False, proxy=PROXY
+                    url, params=params, json=payload, ssl=False, proxy=PROXY
             ) as resp:
                 if resp.status == 200:
                     return await resp.json()
     except Exception as e:
         logger.error(f"Mirror request failed: {e}")
-    
+
     return None
 
 
@@ -772,36 +776,198 @@ def get_cache_stats() -> Dict[str, Any]:
     }
 
 
-# Mirror endpoints (بدون تغییر)
-async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url: str) -> Optional[Dict[str, Any]]:
-    """POST /mirror/set"""
+# ============================================================================
+# Mirror endpoints با پشتیبانی از کیفیت
+# ============================================================================
+
+async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url: str, quality: str = None) -> Optional[Dict[str, Any]]:
+    """
+    POST /mirror/set
+    با پشتیبانی از کیفیت برای audioUrl
+    """
     payload = {
         "entityType": entity_type,
         "entityId": entity_id,
         "urlType": url_type,
         "mirrorUrl": mirror_url
     }
+
+    # اگر کیفیت مشخص شده و نوع آدرس audio است، کیفیت را اضافه کن
+    if quality and url_type == "audioUrl":
+        # اعتبارسنجی کیفیت
+        if quality in SUPPORTED_AUDIO_QUALITIES:
+            payload["quality"] = quality
+            logger.info(f"Setting mirror for {entity_type}:{entity_id} with quality {quality}")
+        else:
+            logger.warning(f"Invalid quality '{quality}', using default")
+            payload["quality"] = DEFAULT_AUDIO_QUALITY
+    else:
+        # برای سازگاری با عقب، کیفیت پیش‌فرض را بفرست
+        if url_type == "audioUrl":
+            payload["quality"] = DEFAULT_AUDIO_QUALITY
+
     return await fetch_itunes("mirror/set", method="POST", payload=payload)
 
 
-async def get_mirror(entity_type: str, entity_id: str, url_type: str) -> Optional[Dict[str, Any]]:
-    """GET /mirror/get"""
+async def get_mirror(entity_type: str, entity_id: str, url_type: str, quality: str = None) -> Optional[Dict[str, Any]]:
+    """
+    GET /mirror/get
+    با پشتیبانی از کیفیت برای audioUrl
+    """
     params = {
         "entityType": entity_type,
         "entityId": entity_id,
         "urlType": url_type
     }
+
+    # اگر کیفیت مشخص شده و نوع آدرس audio است، کیفیت را اضافه کن
+    if quality and url_type == "audioUrl":
+        if quality in SUPPORTED_AUDIO_QUALITIES:
+            params["quality"] = quality
+            logger.info(f"Getting mirror for {entity_type}:{entity_id} with quality {quality}")
+        else:
+            logger.warning(f"Invalid quality '{quality}', using default")
+            params["quality"] = DEFAULT_AUDIO_QUALITY
+
     return await fetch_itunes("mirror/get", params=params, method="GET")
 
 
-async def delete_mirror(entity_type: str, entity_id: str, url_type: str, method: Literal["POST", "DELETE"] = "POST") -> Optional[Dict[str, Any]]:
-    """DELETE or POST /mirror/delete"""
+async def delete_mirror(
+        entity_type: str,
+        entity_id: str,
+        url_type: str,
+        quality: str = None,
+        method: Literal["POST", "DELETE"] = "POST"
+) -> Optional[Dict[str, Any]]:
+    """
+    DELETE or POST /mirror/delete
+    با پشتیبانی از کیفیت برای audioUrl
+    """
     payload = {
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "url_type": url_type
+        "entityType": entity_type,
+        "entityId": entity_id,
+        "urlType": url_type
     }
+
+    # اگر کیفیت مشخص شده و نوع آدرس audio است، کیفیت را اضافه کن
+    if quality and url_type == "audioUrl":
+        if quality in SUPPORTED_AUDIO_QUALITIES:
+            payload["quality"] = quality
+        else:
+            payload["quality"] = DEFAULT_AUDIO_QUALITY
+
     return await fetch_itunes("mirror/delete", method=method, payload=payload)
+
+
+async def get_best_available_audio(
+        track_id: int,
+        requested_quality: str,
+        entity_type: str = "track"
+) -> Optional[str]:
+    """
+    دریافت بهترین کیفیت موجود
+    اگر کیفیت درخواستی موجود نباشد، کیفیت پایین‌تر را امتحان می‌کند
+
+    Args:
+        track_id: آیدی آهنگ
+        requested_quality: کیفیت درخواستی (320, 192, 128)
+        entity_type: نوع موجودیت (پیش‌فرض track)
+
+    Returns:
+        آدرس فایل صوتی یا None
+    """
+    qualities = SUPPORTED_AUDIO_QUALITIES  # ['320', '192', '128']
+
+    # پیدا کردن ایندکس کیفیت درخواستی
+    try:
+        requested_index = qualities.index(requested_quality)
+    except ValueError:
+        requested_index = 1  # پیش‌فرض 192
+
+    # امتحان کیفیت درخواستی و کیفیت‌های پایین‌تر
+    for quality in qualities[requested_index:]:
+        try:
+            data = await get_mirror(entity_type, str(track_id), "audioUrl", quality=quality)
+            if data and data.get("mirrors", {}).get("audioUrl", False):
+                cached_url = data["mirrors"]["audioUrl"]["url"]
+                if cached_url:
+                    # استخراج file_id از آدرس (اگر در قالب Bale باشد)
+                    if '<token>' in cached_url:
+                        file_id = cached_url.split('<token>/')[1]
+                        return file_id
+                    return cached_url
+                logger.info(f"Found cached audio for track {track_id} with quality {quality}")
+                return cached_url
+        except Exception as e:
+            logger.debug(f"Quality {quality} not available for track {track_id}: {e}")
+            continue
+
+    return None
+
+
+async def get_cached_audio(track_id: int, quality: str = None) -> Optional[str]:
+    """
+    دریافت آدرس کش شده آهنگ با کیفیت مشخص
+
+    Args:
+        track_id: آیدی آهنگ
+        quality: کیفیت مورد نظر (320, 192, 128) - اگر None باشد، کیفیت پیش‌فرض استفاده می‌شود
+
+    Returns:
+        آدرس فایل صوتی یا None
+    """
+    try:
+        if track_id:
+            # اگر کیفیت مشخص نشده، از کیفیت پیش‌فرض استفاده کن
+            target_quality = quality or DEFAULT_AUDIO_QUALITY
+
+            # اگر کیفیت معتبر نیست، تصحیح کن
+            if target_quality not in SUPPORTED_AUDIO_QUALITIES:
+                target_quality = DEFAULT_AUDIO_QUALITY
+
+            data = await get_mirror('track', str(track_id), 'audioUrl', quality=target_quality)
+            if data and data.get("mirrors", {}).get("audioUrl", False):
+                cached_url = data["mirrors"]["audioUrl"]["url"]
+                if cached_url:
+                    if '<token>' in cached_url:
+                        file_id = cached_url.split('<token>/')[1]
+                        return file_id
+                    return cached_url
+    except Exception as e:
+        logger.error(f"Error getting cached audio: {e}")
+    return None
+
+
+async def get_cached_artwork(entity_type: str, entity_id: int) -> Optional[str]:
+    """دریافت آدرس کش شده کاور"""
+    try:
+        if entity_id:
+            data = await get_mirror(entity_type, str(entity_id), 'artworkUrl')
+            if data.get("mirrors", {}).get('artworkUrl', False):
+                cached_url = data["mirrors"]['artworkUrl']['url']
+                if cached_url and '<token>' in cached_url:
+                    file_id = cached_url.split('<token>/')[1]
+                    return file_id
+                return cached_url
+    except Exception as e:
+        logger.error(f"Error getting cached artwork: {e}")
+    return None
+
+
+async def get_cached_preview(track_id: int) -> Optional[str]:
+    """دریافت آدرس کش شده پیش‌نمایش"""
+    try:
+        if track_id:
+            data = await get_mirror('track', str(track_id), 'previewUrl')
+            if data.get("mirrors", {}).get('previewUrl', False):
+                cached_url = data["mirrors"]['previewUrl']['url']
+                if cached_url and '<token>' in cached_url:
+                    file_id = cached_url.split('<token>/')[1]
+                    return file_id
+                return cached_url
+    except Exception as e:
+        logger.error(f"Error getting cached preview: {e}")
+    return None
 
 
 async def get_cached_collection_tracks(collection_id: int) -> Optional[Dict[str, Any]]:
