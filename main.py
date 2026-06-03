@@ -1541,8 +1541,7 @@ async def show_settings_message(chat_id: int, user_id: int, message_to_delete: M
 
     settings_text = (
         f"⚙️ *تنظیمات ربات {BOT_NAME}*\n\n"
-        f"⚡ *حالت سریع:* {'فعال' if quick_mode else 'غیرفعال'}\n"
-        f"   ارسال خودکار اولین نتیجه جستجو\n\n"
+        f"⚡ *حالت سریع:* {'فعال' if quick_mode else 'غیرفعال'}\n\n"
         f"🎵 *کیفیت دانلود:* {quality_text}\n\n"
   
         f"🖼️ *نمایش کاور:* {'فعال' if show_artwork else 'غیرفعال'}\n\n"
