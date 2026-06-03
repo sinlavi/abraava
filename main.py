@@ -953,13 +953,12 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
     success_count = 0
     failed_tracks = []
     stopped_by_rate_limit = False
+    is_cancelled_by_user = False
 
     for track in tracks:
         if album_tracker.is_cancelled(user_id, collection_id):
-            await update_status_with_close(status_msg, f"⏹️ *دانلود آلبوم لغو شد*\n{album_tracker.get_progress_text(user_id, collection_id)}")
-            album_tracker.finish_download(user_id, collection_id, success_count, len(failed_tracks))
-            release_user_download_lock(user_id)
-            return
+            is_cancelled_by_user = True
+            break
 
         track_id = track.get('trackId')
         track_name = track.get('trackName', 'Unknown')
@@ -988,6 +987,40 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
                                        reply_markup=cancel_markup, no=True)
         await asyncio.sleep(1)
 
+    # اگر کاربر لغو کرده باشد، پیام جداگانه ارسال می‌شود
+    if is_cancelled_by_user:
+        # ارسال پیام در حال توقف
+        stopping_msg = await send_message(bot, chat_id, "⏹️ *در حال توقف دانلود آلبوم...*\nلطفاً چند لحظه صبر کنید...")
+        
+        # حذف پیام وضعیت قبلی
+        try:
+            await status_msg.delete()
+        except:
+            pass
+        
+        # ارسال پیام نهایی لغو
+        final_text = f"⏹️ *دانلود آلبوم {collection_name} لغو شد*\n\n"
+        final_text += f"🎵 *جمع کل:* {len(tracks)} قطعه\n"
+        final_text += f"✅ *موفق:* {success_count}\n"
+        if failed_tracks:
+            final_text += f"❌ *ناموفق:* {len(failed_tracks)}\n\n"
+            final_text += "⚠️ *قطعات دانلود شده:*\n"
+            for ft in failed_tracks[:10]:
+                final_text += f"🔸 {ft['name']}\n"
+        
+        await send_message(bot, chat_id, final_text)
+        
+        # حذف پیام در حال توقف
+        try:
+            await stopping_msg.delete()
+        except:
+            pass
+        
+        album_tracker.finish_download(user_id, collection_id, success_count, len(failed_tracks))
+        release_user_download_lock(user_id)
+        return
+
+    # ارسال پیام نهایی اتمام دانلود
     final_text = f"✅ *دانلود آلبوم {collection_name} به پایان رسید*\n\n"
     final_text += f"🎵 *جمع کل:* {len(tracks)} قطعه\n"
     final_text += f"✅ *موفق:* {success_count}\n"
@@ -1048,7 +1081,6 @@ async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
         
         markup.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
         
-        # فقط در pagination صفحه قبلی حذف می‌شود
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
                            owner_id=owner_id, artwork_url=artist_image, artist_id=artist_id, delete_old=is_pagination)
         await status_msg.delete()
@@ -1111,7 +1143,6 @@ async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
         
         artwork_url = get_high_res_artwork(collection_data.get("artworkUrl100"))
         
-        # فقط در pagination صفحه قبلی حذف می‌شود
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
                            artwork_url=artwork_url, cache_id=collection_id, owner_id=owner_id, delete_old=is_pagination)
         await status_msg.delete()
@@ -1154,7 +1185,6 @@ async def show_track_page(chat_id: int, track_id: int, message_to_edit: Optional
         
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
         
-        # برای صفحه آهنگ، صفحه قبلی حذف نمی‌شود
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup, artwork_url=artwork_url,
                            cache_id=track.get('collectionId'), owner_id=owner_id, delete_old=False)
         await status_msg.delete()
@@ -1228,7 +1258,6 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
                    InlineKeyboardButton("🔍 هنرمندان", f"refine:artist:{refine_term}"),
                    InlineKeyboardButton("🔍 آهنگ‌ها", f"refine:track:{refine_term}")])
 
-    # فقط در pagination صفحه قبلی حذف می‌شود
     await edit_or_send(bot, chat_id, message_to_edit, header, markup=markup, owner_id=owner_id, delete_old=is_pagination)
 
 
@@ -1257,14 +1286,13 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
                                      'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
         except Exception as e:
             logger.error(f"Failed to send photo: {e}")
-            msg = await send_message(bot, chat_id, text=text, reply_markup=markup,no=True)
+            msg = await send_message(bot, chat_id, text=text, reply_markup=markup, no=True)
     else:
         msg = await send_message(bot, chat_id, text, reply_markup=markup)
 
     if owner_id and msg and msg.chat.type in ["group", "supergroup"]:
         set_message_owner(msg.id, owner_id)
 
-    # فقط زمانی که delete_old=True باشد، پیام قبلی حذف می‌شود (بعد از ارسال پیام جدید)
     if message_to_edit and delete_old:
         try:
             if message_to_edit.id in MESSAGE_OWNER:
@@ -1796,8 +1824,8 @@ async def on_callback(callback_query: CallbackQuery):
                 await bot.answer_callback_query(callback_query.id, "❌ شما مالک نیستید", show_alert=True)
                 return
             album_tracker.cancel_download(owner_id_from_cb, collection_id)
-            await update_status_with_close(callback_query.message, "⏹️ *در حال توقف دانلود آلبوم...*")
-            await bot.answer_callback_query(callback_query.id)
+            # پاسخ به callback تا کاربر بداند لغو شروع شده
+            await bot.answer_callback_query(callback_query.id, "⏹️ در حال توقف دانلود آلبوم...")
         return
 
     try:
@@ -1811,7 +1839,6 @@ async def on_callback(callback_query: CallbackQuery):
                 if is_group and cached["owner_id"] != user_id:
                     await bot.answer_callback_query(callback_query.id, "❌ مالک شما نیستید", show_alert=True)
                     return
-                # Pagination در صفحه جستجو - صفحه قبلی حذف می‌شود
                 await send_search_page(chat_id, cached["type"], cached["term"], cached["results"], page,
                                        callback_query.message, owner_id=cached["owner_id"], is_pagination=True)
             else:
@@ -1819,23 +1846,19 @@ async def on_callback(callback_query: CallbackQuery):
         elif data.startswith("refine:"):
             entity = parts[1]
             term = parts[2]
-            # Refine - صفحه قبلی حذف نمی‌شود
             await handle_search_command(chat_id, user_id, entity, term, owner_id=user_id)
         elif data.startswith("artist:"):
             artist_id = int(parts[1])
             page = int(parts[2]) if len(parts) > 2 else 1
-            # بررسی می‌کنیم که آیا این یک درخواست pagination است یا خیر
             is_pagination = len(parts) > 2 and parts[2].isdigit() and page > 1
             await show_artist_page(chat_id, artist_id, page, callback_query.message, user_id, is_pagination=is_pagination)
         elif data.startswith("collection:"):
             collection_id = int(parts[1])
             page = int(parts[2]) if len(parts) > 2 else 1
-            # بررسی می‌کنیم که آیا این یک درخواست pagination است یا خیر
             is_pagination = len(parts) > 2 and parts[2].isdigit() and page > 1
             await show_collection_page(chat_id, collection_id, page, callback_query.message, user_id, is_pagination=is_pagination)
         elif data.startswith("track:"):
             track_id = int(parts[1])
-            # صفحه آهنگ - صفحه قبلی حذف نمی‌شود
             await show_track_page(chat_id, track_id, callback_query.message, user_id)
         elif data.startswith("download:"):
             track_id = int(parts[1])
