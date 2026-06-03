@@ -320,8 +320,31 @@ async def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
+
+async def get_all_channel_members(channel_id: int) -> List[int]:
+    """Get all member IDs from a channel (using get_chat_members iteratively)"""
+    member_ids = []
+    try:
+        offset = 0
+        limit = 200
+        while True:
+            members = await bot.get_chat_members(channel_id, offset=offset, limit=limit)
+            if not members:
+                break
+            for member in members:
+                if not member.user.is_bot:
+                    member_ids.append(member.user.id)
+            offset += limit
+            await asyncio.sleep(0.5)  # Avoid rate limiting
+            if len(members) < limit:
+                break
+    except Exception as e:
+        logger.error(f"Failed to get channel members: {e}")
+    return member_ids
+
+
 async def process_broadcast_message(message: Message):
-    """Process messages from broadcast channels and forward to all users"""
+    """Process messages from broadcast channels and forward to info channel members"""
     # Only process channel messages
     if message.chat.type != "channel":
         return
@@ -337,7 +360,7 @@ async def process_broadcast_message(message: Message):
 
     broadcast_channels = result.get('data', [])
 
-    # Check if this channel is registered for broadcasting (by channel_id)
+    # Check if this channel is registered for broadcasting
     is_broadcast_channel = False
     channel_config = None
 
@@ -367,28 +390,28 @@ async def process_broadcast_message(message: Message):
     if not should_broadcast:
         return
 
-    # Get all active users
-    users_result = await api_client.get_active_users()
-    if not users_result.get('success'):
-        logger.error("Failed to get active users for broadcast")
+    # Get all users from INFO_CHANNEL members (instead of API)
+    if not INFO_CHANNEL_ID:
+        logger.error("INFO_CHANNEL_ID not set")
+        return
+    
+    users = await get_all_channel_members(INFO_CHANNEL_ID)
+    
+    if not users:
+        logger.error("No members found in info channel")
         return
 
-    users = users_result.get('data', [])
-
-    # Send to all users
+    # Send to all channel members
     successful = 0
     failed = 0
 
-    for user in users:
+    for user_id in users:
         try:
-            user_id = user.get('id')
-            if user_id:
-                # Forward the message
-                await bot.forward_message(chat_id=user_id, message_id=message.id, from_chat_id=message.chat.id)
-                successful += 1
-                await asyncio.sleep(0.05)  # Small delay to avoid rate limiting
+            await bot.forward_message(chat_id=user_id, message_id=message.id, from_chat_id=message.chat.id)
+            successful += 1
+            await asyncio.sleep(0.05)  # Small delay to avoid rate limiting
         except Exception as e:
-            logger.error(f"Failed to send broadcast to user {user.get('user_id')}: {e}")
+            logger.error(f"Failed to send broadcast to user {user_id}: {e}")
             failed += 1
 
     # Log broadcast
@@ -401,8 +424,7 @@ async def process_broadcast_message(message: Message):
         failed=failed
     )
 
-    logger.info(f"Broadcast sent: {successful} successful, {failed} failed")
-
+    logger.info(f"Broadcast sent: {successful} successful, {failed} failed to {len(users)} members")
 
 # ============================================================================
 # Admin Broadcast Commands (Simple Version)
