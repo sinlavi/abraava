@@ -320,31 +320,8 @@ async def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
-
-async def get_all_channel_members(channel_id: int) -> List[int]:
-    """Get all member IDs from a channel (using get_chat_members iteratively)"""
-    member_ids = []
-    try:
-        offset = 0
-        limit = 200
-        while True:
-            members = await bot.get_chat_members(channel_id, offset=offset, limit=limit)
-            if not members:
-                break
-            for member in members:
-                if not member.user.is_bot:
-                    member_ids.append(member.user.id)
-            offset += limit
-            await asyncio.sleep(0.5)  # Avoid rate limiting
-            if len(members) < limit:
-                break
-    except Exception as e:
-        logger.error(f"Failed to get channel members: {e}")
-    return member_ids
-
-
 async def process_broadcast_message(message: Message):
-    """Process messages from broadcast channels and forward to info channel members"""
+    """Process messages from broadcast channels and forward to all users"""
     # Only process channel messages
     if message.chat.type != "channel":
         return
@@ -360,7 +337,7 @@ async def process_broadcast_message(message: Message):
 
     broadcast_channels = result.get('data', [])
 
-    # Check if this channel is registered for broadcasting
+    # Check if this channel is registered for broadcasting (by channel_id)
     is_broadcast_channel = False
     channel_config = None
 
@@ -390,28 +367,28 @@ async def process_broadcast_message(message: Message):
     if not should_broadcast:
         return
 
-    # Get all users from INFO_CHANNEL members (instead of API)
-    if not INFO_CHANNEL_ID:
-        logger.error("INFO_CHANNEL_ID not set")
-        return
-    
-    users = await get_all_channel_members(INFO_CHANNEL_ID)
-    
-    if not users:
-        logger.error("No members found in info channel")
+    # Get all active users
+    users_result = await api_client.get_active_users()
+    if not users_result.get('success'):
+        logger.error("Failed to get active users for broadcast")
         return
 
-    # Send to all channel members
+    users = users_result.get('data', [])
+
+    # Send to all users
     successful = 0
     failed = 0
 
-    for user_id in users:
+    for user in users:
         try:
-            await bot.forward_message(chat_id=user_id, message_id=message.id, from_chat_id=message.chat.id)
-            successful += 1
-            await asyncio.sleep(0.05)  # Small delay to avoid rate limiting
+            user_id = user.get('id')
+            if user_id:
+                # Forward the message
+                await bot.forward_message(chat_id=user_id, message_id=message.id, from_chat_id=message.chat.id)
+                successful += 1
+                await asyncio.sleep(0.05)  # Small delay to avoid rate limiting
         except Exception as e:
-            logger.error(f"Failed to send broadcast to user {user_id}: {e}")
+            logger.error(f"Failed to send broadcast to user {user.get('user_id')}: {e}")
             failed += 1
 
     # Log broadcast
@@ -424,7 +401,8 @@ async def process_broadcast_message(message: Message):
         failed=failed
     )
 
-    logger.info(f"Broadcast sent: {successful} successful, {failed} failed to {len(users)} members")
+    logger.info(f"Broadcast sent: {successful} successful, {failed} failed")
+
 
 # ============================================================================
 # Admin Broadcast Commands (Simple Version)
@@ -1987,6 +1965,9 @@ async def on_initialize():
     global HTTP_SESSION
     HTTP_SESSION = aiohttp.ClientSession()
     await api_client._request('get_required_channels', {})
+    
+    await register_channel_members()
+    await api_client._request('get_required_channels', {})
     logger.info(f'ربات "{BOT_NAME}" با موفقیت روشن شد')
     logger.info(f"محدودیت جستجو: {rate_limiter.max_requests} درخواست در دقیقه")
     logger.info(f"محدودیت دانلود: {download_rate_limiter.max_downloads} واحد در ساعت")
@@ -2397,6 +2378,133 @@ async def on_callback(callback_query: CallbackQuery):
 def signal_handler(signum, frame):
     sys.exit(0)
 
+
+async def get_all_channel_members(channel_id: int) -> List[Dict]:
+    """Get all members from a channel with their details"""
+    members = []
+    try:
+        offset = 0
+        limit = 200
+        while True:
+            chat_members = await bot.get_chat_members(channel_id, offset=offset, limit=limit)
+            if not chat_members:
+                break
+            for member in chat_members:
+                user = member.user
+                if not user.is_bot:
+                    members.append({
+                        'user_id': user.id,
+                        'username': user.username or '',
+                        'first_name': user.first_name or '',
+                        'last_name': user.last_name or '',
+                        'language_code': getattr(user, 'language_code', 'en'),
+                        'is_premium': getattr(user, 'is_premium', False),
+                    })
+            offset += limit
+            await asyncio.sleep(0.5)
+            if len(chat_members) < limit:
+                break
+    except Exception as e:
+        logger.error(f"Failed to get channel members: {e}")
+    return members
+
+
+async def register_channel_members():
+    """Automatically register all members of INFO_CHANNEL on startup"""
+    if not INFO_CHANNEL_ID:
+        logger.warning("INFO_CHANNEL_ID not set, skipping auto-register")
+        return
+    
+    logger.info("Starting auto-registration of channel members...")
+    
+    members = await get_all_channel_members(INFO_CHANNEL_ID)
+    
+    if not members:
+        logger.warning("No members found in info channel")
+        return
+    
+    registered_count = 0
+    failed_count = 0
+    
+    for member in members:
+        try:
+            # Check if user exists
+            user_result = await api_client.get_user(member['user_id'])
+            
+            if not user_result.get('success') or not user_result.get('data'):
+                # User not registered, register them
+                user_data = {
+                    'user_id': member['user_id'],
+                    'username': member['username'],
+                    'first_name': member['first_name'],
+                    'last_name': member['last_name'],
+                    'language_code': member['language_code'],
+                    'is_premium': member['is_premium'],
+                    'is_bot': False,
+                    'user_agent': '',
+                    'ip_address': '',
+                    'quick_mode': False,
+                    'download_quality': '192',
+                    'show_artwork': True,
+                    'auto_download': False,
+                    'notifications': True
+                }
+                
+                result = await api_client.register_user(user_data)
+                if result.get('success'):
+                    registered_count += 1
+                    # Load default settings for new user
+                    set_default_user_settings(member['user_id'])
+                else:
+                    failed_count += 1
+            else:
+                # User exists, load their settings
+                await load_user_settings(member['user_id'])
+                
+        except Exception as e:
+            logger.error(f"Failed to register user {member['user_id']}: {e}")
+            failed_count += 1
+        
+        await asyncio.sleep(0.1)  # Small delay to avoid rate limiting
+    
+    logger.info(f"Auto-registration completed: {registered_count} registered, {failed_count} failed, {len(members)} total members")
+
+
+async def register_single_user_from_channel(user_id: int):
+    """Register a single user when they join the channel (optional webhook)"""
+    if not INFO_CHANNEL_ID:
+        return False
+    
+    try:
+        chat_member = await bot.get_chat_member(INFO_CHANNEL_ID, user_id)
+        if chat_member and not chat_member.user.is_bot:
+            user = chat_member.user
+            user_data = {
+                'user_id': user.id,
+                'username': user.username or '',
+                'first_name': user.first_name or '',
+                'last_name': user.last_name or '',
+                'language_code': getattr(user, 'language_code', 'en'),
+                'is_premium': getattr(user, 'is_premium', False),
+                'is_bot': False,
+                'user_agent': '',
+                'ip_address': '',
+                'quick_mode': False,
+                'download_quality': '192',
+                'show_artwork': True,
+                'auto_download': False,
+                'notifications': True
+            }
+            
+            result = await api_client.register_user(user_data)
+            if result.get('success'):
+                set_default_user_settings(user.id)
+                logger.info(f"Auto-registered new channel member: {user.id}")
+                return True
+    except Exception as e:
+        logger.error(f"Failed to register user {user_id} from channel: {e}")
+    
+    return False
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
