@@ -793,8 +793,8 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
         InlineKeyboardButton(
             text="📂 نمایش در مینی اپ",
             web_app="https://player.abraava.ir?id=" + str(track_id)
-        ),
-        InlineKeyboardButton(
+        )],
+        [InlineKeyboardButton(
             text="📋 کپی پیوند",
             copy_text="https://player.abraava.ir?id=" + str(track_id)
         )
@@ -895,7 +895,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                 InlineKeyboardButton(
                     text="📂 نمایش در مینی اپ",
                     web_app="https://player.abraava.ir?id=" + str(track_id)
-                ),
+                )],[
                 InlineKeyboardButton(
                     text="📋 کپی پیوند",
                     copy_text="https://player.abraava.ir?id=" + str(track_id)
@@ -1543,7 +1543,7 @@ async def show_settings_message(chat_id: int, user_id: int, message_to_delete: M
         f"⚙️ *تنظیمات ربات {BOT_NAME}*\n\n"
         f"⚡ *حالت سریع:* {'فعال' if quick_mode else 'غیرفعال'}\n"
         f"   ارسال خودکار اولین نتیجه جستجو\n\n"
-        f"🎵 *کیفیت دانلود:* {quality_text}\n"
+        f"🎵 *کیفیت دانلود:* {quality_text}\n\n"
   
         f"🖼️ *نمایش کاور:* {'فعال' if show_artwork else 'غیرفعال'}\n\n"
         f"⚡ *دانلود خودکار:* {'فعال' if auto_download else 'غیرفعال'}\n\n"
