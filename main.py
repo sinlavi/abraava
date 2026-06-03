@@ -2119,11 +2119,30 @@ async def on_callback(callback_query: CallbackQuery):
                 await bot.answer_callback_query(callback_query.id, "❌ دانلود آلبوم در گروه ممنوع", show_alert=True)
                 return
             
-            # قبل از دانلود آلبوم، کیفیت را می‌پرسیم
-            collection_data = await get_or_crawl_collection(collection_id, None, False)
-            collection_name = collection_data['results'][0].get('collectionName', 'آلبوم') if collection_data else 'آلبوم'
-            await ask_quality_simple(chat_id, is_album=True, collection_id=collection_id, collection_name=collection_name)
-            await bot.answer_callback_query(callback_query.id, "🎵 کیفیت مورد نظر را انتخاب کنید")
+            # Check user's quality setting
+            quality_setting = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
+            
+            # If quality is set to "ask", show the quality selection dialog
+            if quality_setting == DownloadQuality.ASK:
+                collection_data = await get_or_crawl_collection(collection_id, None, False)
+                collection_name = collection_data['results'][0].get('collectionName', 'آلبوم') if collection_data else 'آلبوم'
+                await ask_quality_simple(chat_id, is_album=True, collection_id=collection_id, collection_name=collection_name)
+                await bot.answer_callback_query(callback_query.id, "🎵 کیفیت مورد نظر را انتخاب کنید")
+            else:
+                # Use the user's default quality without asking
+                await bot.answer_callback_query(callback_query.id, f"📀 در حال آماده‌سازی دانلود آلبوم...")
+                
+                collection_data = await get_or_crawl_collection(collection_id, None, False)
+                tracks_data = await get_or_crawl_collection_tracks(collection_id)
+                tracks = tracks_data["results"] if tracks_data else []
+                
+                if not tracks:
+                    await send_message(bot, chat_id, "❌ قطعه‌ای یافت نشد")
+                    return
+                
+                collection_name = collection_data['results'][0].get('collectionName', 'آلبوم') if collection_data else 'آلبوم'
+                status_msg = await send_message(bot, chat_id, f"🎵 *شروع دانلود آلبوم: {collection_name}*")
+                asyncio.create_task(download_and_send_album(bot, chat_id, collection_id, user_id, collection_name, tracks, status_msg))
 
         elif data.startswith("preview:"):
             track_id = int(parts[1])
