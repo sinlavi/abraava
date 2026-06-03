@@ -44,6 +44,8 @@ class DownloadQuality(Enum):
 user_download_quality = {}  # user_id -> DownloadQuality
 user_show_artwork = {}  # user_id -> bool (default True)
 user_quick_mode = {}  # user_id -> bool (default False)
+user_auto_download = {}  # user_id -> bool (default False) - Auto download on search
+user_notifications = {}  # user_id -> bool (default True) - Receive notifications
 
 # ============================================================================
 # Bale Upload Error Notification System
@@ -235,6 +237,12 @@ class APIClient:
     
     async def update_show_artwork(self, user_id: int, show: bool) -> Dict:
         return await self._request('update_show_artwork', {'user_id': user_id, 'show': show})
+    
+    async def update_auto_download(self, user_id: int, enabled: bool) -> Dict:
+        return await self._request('update_auto_download', {'user_id': user_id, 'enabled': enabled})
+    
+    async def update_notifications(self, user_id: int, enabled: bool) -> Dict:
+        return await self._request('update_notifications', {'user_id': user_id, 'enabled': enabled})
     
     async def get_user_settings(self, user_id: int) -> Dict:
         return await self._request('get_user_settings', {'user_id': user_id})
@@ -546,6 +554,8 @@ async def register_user(message: Message):
             settings = settings_result.get('data', {})
             user_quick_mode[user.id] = settings.get('quick_mode', False)
             user_show_artwork[user.id] = settings.get('show_artwork', True)
+            user_auto_download[user.id] = settings.get('auto_download', False)
+            user_notifications[user.id] = settings.get('notifications', True)
             quality_str = settings.get('download_quality', '192')
             try:
                 user_download_quality[user.id] = DownloadQuality(quality_str)
@@ -556,6 +566,8 @@ async def register_user(message: Message):
         user_quick_mode[user.id] = False
         user_download_quality[user.id] = DownloadQuality.MEDIUM
         user_show_artwork[user.id] = True
+        user_auto_download[user.id] = False
+        user_notifications[user.id] = True
 
 
 # ============================================================================
@@ -606,8 +618,12 @@ async def process_broadcast_message(message: Message):
     failed = 0
 
     for user in users:
+        user_id = user['id']
+        # Skip users who disabled notifications
+        if not user_notifications.get(user_id, True):
+            continue
         try:
-            await bot.forward_message(chat_id=user['id'], message_id=message.id, from_chat_id=message.chat.id)
+            await bot.forward_message(chat_id=user_id, message_id=message.id, from_chat_id=message.chat.id)
             successful += 1
             await asyncio.sleep(0.05)
         except Exception as e:
@@ -770,8 +786,12 @@ async def quick_search_and_send(bot: Client, chat_id: int, user_id: int, term: s
             track = results["results"][0]
             track_id = track.get('trackId')
             if track_id:
-                await show_track_page(chat_id, track_id, original_message, user_id)
-                await status_msg.delete()
+                if user_auto_download.get(user_id, False):
+                    asyncio.create_task(download_and_send_single_track(bot, chat_id, track_id, user_id))
+                    await status_msg.delete()
+                else:
+                    await show_track_page(chat_id, track_id, original_message, user_id)
+                    await status_msg.delete()
                 await api_client.log_search(user_id, 'quick', term, 1)
             else:
                 await send_error_with_retry(bot, chat_id, f"نتیجه‌ای برای '{term}' یافت نشد.",
@@ -1486,21 +1506,27 @@ async def show_user_stats(user_id: int, chat_id: int, message_id: int = None):
     downloads_remaining = download_rate_limiter.get_remaining(user_id)
     current_quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
     show_artwork = user_show_artwork.get(user_id, True)
+    auto_download = user_auto_download.get(user_id, False)
+    notifications = user_notifications.get(user_id, True)
 
     user_data = await api_client.get_user(user_id)
     total_searches = user_data.get('data', {}).get('total_searches', 0) if user_data.get('success') else 0
     total_downloads = user_data.get('data', {}).get('total_downloads', 0) if user_data.get('success') else 0
 
     stats_text = (
-        f"📊 *آمار شما*\n\n"
-        f"درخواست‌های جستجوی باقی‌مانده: {remaining}/{rate_limiter.max_requests}\n"
-        f"دانلودهای باقی‌مانده: {downloads_remaining}/{download_rate_limiter.max_downloads}\n"
-        f"حالت سریع: {'✅ فعال' if quick_mode else '❌ غیرفعال'}\n"
-        f"کیفیت دانلود: {current_quality.value} کیلوبیت بر ثانیه\n"
-        f"نمایش کاور: {'✅ فعال' if show_artwork else '❌ غیرفعال'}\n"
-        f"\n📈 *آمار کلی:*\n"
-        f"جستجوها: {total_searches}\n"
-        f"دانلودها: {total_downloads}"
+        f"📊 *آمار و تنظیمات شما*\n\n"
+        f"🔍 *محدودیت‌ها:*\n"
+        f"┣ جستجوی باقی‌مانده: {remaining}/{rate_limiter.max_requests}\n"
+        f"┗ دانلود باقی‌مانده: {downloads_remaining}/{download_rate_limiter.max_downloads}\n\n"
+        f"⚙️ *تنظیمات فعال:*\n"
+        f"┣ حالت سریع: {'✅' if quick_mode else '❌'}\n"
+        f"┣ کیفیت دانلود: {current_quality.value} kbps\n"
+        f"┣ نمایش کاور: {'✅' if show_artwork else '❌'}\n"
+        f"┣ دانلود خودکار: {'✅' if auto_download else '❌'}\n"
+        f"┗ دریافت اعلان: {'✅' if notifications else '❌'}\n\n"
+        f"📈 *آمار کلی:*\n"
+        f"┣ جستجوها: {total_searches}\n"
+        f"┗ دانلودها: {total_downloads}"
     )
     
     markup = [[InlineKeyboardButton(text="🔙 بازگشت به تنظیمات", callback_data="back_to_settings")]]
@@ -1574,6 +1600,178 @@ async def parse_search_query(text: str) -> Optional[tuple[str, str]]:
 
 
 # ============================================================================
+# Settings Message Functions
+# ============================================================================
+async def show_settings_message(chat_id: int, user_id: int):
+    quick_mode = user_quick_mode.get(user_id, False)
+    quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
+    show_artwork = user_show_artwork.get(user_id, True)
+    auto_download = user_auto_download.get(user_id, False)
+    notifications = user_notifications.get(user_id, True)
+    
+    quality_emoji = {
+        DownloadQuality.HIGH: "🎵",
+        DownloadQuality.MEDIUM: "🎶",
+        DownloadQuality.LOW: "🎧"
+    }.get(quality, "🎶")
+    
+    settings_text = (
+        f"⚙️ *تنظیمات ربات {BOT_NAME}*\n\n"
+        f"🔹 *حالت سریع:* {'فعال' if quick_mode else 'غیرفعال'}\n"
+        f"   ارسال خودکار اولین نتیجه جستجو\n\n"
+        f"🔹 *کیفیت دانلود:* {quality_emoji} {quality.value} kbps\n"
+        f"   کیفیت بالاتر = حجم بیشتر\n\n"
+        f"🔹 *نمایش کاور:* {'فعال' if show_artwork else 'غیرفعال'}\n"
+        f"   { 'نمایش تصاویر آلبوم' if show_artwork else 'افزایش سرعت' }\n\n"
+        f"🔹 *دانلود خودکار:* {'فعال' if auto_download else 'غیرفعال'}\n"
+        f"   { 'دانلود فوری پس از جستجو' if auto_download else 'نمایش اطلاعات قبل از دانلود' }\n\n"
+        f"🔹 *دریافت اعلان:* {'فعال' if notifications else 'غیرفعال'}\n"
+        f"   { 'دریافت پیام‌های اطلاع‌رسانی' if notifications else 'عدم دریافت پیام‌های اطلاع‌رسانی' }\n\n"
+        f"📊 برای مشاهده آمار دقیق، روی دکمه «آمار من» کلیک کنید."
+    )
+    
+    markup = [
+        [InlineKeyboardButton(
+            text=f"{'✅' if quick_mode else '❌'} حالت سریع", 
+            callback_data="toggle_quick_mode"
+        )],
+        [InlineKeyboardButton(
+            text=f"{quality_emoji} کیفیت دانلود ({quality.value}kbps)", 
+            callback_data="show_quality_menu"
+        )],
+        [InlineKeyboardButton(
+            text=f"{'🖼️✅' if show_artwork else '🚫🖼️'} نمایش کاور", 
+            callback_data="toggle_artwork"
+        )],
+        [InlineKeyboardButton(
+            text=f"{'⚡✅' if auto_download else '⚡❌'} دانلود خودکار", 
+            callback_data="toggle_auto_download"
+        )],
+        [InlineKeyboardButton(
+            text=f"{'🔔✅' if notifications else '🔕❌'} دریافت اعلان", 
+            callback_data="toggle_notifications"
+        )],
+        [InlineKeyboardButton(text="📊 آمار من", callback_data="show_stats")],
+        [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
+    ]
+    
+    await send_message(bot, chat_id, settings_text, reply_markup=markup)
+
+
+async def update_settings_message(callback_query: CallbackQuery, user_id: int):
+    quick_mode = user_quick_mode.get(user_id, False)
+    quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
+    show_artwork = user_show_artwork.get(user_id, True)
+    auto_download = user_auto_download.get(user_id, False)
+    notifications = user_notifications.get(user_id, True)
+    
+    quality_emoji = {
+        DownloadQuality.HIGH: "🎵",
+        DownloadQuality.MEDIUM: "🎶",
+        DownloadQuality.LOW: "🎧"
+    }.get(quality, "🎶")
+    
+    settings_text = (
+        f"⚙️ *تنظیمات ربات {BOT_NAME}*\n\n"
+        f"🔹 *حالت سریع:* {'فعال' if quick_mode else 'غیرفعال'}\n"
+        f"   ارسال خودکار اولین نتیجه جستجو\n\n"
+        f"🔹 *کیفیت دانلود:* {quality_emoji} {quality.value} kbps\n"
+        f"   کیفیت بالاتر = حجم بیشتر\n\n"
+        f"🔹 *نمایش کاور:* {'فعال' if show_artwork else 'غیرفعال'}\n"
+        f"   { 'نمایش تصاویر آلبوم' if show_artwork else 'افزایش سرعت' }\n\n"
+        f"🔹 *دانلود خودکار:* {'فعال' if auto_download else 'غیرفعال'}\n"
+        f"   { 'دانلود فوری پس از جستجو' if auto_download else 'نمایش اطلاعات قبل از دانلود' }\n\n"
+        f"🔹 *دریافت اعلان:* {'فعال' if notifications else 'غیرفعال'}\n"
+        f"   { 'دریافت پیام‌های اطلاع‌رسانی' if notifications else 'عدم دریافت پیام‌های اطلاع‌رسانی' }\n\n"
+        f"📊 برای مشاهده آمار دقیق، روی دکمه «آمار من» کلیک کنید."
+    )
+    
+    markup = [
+        [InlineKeyboardButton(
+            text=f"{'✅' if quick_mode else '❌'} حالت سریع", 
+            callback_data="toggle_quick_mode"
+        )],
+        [InlineKeyboardButton(
+            text=f"{quality_emoji} کیفیت دانلود ({quality.value}kbps)", 
+            callback_data="show_quality_menu"
+        )],
+        [InlineKeyboardButton(
+            text=f"{'🖼️✅' if show_artwork else '🚫🖼️'} نمایش کاور", 
+            callback_data="toggle_artwork"
+        )],
+        [InlineKeyboardButton(
+            text=f"{'⚡✅' if auto_download else '⚡❌'} دانلود خودکار", 
+            callback_data="toggle_auto_download"
+        )],
+        [InlineKeyboardButton(
+            text=f"{'🔔✅' if notifications else '🔕❌'} دریافت اعلان", 
+            callback_data="toggle_notifications"
+        )],
+        [InlineKeyboardButton(text="📊 آمار من", callback_data="show_stats")],
+        [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
+    ]
+    
+    try:
+        await bot.edit_message_caption(
+            chat_id=callback_query.message.chat.id,
+            message_id=callback_query.message.id,
+            caption=settings_text,
+            reply_markup=InlineKeyboard(markup)
+        )
+    except:
+        await bot.edit_message_text(
+            chat_id=callback_query.message.chat.id,
+            message_id=callback_query.message.id,
+            text=settings_text,
+            reply_markup=InlineKeyboard(markup)
+        )
+
+
+async def show_quality_menu(callback_query: CallbackQuery, user_id: int):
+    current_quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
+    
+    quality_text = (
+        "🎵 *انتخاب کیفیت دانلود*\n\n"
+        "کیفیت بالاتر = حجم فایل بیشتر و کیفیت صدای بهتر\n\n"
+        "📊 *راهنمای کیفیت:*\n"
+        "• ۳۲۰ kbps - کیفیت استودیویی (حجم بالا)\n"
+        "• ۱۹۲ kbps - کیفیت عالی (مناسب اکثر کاربران)\n"
+        "• ۱۲۸ kbps - کیفیت خوب (حجم کمتر)"
+    )
+    
+    markup = [
+        [InlineKeyboardButton(
+            text=f"{'✅ ' if current_quality == DownloadQuality.HIGH else ''}🎵 ۳۲۰ kbps (بالاترین کیفیت)",
+            callback_data="set_quality:320"
+        )],
+        [InlineKeyboardButton(
+            text=f"{'✅ ' if current_quality == DownloadQuality.MEDIUM else ''}🎶 ۱۹۲ kbps (کیفیت عالی)",
+            callback_data="set_quality:192"
+        )],
+        [InlineKeyboardButton(
+            text=f"{'✅ ' if current_quality == DownloadQuality.LOW else ''}🎧 ۱۲۸ kbps (حجم کمتر)",
+            callback_data="set_quality:128"
+        )],
+        [InlineKeyboardButton(text="🔙 بازگشت به تنظیمات", callback_data="back_to_settings")],
+    ]
+    
+    try:
+        await bot.edit_message_caption(
+            chat_id=callback_query.message.chat.id,
+            message_id=callback_query.message.id,
+            caption=quality_text,
+            reply_markup=InlineKeyboard(markup)
+        )
+    except:
+        await bot.edit_message_text(
+            chat_id=callback_query.message.chat.id,
+            message_id=callback_query.message.id,
+            text=quality_text,
+            reply_markup=InlineKeyboard(markup)
+        )
+
+
+# ============================================================================
 # Bale Bot Initialization & Handlers
 # ============================================================================
 bot = Client(token=BOT_TOKEN)
@@ -1584,7 +1782,7 @@ async def on_initialize():
     global HTTP_SESSION
     HTTP_SESSION = aiohttp.ClientSession()
     await api_client._request('get_required_channels', {})
-    logger.info(f"Bot started")
+    logger.info(f"Bot started with enhanced settings")
     asyncio.create_task(cleanup_caches())
     asyncio.create_task(clear_expired_cache())
 
@@ -1662,40 +1860,52 @@ async def handle_message(message):
     if msg_text.startswith("/start"):
         welcome_text = (
             f"🎵 *به ربات موسیقی {BOT_NAME} خوش آمدید*\n\n"
-            f"من اینجام تا آهنگ‌های مورد علاقت رو برات پیدا کنم و بفرستم.\n"
-            f"فقط کافیه اسم آهنگ رو بگی، خودم بلدم چیکار کنم 😉\n\n"
-            f"⚡ *حالت سریع:* برای دانلود خودکار اولین نتیجه، از `/quick [نام آهنگ]` استفاده کنید.\n"
-            f"📀 *دانلود آلبوم:* برای دانلود تمام آهنگ‌های یک آلبوم، از گزینه «دانلود کل آلبوم» در صفحه آلبوم استفاده کنید.\n"
-            f"🖼️ *نمایش کاور:* می‌توانید نمایش کاور آلبوم را در تنظیمات غیرفعال کنید تا سرعت بالاتری داشته باشید.\n"
-            f"🔧 *تنظیمات:* برای تنظیم حالت سریع، کیفیت دانلود و نمایش کاور از `/settings` استفاده کنید."
+            f"من اینجام تا آهنگ‌های مورد علاقت رو برات پیدا کنم و بفرستم.\n\n"
+            f"✨ *امکانات ربات:*\n"
+            f"• جستجو در آیتونز و دانلود از یوتیوب موزیک\n"
+            f"• قابلیت دانلود آلبوم به صورت یکجا\n"
+            f"• تنظیم کیفیت دانلود (۳۲۰/۱۹۲/۱۲۸ kbps)\n"
+            f"• حالت سریع و دانلود خودکار\n"
+            f"• غیرفعال کردن کاور آلبوم برای افزایش سرعت\n\n"
+            f"🔧 برای تنظیمات از `/settings` استفاده کنید.\n"
+            f"📊 برای مشاهده آمار از `/stats` استفاده کنید.\n"
+            f"🆘 برای راهنما از `/help` استفاده کنید."
         )
         if INFO_CHANNEL_ID:
-            welcome_text += f"\n\n📢 *برای اطلاع از آخرین اخبار در کانال ما عضو شوید:* \n\nble.ir/join/4T95Zt7P5X"
+            welcome_text += f"\n\n📢 *کانال اطلاع‌رسانی:* ble.ir/join/4T95Zt7P5X"
         await reply_message(message, welcome_text)
 
     elif msg_text.startswith("/help"):
         await reply_message(message,
-                            f"🛠 *راهنمای استفاده از {BOT_NAME}*\n\n"
-                            "برای جستجوی موزیک کافیست نام آن را (به انگلیسی) بنویسید یا از دستور /search استفاده کنید.\n"
-                            "مثال: `Mohsen Namjoo`\n\n"
-                            "⚡ *حالت سریع:* `/quick نام آهنگ`\n\n"
-                            "🎵 *دستورات اختصاصی:*\n"
-                            "`/track` - جستجوی آهنگ\n"
-                            "`/album` - جستجوی آلبوم\n"
-                            "`/artist` - جستجوی هنرمند\n\n"
-                            "📀 *دانلود آلبوم:* پس از جستجوی آلبوم، روی دکمه «دانلود کل آلبوم» کلیک کنید.\n\n"
-                            f"@{bot.user.username} Mohsen Namjoo\n\n"
-                            f"🔒 محدودیت: {rate_limiter.max_requests} جستجو در دقیقه، {download_rate_limiter.max_downloads} دانلود در ساعت"
-                            )
+            f"🛠 *راهنمای استفاده از {BOT_NAME}*\n\n"
+            f"🔍 *جستجو:*\n"
+            f"• `/search [نام]` - جستجوی عمومی\n"
+            f"• `/track [نام]` - جستجوی آهنگ\n"
+            f"• `/album [نام]` - جستجوی آلبوم\n"
+            f"• `/artist [نام]` - جستجوی هنرمند\n"
+            f"• `/quick [نام]` - دانلود سریع اولین نتیجه\n\n"
+            f"⚙️ *تنظیمات:*\n"
+            f"• `/settings` - تنظیمات ربات\n"
+            f"• `/stats` - آمار کاربری\n\n"
+            f"💡 *نکات:*\n"
+            f"• در گروه‌ها حتما ربات را تگ کنید\n"
+            f"• محدودیت: {rate_limiter.max_requests} جستجو در دقیقه\n"
+            f"• محدودیت: {download_rate_limiter.max_downloads} دانلود در ساعت"
+        )
 
     elif msg_text.startswith("/about"):
         await reply_message(message,
-                            f"ℹ️ *درباره ربات {BOT_NAME}*\n\n"
-                            f"جستجو در iTunes و دانلود با کیفیت از YouTube Music\n"
-                            f"قابلیت دانلود آلبوم به صورت یکجا\n"
-                            f"قابلیت تنظیم کیفیت دانلود (۳۲۰، ۱۹۲، ۱۲۸ kbps)\n"
-                            f"قابلیت غیرفعال کردن کاور آلبوم برای افزایش سرعت"
-                            )
+            f"ℹ️ *درباره {BOT_NAME}*\n\n"
+            f"ربات دانلود موزیک با قابلیت جستجو در iTunes و دانلود از YouTube Music\n\n"
+            f"✨ *ویژگی‌ها:*\n"
+            f"• دانلود با کیفیت ۳۲۰/۱۹۲/۱۲۸ kbps\n"
+            f"• دانلود آلبوم به صورت یکجا\n"
+            f"• تگ‌گذاری خودکار (کاور و اطلاعات)\n"
+            f"• قابلیت غیرفعال کردن کاور برای سرعت بیشتر\n"
+            f"• دانلود خودکار در حالت سریع\n\n"
+            f"📝 *نسخه:* 2.0\n"
+            f"👨‍💻 *توسعه:* ابرآوا"
+        )
 
     elif msg_text.startswith("/settings"):
         await show_settings_message(chat_id, user_id)
@@ -1711,65 +1921,6 @@ async def handle_message(message):
                 await quick_search_and_send(bot, chat_id, user_id, term, message)
             else:
                 await handle_search_command(chat_id, user_id, type_, term, message, user_id)
-
-
-async def show_settings_message(chat_id: int, user_id: int):
-    current_mode = user_quick_mode.get(user_id, False)
-    current_quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
-    show_artwork = user_show_artwork.get(user_id, True)
-    
-    mode_status = "✅ فعال" if current_mode else "❌ غیرفعال"
-    quality_text = {
-        DownloadQuality.HIGH: "۳۲۰ kbps",
-        DownloadQuality.MEDIUM: "۱۹۲ kbps",
-        DownloadQuality.LOW: "۱۲۸ kbps"
-    }.get(current_quality, "۱۹۲ kbps")
-    artwork_status = "✅ فعال" if show_artwork else "❌ غیرفعال"
-    
-    markup = [
-        [InlineKeyboardButton(text=f"⚡ حالت سریع: {mode_status}", callback_data="toggle_quick_mode")],
-        [InlineKeyboardButton(text=f"🎵 کیفیت دانلود: {quality_text}", callback_data="show_quality_menu")],
-        [InlineKeyboardButton(text=f"🖼️ نمایش کاور: {artwork_status}", callback_data="toggle_artwork")],
-        [InlineKeyboardButton(text="📊 آمار من", callback_data="show_stats")],
-    ]
-    
-    await send_message(bot, chat_id, "⚙️ *تنظیمات ربات*\n\nبرای تغییر هر گزینه روی دکمه مربوطه کلیک کنید:", reply_markup=markup)
-
-
-async def update_settings_message(callback_query: CallbackQuery, user_id: int):
-    current_mode = user_quick_mode.get(user_id, False)
-    current_quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
-    show_artwork = user_show_artwork.get(user_id, True)
-    
-    mode_status = "✅ فعال" if current_mode else "❌ غیرفعال"
-    quality_text = {
-        DownloadQuality.HIGH: "۳۲۰ kbps",
-        DownloadQuality.MEDIUM: "۱۹۲ kbps",
-        DownloadQuality.LOW: "۱۲۸ kbps"
-    }.get(current_quality, "۱۹۲ kbps")
-    artwork_status = "✅ فعال" if show_artwork else "❌ غیرفعال"
-    
-    markup = [
-        [InlineKeyboardButton(text=f"⚡ حالت سریع: {mode_status}", callback_data="toggle_quick_mode")],
-        [InlineKeyboardButton(text=f"🎵 کیفیت دانلود: {quality_text}", callback_data="show_quality_menu")],
-        [InlineKeyboardButton(text=f"🖼️ نمایش کاور: {artwork_status}", callback_data="toggle_artwork")],
-        [InlineKeyboardButton(text="📊 آمار من", callback_data="show_stats")],
-    ]
-    
-    try:
-        await bot.edit_message_caption(
-            chat_id=callback_query.message.chat.id,
-            message_id=callback_query.message.id,
-            caption="⚙️ *تنظیمات ربات*\n\nبرای تغییر هر گزینه روی دکمه مربوطه کلیک کنید:",
-            reply_markup=InlineKeyboard(markup)
-        )
-    except:
-        await bot.edit_message_text(
-            chat_id=callback_query.message.chat.id,
-            message_id=callback_query.message.id,
-            text="⚙️ *تنظیمات ربات*\n\nبرای تغییر هر گزینه روی دکمه مربوطه کلیک کنید:",
-            reply_markup=InlineKeyboard(markup)
-        )
 
 
 # ============================================================================
@@ -1796,6 +1947,7 @@ async def on_callback(callback_query: CallbackQuery):
             pass
         return
 
+    # Settings toggles
     if data == "toggle_quick_mode":
         current = user_quick_mode.get(user_id, False)
         user_quick_mode[user_id] = not current
@@ -1810,32 +1962,26 @@ async def on_callback(callback_query: CallbackQuery):
         await update_settings_message(callback_query, user_id)
         return
     
+    if data == "toggle_auto_download":
+        current = user_auto_download.get(user_id, False)
+        user_auto_download[user_id] = not current
+        await api_client.update_auto_download(user_id, not current)
+        await update_settings_message(callback_query, user_id)
+        return
+    
+    if data == "toggle_notifications":
+        current = user_notifications.get(user_id, True)
+        user_notifications[user_id] = not current
+        await api_client.update_notifications(user_id, not current)
+        await update_settings_message(callback_query, user_id)
+        return
+    
     if data == "show_stats":
         await show_user_stats(user_id, chat_id, message_id)
         return
     
     if data == "show_quality_menu":
-        current_quality = user_download_quality.get(user_id, DownloadQuality.MEDIUM)
-        markup = [
-            [InlineKeyboardButton(text=f"🎵 ۳۲۰ kbps {'✅' if current_quality == DownloadQuality.HIGH else ''}", callback_data="set_quality:320")],
-            [InlineKeyboardButton(text=f"🎵 ۱۹۲ kbps {'✅' if current_quality == DownloadQuality.MEDIUM else ''}", callback_data="set_quality:192")],
-            [InlineKeyboardButton(text=f"🎵 ۱۲۸ kbps {'✅' if current_quality == DownloadQuality.LOW else ''}", callback_data="set_quality:128")],
-            [InlineKeyboardButton(text="🔙 بازگشت", callback_data="back_to_settings")],
-        ]
-        try:
-            await bot.edit_message_caption(
-                chat_id=chat_id,
-                message_id=message_id,
-                caption="🎵 *انتخاب کیفیت دانلود*\n\nکیفیت بالاتر = حجم فایل بیشتر",
-                reply_markup=InlineKeyboard(markup)
-            )
-        except:
-            await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text="🎵 *انتخاب کیفیت دانلود*\n\nکیفیت بالاتر = حجم فایل بیشتر",
-                reply_markup=InlineKeyboard(markup)
-            )
+        await show_quality_menu(callback_query, user_id)
         return
     
     if data.startswith("set_quality:"):
@@ -1885,7 +2031,6 @@ async def on_callback(callback_query: CallbackQuery):
                 await bot.answer_callback_query(callback_query.id, "❌ شما مالک این دانلود نیستید.", show_alert=True)
                 return
             album_tracker.cancel_download(owner_id_from_cb, collection_id)
-            # Update status message instead of showing alert
             await update_status_with_close(
                 callback_query.message,
                 "⏹️ *در حال توقف دانلود آلبوم...*\nلطفاً چند لحظه صبر کنید."
