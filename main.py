@@ -1533,11 +1533,11 @@ async def show_user_stats(user_id: int, chat_id: int, message_id: int = None):
     
     if message_id:
         try:
-            await edit_message(
+            await edit_or_send(
             bot,
                 chat_id=chat_id,
                 message_id=message_id,
-                caption=stats_text,
+                text=stats_text,
                 reply_markup=InlineKeyboard(markup)
             )
         except:
@@ -1712,15 +1712,15 @@ async def update_settings_message(callback_query: CallbackQuery, user_id: int):
     ]
     
     try:
-        await edit_message(
+        await edit_or_send(
         bot,
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.id,
-            caption=settings_text,
+            text=settings_text,
             reply_markup=InlineKeyboard(markup)
         )
     except:
-        await edit_message(
+        await edit_or_send(
         bot,
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.id,
@@ -1758,15 +1758,15 @@ async def show_quality_menu(callback_query: CallbackQuery, user_id: int):
     ]
     
     try:
-        await edit_message(
+        await edit_or_send(
         bot,
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.id,
-            caption=quality_text,
+            text=quality_text,
             reply_markup=InlineKeyboard(markup)
         )
     except:
-        await edit_message(
+        await edit_or_send(
         bot,
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.id,
