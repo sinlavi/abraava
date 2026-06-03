@@ -417,12 +417,13 @@ async def download_audio(
         output_dir: Optional[str] = None,
         *,
         max_retries_per_method: int = 1,
-        preferred_quality: int = 128,
+        quality: int = 128,
 ) -> Optional[str]:
     """
     Download YouTube audio as MP3.
     """
     global METHOD_ORDER
+    preferred_quality = quality
     url = _normalize_url(url)
 
     if output_dir is None:
