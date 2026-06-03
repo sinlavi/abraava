@@ -309,7 +309,7 @@ api_client = APIClient(API_BASE_URL, API_TOKEN)
 
 
 # ============================================================================
-# Broadcast System with Auto Forward
+# Broadcast System - Simple Auto Forward (Like Second Code)
 # ============================================================================
 # لیست ادمین‌ها
 ADMIN_IDS = [234591600]  # آیدی شما اضافه شد
@@ -320,216 +320,100 @@ async def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
-class BroadcastManager:
-    def __init__(self):
-        self.active_broadcasts = {}
-        self.broadcast_lock = asyncio.Lock()
-        self.last_forward_check = {}
-        self.forwarded_messages = set()  # برای جلوگیری از فوروارد تکراری
-    
-    async def start_broadcast(self, admin_id: int, message_text: str, broadcast_id: str = None):
-        if broadcast_id is None:
-            broadcast_id = f"broadcast_{int(time.time())}_{admin_id}"
-        
-        self.active_broadcasts[broadcast_id] = {
-            'admin_id': admin_id,
-            'message_text': message_text,
-            'status': 'running',
-            'start_time': time.time(),
-            'total_users': 0,
-            'sent_count': 0,
-            'failed_count': 0,
-            'current_channel': None,
-            'channels': []
-        }
-        return broadcast_id
-    
-    async def update_progress(self, broadcast_id: str, channel_id: str, sent: int, failed: int, total: int):
-        if broadcast_id in self.active_broadcasts:
-            self.active_broadcasts[broadcast_id]['current_channel'] = channel_id
-            self.active_broadcasts[broadcast_id]['sent_count'] += sent
-            self.active_broadcasts[broadcast_id]['failed_count'] += failed
-            self.active_broadcasts[broadcast_id]['total_users'] = total
-    
-    async def finish_broadcast(self, broadcast_id: str, success: bool = True, error_msg: str = None):
-        if broadcast_id in self.active_broadcasts:
-            self.active_broadcasts[broadcast_id]['status'] = 'completed' if success else 'failed'
-            self.active_broadcasts[broadcast_id]['end_time'] = time.time()
-            if error_msg:
-                self.active_broadcasts[broadcast_id]['error'] = error_msg
-    
-    def get_broadcast_status(self, broadcast_id: str) -> dict:
-        return self.active_broadcasts.get(broadcast_id, {})
-    
-    async def send_broadcast_to_channel(self, bot: Client, channel_info: dict, message_text: str, 
-                                         broadcast_id: str, user_ids: List[int]):
-        channel_id = channel_info.get('channel_id')
-        channel_name = channel_info.get('channel_name', channel_id)
-        
-        sent = 0
-        failed = 0
-        
-        for user_id in user_ids:
-            try:
-                await send_message(bot, user_id, message_text)
-                sent += 1
-                await asyncio.sleep(0.05)
-                
-            except Exception as e:
-                failed += 1
-                logger.error(f"Failed to send broadcast to user {user_id}: {e}")
-            
-            if (sent + failed) % 10 == 0:
-                await self.update_progress(broadcast_id, channel_id, sent, failed, len(user_ids))
-        
-        await self.update_progress(broadcast_id, channel_id, sent, failed, len(user_ids))
-        return sent, failed
-    
-    async def execute_broadcast(self, bot: Client, broadcast_id: str, channels: List[dict], 
-                                 message_text: str, user_limit: int = None):
-        total_sent = 0
-        total_failed = 0
-        
-        for channel in channels:
-            result = await api_client.get_active_users(limit=user_limit)
-            if result.get('success'):
-                users = result.get('data', [])
-                user_ids = [u.get('user_id') for u in users if u.get('user_id')]
-                
-                if user_ids:
-                    sent, failed = await self.send_broadcast_to_channel(
-                        bot, channel, message_text, broadcast_id, user_ids
-                    )
-                    total_sent += sent
-                    total_failed += failed
-                    
-                    await api_client.log_broadcast(
-                        message_id=broadcast_id,
-                        channel_id=channel.get('channel_id'),
-                        message_text=message_text[:200],
-                        sent_to=len(user_ids),
-                        successful=sent,
-                        failed=failed
-                    )
-            
-            await asyncio.sleep(1)
-        
-        await self.finish_broadcast(broadcast_id, True)
-        return total_sent, total_failed
-    
-    def has_forwarded(self, message_id: int) -> bool:
-        """بررسی اینکه پیام قبلاً فوروارد شده یا نه"""
-        return message_id in self.forwarded_messages
-    
-    def mark_forwarded(self, message_id: int):
-        """علامت‌گذاری پیام به عنوان فوروارد شده"""
-        self.forwarded_messages.add(message_id)
-        # پاک کردن کش قدیمی (حداکثر 10000 آیتم)
-        if len(self.forwarded_messages) > 10000:
-            self.forwarded_messages = set(list(self.forwarded_messages)[-5000:])
-    
-    def check_keywords(self, text: str, keywords: str) -> bool:
-        """بررسی وجود کلمات کلیدی در متن"""
-        if not text or not keywords:
-            return False
-        
-        keyword_list = [k.strip().lower() for k in keywords.split('#') if k.strip()]
-        text_lower = text.lower()
-        
-        for keyword in keyword_list:
-            if keyword and keyword in text_lower:
-                return True
-        return False
-
-
-broadcast_manager = BroadcastManager()
-
-
-# ============================================================================
-# Auto Forward Handler for Channels
-# ============================================================================
-async def check_and_forward_message(bot: Client, message: Message):
-    """بررسی و فوروارد خودکار پیام‌های دارای هشتگ از کانال‌های مشخص شده"""
-    
-    # فقط پیام‌های کانال را بررسی کن
+async def process_broadcast_message(message: Message):
+    """Process messages from broadcast channels and forward to all users"""
+    # Only process channel messages
     if message.chat.type != "channel":
         return
     
-    channel_id = str(message.chat.id)
-    message_id = message.id
-    message_text = message.content or ""
-    message_caption = message.caption or ""
-    
-    # ترکیب متن و کپشن
-    full_text = f"{message_text} {message_caption}"
-    
-    # بررسی فوروارد تکراری
-    if broadcast_manager.has_forwarded(message_id):
+    chat_id = str(message.chat.id)
+    chat = await bot.get_chat(int(chat_id))
+    chat_username = f"@{chat.username}" if chat.username else ""
+
+    # Get broadcast channels from API
+    result = await api_client.get_broadcast_channels()
+    if not result.get('success'):
         return
-    
-    # دریافت لیست کانال‌های برودکست از API
-    channels_result = await api_client.get_broadcast_channels()
-    if not channels_result.get('success'):
-        return
-    
-    broadcast_channels = channels_result.get('data', [])
-    
-    # پیدا کردن کانال مبدأ
-    source_channel = None
-    keywords_to_check = []
-    
-    for ch in broadcast_channels:
-        if str(ch.get('channel_id')) == channel_id:
-            source_channel = ch
-            keywords_to_check = ch.get('keywords', '#اطلاع_رسانی #ابرآوا #اطلاعیه #تبلیغات')
+
+    broadcast_channels = result.get('data', [])
+
+    # Check if this channel is registered for broadcasting (by channel_id)
+    is_broadcast_channel = False
+    channel_config = None
+
+    for channel in broadcast_channels:
+        if str(channel.get('channel_id')) == chat_id:
+            is_broadcast_channel = True
+            channel_config = channel
             break
-    
-    if not source_channel:
+
+    if not is_broadcast_channel:
         return
-    
-    # بررسی وجود کلمات کلیدی در پیام
-    if not broadcast_manager.check_keywords(full_text, keywords_to_check):
+
+    # Check if message contains broadcast keywords
+    message_text = message.content or ""
+    if message.caption:
+        message_text = message.caption
+
+    keywords = channel_config.get('keywords', '#اطلاع_رسانی #ابرآوا #اطلاعیه #تبلیغات')
+    keyword_list = [kw.strip() for kw in keywords.split() if kw.strip()]
+
+    should_broadcast = False
+    for keyword in keyword_list:
+        if keyword in message_text:
+            should_broadcast = True
+            break
+
+    if not should_broadcast:
         return
-    
-    # علامت‌گذاری به عنوان فوروارد شده
-    broadcast_manager.mark_forwarded(message_id)
-    
-    # آماده‌سازی پیام برای فوروارد
-    forward_text = f"📢 *پیام جدید از کانال {source_channel.get('channel_name', '')}*\n\n"
-    
-    try:
-        # فوروارد کردن پیام به کانال اطلاع‌رسانی
-        if INFO_CHANNEL_ID:
-            # ارسال به عنوان فوروارد
-            await bot.forward_message(INFO_CHANNEL_ID, channel_id, message_id)
-            
-            # همچنین می‌توانید یک پیام توضیحی هم ارسال کنید
-            info_text = (
-                f"📢 *پیام اطلاع‌رسانی*\n\n"
-                f"📡 از کانال: {source_channel.get('channel_name', '')}\n"
-                f"🔗 آیدی کانال: {source_channel.get('channel_username', '')}\n"
-                f"🕒 زمان: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                f"#اطلاع_رسانی #خبر"
-            )
-            await send_message(bot, INFO_CHANNEL_ID, info_text)
-            
-            logger.info(f"Auto-forwarded message {message_id} from channel {channel_id} to {INFO_CHANNEL_ID}")
-        
-        # همچنین می‌توانید به کانال‌های دیگر هم فوروارد کنید
-        for target_channel in BROADCAST_CHANNELS:
-            if target_channel != INFO_CHANNEL_ID:
-                try:
-                    await bot.forward_message(target_channel, channel_id, message_id)
-                    await asyncio.sleep(0.5)
-                except Exception as e:
-                    logger.error(f"Failed to forward to {target_channel}: {e}")
-        
-    except Exception as e:
-        logger.error(f"Failed to auto-forward message {message_id}: {e}")
+
+    # Get all active users
+    users_result = await api_client.get_active_users()
+    if not users_result.get('success'):
+        logger.error("Failed to get active users for broadcast")
+        return
+
+    users = users_result.get('data', [])
+
+    # Send to all users
+    successful = 0
+    failed = 0
+
+    for user in users:
+        try:
+            user_id = user.get('user_id')
+            if user_id:
+                # Forward the message
+                await bot.forward_message(chat_id=user_id, message_id=message.id, from_chat_id=message.chat.id)
+                successful += 1
+                await asyncio.sleep(0.05)  # Small delay to avoid rate limiting
+        except Exception as e:
+            logger.error(f"Failed to send broadcast to user {user.get('user_id')}: {e}")
+            failed += 1
+
+    # Also forward to info channel if specified
+    if INFO_CHANNEL_ID:
+        try:
+            await bot.forward_message(INFO_CHANNEL_ID, message.chat.id, message.id)
+            logger.info(f"Broadcast message forwarded to info channel {INFO_CHANNEL_ID}")
+        except Exception as e:
+            logger.error(f"Failed to forward to info channel: {e}")
+
+    # Log broadcast
+    await api_client.log_broadcast(
+        message_id=str(message.id),
+        channel_id=chat_id,
+        message_text=message_text[:500],
+        sent_to=len(users),
+        successful=successful,
+        failed=failed
+    )
+
+    logger.info(f"Broadcast sent: {successful} successful, {failed} failed")
 
 
 # ============================================================================
-# Admin Commands Handler
+# Admin Broadcast Commands (Simple Version)
 # ============================================================================
 async def handle_broadcast_command(message: Message, bot: Client):
     user_id = message.author.id
@@ -544,14 +428,13 @@ async def handle_broadcast_command(message: Message, bot: Client):
     if len(parts) < 2:
         await reply_message(message, 
             "⚠️ *راهنمای برودکست:*\n\n"
-            "📢 `/broadcast [متن]` - ارسال به همه کاربران\n"
-            "📢 `/broadcast_channel [@username] [متن]` - ارسال به کاربران یک کانال خاص\n"
-            "📊 `/broadcast_status` - مشاهده وضعیت برودکست\n"
-            "❌ `/cancel_broadcast [id]` - لغو برودکست\n\n"
-            "📡 *مدیریت کانال‌های برودکست:*\n"
+            "📢 `/broadcast [متن]` - ارسال پیام به همه کاربران\n"
+            "📋 `/list_broadcast_channels` - لیست کانال‌های برودکست\n"
             "➕ `/add_broadcast_channel [id] [username] [name] [keywords]` - اضافه کردن کانال\n"
-            "➖ `/remove_broadcast_channel [id]` - حذف کانال\n"
-            "📋 `/list_broadcast_channels` - لیست کانال‌ها"
+            "➖ `/remove_broadcast_channel [id]` - حذف کانال\n\n"
+            "📡 *نحوه کار:*\n"
+            "پس از اضافه کردن کانال، هر پیامی که در آن کانال دارای هشتگ‌های مشخص شده باشد،\n"
+            "به صورت خودکار برای همه کاربران فوروارد می‌شود."
         )
         return
     
@@ -560,67 +443,57 @@ async def handle_broadcast_command(message: Message, bot: Client):
     if command == "/broadcast":
         message_text = parts[1]
         
-        confirm_text = (
-            f"⚠️ *تأیید ارسال برودکست*\n\n"
-            f"متن پیام:\n{message_text}\n\n"
-            f"آیا از ارسال این پیام به *همه کاربران* اطمینان دارید؟"
-        )
-        
-        markup = [
-            [
-                InlineKeyboardButton("✅ بله، ارسال کن", callback_data=f"confirm_broadcast:all:{message_text[:100]}"),
-                InlineKeyboardButton("❌ خیر، انصراف", callback_data="cancel_broadcast")
-            ]
-        ]
-        
-        await reply_message(message, confirm_text, reply_markup=markup)
-        
-    elif command == "/broadcast_channel":
-        if len(parts[1].split(" ", 1)) < 2:
-            await reply_message(message, "⚠️ فرمت صحیح: `/broadcast_channel [@channel] [متن]`")
+        # Get all active users
+        users_result = await api_client.get_active_users()
+        if not users_result.get('success'):
+            await reply_message(message, "❌ خطا در دریافت لیست کاربران")
             return
         
-        channel_part, msg_text = parts[1].split(" ", 1)
-        channel_username = channel_part.strip()
+        users = users_result.get('data', [])
         
-        if channel_username.startswith("@"):
-            channel_username = channel_username[1:]
+        if not users:
+            await reply_message(message, "❌ هیچ کاربر فعالی یافت نشد")
+            return
         
-        confirm_text = (
-            f"⚠️ *تأیید ارسال برودکست*\n\n"
-            f"📢 کانال: @{channel_username}\n"
-            f"متن پیام:\n{msg_text}\n\n"
-            f"آیا از ارسال این پیام اطمینان دارید؟"
+        status_msg = await send_message(bot, message.chat.id, f"📢 *در حال ارسال برودکست به {len(users)} کاربر...*")
+        
+        successful = 0
+        failed = 0
+        
+        for user in users:
+            try:
+                user_id_target = user.get('user_id')
+                if user_id_target:
+                    await send_message(bot, user_id_target, message_text)
+                    successful += 1
+                    await asyncio.sleep(0.05)
+            except Exception as e:
+                failed += 1
+                logger.error(f"Failed to send to {user.get('user_id')}: {e}")
+        
+        await status_msg.delete()
+        
+        await reply_message(message, 
+            f"✅ *برودکست با موفقیت ارسال شد*\n\n"
+            f"✅ موفق: {successful}\n"
+            f"❌ ناموفق: {failed}\n"
+            f"📊 جمع کل: {len(users)}"
         )
         
-        markup = [
-            [
-                InlineKeyboardButton("✅ بله، ارسال کن", callback_data=f"confirm_broadcast:channel:{channel_username}:{msg_text[:100]}"),
-                InlineKeyboardButton("❌ خیر، انصراف", callback_data="cancel_broadcast")
-            ]
-        ]
-        
-        await reply_message(message, confirm_text, reply_markup=markup)
-        
-    elif command == "/broadcast_status":
-        await show_broadcast_status(message, bot)
-        
-    elif command == "/cancel_broadcast":
-        if len(parts) > 1:
-            broadcast_id = parts[1]
-            if broadcast_id in broadcast_manager.active_broadcasts:
-                broadcast_manager.active_broadcasts[broadcast_id]['status'] = 'cancelled'
-                await reply_message(message, f"✅ برودکست {broadcast_id} لغو شد.")
-            else:
-                await reply_message(message, f"❌ برودکست {broadcast_id} یافت نشد.")
-        else:
-            await reply_message(message, "⚠️ شناسه برودکست را وارد کنید.")
+        # Log broadcast
+        await api_client.log_broadcast(
+            message_id=str(int(time.time())),
+            channel_id="admin",
+            message_text=message_text[:200],
+            sent_to=len(users),
+            successful=successful,
+            failed=failed
+        )
     
     elif command == "/add_broadcast_channel":
-        # فرمت: /add_broadcast_channel channel_id channel_username channel_name keywords
-        args = parts[1].split(" ", 4)
-        if len(args) < 4:
-            await reply_message(message, "⚠️ فرمت صحیح: `/add_broadcast_channel [id] [username] [name] [keywords]`\nمثال: `-100123456789 mychannel نام_کانال #اطلاع_رسانی #خبر`")
+        args = parts[1].split(" ", 3)
+        if len(args) < 3:
+            await reply_message(message, "⚠️ فرمت صحیح: `/add_broadcast_channel [id] [username] [name] [keywords]`\nمثال: `-100123456789 mychannel نام_کانال #اطلاع_رسانی #خبر`\n\n📌 *نکته:* آیدی کانال باید با `-100` شروع شود")
             return
         
         channel_id = args[0]
@@ -630,7 +503,7 @@ async def handle_broadcast_command(message: Message, bot: Client):
         
         result = await api_client.add_broadcast_channel(channel_id, channel_username, channel_name, keywords)
         if result.get('success'):
-            await reply_message(message, f"✅ کانال {channel_name} با موفقیت اضافه شد.")
+            await reply_message(message, f"✅ کانال {channel_name} با موفقیت اضافه شد.\n\nهر پیامی در این کانال که دارای هشتگ‌های `{keywords}` باشد، برای همه کاربران ارسال می‌شود.")
         else:
             await reply_message(message, f"❌ خطا: {result.get('message', 'نامشخص')}")
     
@@ -663,58 +536,6 @@ async def handle_broadcast_command(message: Message, bot: Client):
                 await reply_message(message, "📡 هیچ کانال برودکستی تعریف نشده است.")
         else:
             await reply_message(message, "❌ خطا در دریافت لیست کانال‌ها")
-
-
-async def show_broadcast_status(message: Message, bot: Client):
-    if not broadcast_manager.active_broadcasts:
-        await reply_message(message, "📊 هیچ برودکست فعالی در حال اجرا نیست.")
-        return
-    
-    status_text = "📊 *وضعیت برودکست‌های فعال*\n\n"
-    
-    for bid, data in broadcast_manager.active_broadcasts.items():
-        status_text += f"🆔 شناسه: `{bid}`\n"
-        status_text += f"📝 وضعیت: {data['status']}\n"
-        status_text += f"✅ ارسال شده: {data['sent_count']}\n"
-        status_text += f"❌ ناموفق: {data['failed_count']}\n"
-        if data.get('current_channel'):
-            status_text += f"📡 کانال جاری: {data['current_channel']}\n"
-        status_text += f"⏱️ زمان شروع: {time.strftime('%H:%M:%S', time.localtime(data['start_time']))}\n"
-        status_text += "---\n"
-    
-    await reply_message(message, status_text)
-
-
-async def execute_broadcast_background(bot: Client, broadcast_id: str, channels: List[dict], 
-                                        message_text: str, admin_chat_id: int, status_msg_id: int):
-    try:
-        total_sent, total_failed = await broadcast_manager.execute_broadcast(
-            bot, broadcast_id, channels, message_text
-        )
-        
-        report = (
-            f"✅ *برودکست با موفقیت به پایان رسید*\n\n"
-            f"🆔 شناسه: `{broadcast_id}`\n"
-            f"✅ ارسال موفق: {total_sent}\n"
-            f"❌ ارسال ناموفق: {total_failed}\n"
-            f"⏱️ زمان اجرا: {int(time.time() - broadcast_manager.active_broadcasts.get(broadcast_id, {}).get('start_time', time.time()))} ثانیه"
-        )
-        
-        try:
-            await bot.delete_message(admin_chat_id, status_msg_id)
-        except:
-            pass
-        
-        await send_message(bot, admin_chat_id, report)
-        
-    except Exception as e:
-        logger.error(f"Broadcast execution failed: {e}")
-        await send_message(bot, admin_chat_id, f"❌ *خطا در اجرای برودکست:*\n{str(e)[:200]}")
-        
-        try:
-            await bot.delete_message(admin_chat_id, status_msg_id)
-        except:
-            pass
 
 
 # ============================================================================
@@ -2168,15 +1989,18 @@ async def on_shutdown():
     logger.info("ربات خاموش شد")
 
 
-
 @bot.on_message()
 async def handle_message(message):
+    # Skip bot's own messages
     if message.author.is_bot:
         return
 
+    # Process broadcast messages from channels (AUTO FORWARD - like second code)
     if message.chat.type == "channel":
-        await check_and_forward_message(bot, message)
+        await process_broadcast_message(message)
         return
+
+    # Register user on any message
     await register_user(message)
 
     if message.chat.type == "channel":
@@ -2287,10 +2111,8 @@ async def handle_message(message):
                             f"🔹 سیستم سهمیه دانلود بر اساس کیفیت"
                             )
 
-    elif msg_text.startswith("/broadcast") or msg_text.startswith("/broadcast_channel") or \
-         msg_text.startswith("/broadcast_status") or msg_text.startswith("/cancel_broadcast") or \
-         msg_text.startswith("/add_broadcast_channel") or msg_text.startswith("/remove_broadcast_channel") or \
-         msg_text.startswith("/list_broadcast_channels"):
+    elif msg_text.startswith("/broadcast") or msg_text.startswith("/add_broadcast_channel") or \
+         msg_text.startswith("/remove_broadcast_channel") or msg_text.startswith("/list_broadcast_channels"):
         await handle_broadcast_command(message, bot)
 
     else:
@@ -2345,67 +2167,6 @@ async def on_callback(callback_query: CallbackQuery):
             status_msg = await send_message(bot, chat_id, f"🎵 *شروع دانلود آلبوم: {collection_name}*")
             asyncio.create_task(download_and_send_album(bot, chat_id, id_, user_id, collection_name, tracks, status_msg, selected_quality=quality))
         return
-
-    # ========== برودکست ==========
-    if data.startswith("confirm_broadcast:"):
-        if not await is_admin(user_id):
-            await bot.answer_callback_query(callback_query.id, "❌ شما دسترسی ندارید", show_alert=True)
-            return
-        
-        parts = data.split(":", 3)
-        broadcast_type = parts[1]
-        
-        if broadcast_type == "all":
-            message_text = parts[2] if len(parts) > 2 else ""
-            broadcast_id = await broadcast_manager.start_broadcast(user_id, message_text)
-            
-            await bot.answer_callback_query(callback_query.id, "📢 شروع برودکست به همه کاربران...")
-            await callback_query.message.delete()
-            
-            channels_result = await api_client.get_broadcast_channels()
-            channels = channels_result.get('data', []) if channels_result.get('success') else []
-            
-            if not channels:
-                await send_message(bot, chat_id, "❌ هیچ کانال برودکستی تعریف نشده است.")
-                await broadcast_manager.finish_broadcast(broadcast_id, False, "No channels")
-                return
-            
-            status_msg = await send_message(bot, chat_id, f"📢 *شروع برودکست...*\n\n🆔 شناسه: `{broadcast_id}`\n📡 کانال‌ها: {len(channels)} عدد")
-            
-            asyncio.create_task(execute_broadcast_background(bot, broadcast_id, channels, message_text, chat_id, status_msg.id))
-            
-        elif broadcast_type == "channel":
-            channel_username = parts[2] if len(parts) > 2 else ""
-            message_text = parts[3] if len(parts) > 3 else ""
-            
-            await bot.answer_callback_query(callback_query.id, f"📢 شروع برودکست به کانال @{channel_username}...")
-            await callback_query.message.delete()
-            
-            channels_result = await api_client.get_broadcast_channels()
-            channels = channels_result.get('data', []) if channels_result.get('success') else []
-            
-            target_channel = None
-            for ch in channels:
-                if ch.get('channel_username') == channel_username:
-                    target_channel = ch
-                    break
-            
-            if not target_channel:
-                await send_message(bot, chat_id, f"❌ کانال @{channel_username} یافت نشد.")
-                return
-            
-            broadcast_id = await broadcast_manager.start_broadcast(user_id, message_text)
-            
-            status_msg = await send_message(bot, chat_id, f"📢 *شروع برودکست به کانال @{channel_username}...*\n\n🆔 شناسه: `{broadcast_id}`")
-            
-            asyncio.create_task(execute_broadcast_background(bot, broadcast_id, [target_channel], message_text, chat_id, status_msg.id))
-    
-    elif data == "cancel_broadcast":
-        await bot.answer_callback_query(callback_query.id, "برودکست لغو شد")
-        try:
-            await callback_query.message.delete()
-        except:
-            pass
 
     # ========== تنظیمات منوها (فقط در پیوی) ==========
     if is_group:
