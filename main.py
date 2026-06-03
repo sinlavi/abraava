@@ -748,7 +748,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
     caption_parts = [
         f"🎵 *نام آهنگ:* {track.get('trackName', 'Unknown Title')}",
         f"🎤 *نام هنرمند:* {track.get('artistName', 'Unknown Artist')}",
-        f"📀 *کیفیت دانلود:* {quality_value} kbps",
+     
     ]
     if track.get('collectionName'):
         caption_parts.append(f"💿 *نام آلبوم:* {track.get('collectionName')}")
@@ -763,7 +763,7 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
         minutes = duration_sec // 60
         seconds = duration_sec % 60
         caption_parts.append(f"⏱️ *مدت زمان:* {minutes}:{seconds:02d}")
-
+    caption_parts.append(f"📀 *کیفیت دانلود:* {quality_value} kbps")
     caption = "\n".join(caption_parts)
     markup = [[InlineKeyboardButton(
         text="📂 نمایش در مینی اپ",
@@ -1927,4 +1927,4 @@ if __name__ == "__main__":
             break
         except Exception as e:
             logger.exception(f"ربات crashed: {e}")
-            time.sleep(60)
+            time.sleep(60) 
