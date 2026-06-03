@@ -2168,11 +2168,6 @@ async def on_shutdown():
     logger.info("ربات خاموش شد")
 
 
-@bot.on_channel_post()
-async def handle_channel_post(message: Message):
-    """هندلر پیام‌های کانال برای فوروارد خودکار"""
-    await check_and_forward_message(bot, message)
-
 
 @bot.on_message()
 async def handle_message(message):
