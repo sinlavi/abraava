@@ -138,6 +138,12 @@ async def cancel_album_download_on_upload_error(user_id: int, collection_id: int
     key = (user_id, collection_id)
     album_upload_error_flag[key] = True
     album_tracker.cancel_download(user_id, collection_id)
+    
+    # ارسال پیام اطلاع‌رسانی به کاربر
+    try:
+        await send_message(bot, chat_id, "⚠️ *دانلود آلبوم به دلیل مشکل در سرویس آپلود بله متوقف شد*\nبه محض رفع مشکل می‌توانید مجدداً تلاش کنید.")
+    except:
+        pass
 
 
 # ============================================================================
@@ -182,7 +188,7 @@ class APIClient:
 
         headers = {
             'Authorization': f'Bearer {self.token}',
-            'Content-Type': 'application/json'
+            'Content-Type':application/json'
         }
 
         try:
@@ -497,6 +503,7 @@ class AlbumDownloadTracker:
             "current_idx": 0,
             "total": total_tracks,
             "cancelled": False,
+            "cancelled_time": 0,
             "collection_name": collection_name,
             "start_time": time.time(),
             "cover_bytes": None
@@ -540,6 +547,11 @@ class AlbumDownloadTracker:
         if key not in self.active_downloads:
             return ""
         t = self.active_downloads[key]
+        
+        # اگر در حالت توقف باشد
+        if t.get("cancelled", False):
+            return f"⏹️ *در حال توقف دانلود آلبوم {t['collection_name']}...*"
+        
         completed = sum(1 for tr in t["tracks"] if tr.success)
         failed = sum(1 for tr in t["tracks"] if not tr.success and tr.error is not None)
         elapsed = time.time() - t["start_time"]
@@ -598,6 +610,7 @@ class AlbumDownloadTracker:
         key = (user_id, collection_id)
         if key in self.active_downloads:
             self.active_downloads[key]["cancelled"] = True
+            self.active_downloads[key]["cancelled_time"] = time.time()
 
 
 album_tracker = AlbumDownloadTracker()
@@ -958,6 +971,10 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
     for track in tracks:
         if album_tracker.is_cancelled(user_id, collection_id):
             is_cancelled_by_user = True
+            # تغییر متن پیام وضعیت به "در حال توقف"
+            await update_status_with_close(status_msg, album_tracker.get_progress_text(user_id, collection_id),
+                                           reply_markup=None, no=True)
+            await asyncio.sleep(0.5)
             break
 
         track_id = track.get('trackId')
@@ -983,14 +1000,19 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
             album_tracker.update_track_result(user_id, collection_id, track_name, False, error_msg)
             failed_tracks.append({"name": track_name, "error": error_msg})
 
-        await update_status_with_close(status_msg, album_tracker.get_progress_text(user_id, collection_id),
-                                       reply_markup=cancel_markup, no=True)
+        # فقط اگر دانلود لغو نشده باشد، آپدیت کن
+        if not album_tracker.is_cancelled(user_id, collection_id):
+            await update_status_with_close(status_msg, album_tracker.get_progress_text(user_id, collection_id),
+                                           reply_markup=cancel_markup, no=True)
         await asyncio.sleep(1)
 
-    # اگر کاربر لغو کرده باشد، پیام جداگانه ارسال می‌شود
+    # اگر کاربر لغو کرده باشد
     if is_cancelled_by_user:
-        # ارسال پیام در حال توقف
-        stopping_msg = await send_message(bot, chat_id, "⏹️ *در حال توقف دانلود آلبوم...*\nلطفاً چند لحظه صبر کنید...")
+        # تغییر پیام وضعیت به "متوقف شد"
+        await update_status_with_close(status_msg, f"⏹️ *دانلود آلبوم {collection_name} متوقف شد*\nدر حال نهایی‌سازی...", 
+                                       reply_markup=None, no=True)
+        
+        await asyncio.sleep(0.5)
         
         # حذف پیام وضعیت قبلی
         try:
@@ -999,22 +1021,17 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
             pass
         
         # ارسال پیام نهایی لغو
-        final_text = f"⏹️ *دانلود آلبوم {collection_name} لغو شد*\n\n"
+        final_text = f"⏹️ *دانلود آلبوم {collection_name} با موفقیت متوقف شد*\n\n"
         final_text += f"🎵 *جمع کل:* {len(tracks)} قطعه\n"
         final_text += f"✅ *موفق:* {success_count}\n"
         if failed_tracks:
             final_text += f"❌ *ناموفق:* {len(failed_tracks)}\n\n"
-            final_text += "⚠️ *قطعات دانلود شده:*\n"
-            for ft in failed_tracks[:10]:
-                final_text += f"🔸 {ft['name']}\n"
+            if success_count > 0:
+                final_text += "⚠️ *قطعات دانلود شده:*\n"
+                for ft in failed_tracks[:10]:
+                    final_text += f"🔸 {ft['name']}\n"
         
         await send_message(bot, chat_id, final_text)
-        
-        # حذف پیام در حال توقف
-        try:
-            await stopping_msg.delete()
-        except:
-            pass
         
         album_tracker.finish_download(user_id, collection_id, success_count, len(failed_tracks))
         release_user_download_lock(user_id)
@@ -1044,7 +1061,12 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
 # ============================================================================
 async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
                            message_to_edit: Optional[Message] = None, owner_id: int = None, force=False, is_pagination: bool = False):
-    status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*")
+    # ارسال پیام وضعیت مناسب
+    status_msg = None
+    if is_pagination:
+        status_msg = await send_message(bot, chat_id, "📄 *در حال بارگذاری اطلاعات...*")
+    else:
+        status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*")
 
     try:
         artist_data = await get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force)
@@ -1083,15 +1105,29 @@ async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
         
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
                            owner_id=owner_id, artwork_url=artist_image, artist_id=artist_id, delete_old=is_pagination)
-        await status_msg.delete()
+        
+        if status_msg:
+            try:
+                await status_msg.delete()
+            except:
+                pass
 
     except Exception as e:
-        await send_error_with_retry(bot, chat_id, f"خطا: {str(e)[:100]}", f"artist_retry:{artist_id}", status_msg)
+        if status_msg:
+            await send_error_with_retry(bot, chat_id, f"خطا: {str(e)[:100]}", f"artist_retry:{artist_id}", status_msg)
+        else:
+            logger.error(f"Error in show_artist_page: {e}")
 
 
 async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
                                message_to_edit: Optional[Message] = None, owner_id: int = None, force=False, is_pagination: bool = False):
-    status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*")
+    # ارسال پیام وضعیت مناسب
+    status_msg = None
+    if is_pagination:
+        status_msg = await send_message(bot, chat_id, "📄 *در حال بارگذاری اطلاعات...*")
+    else:
+        status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*")
+    
     try:
         collection_data = await get_or_crawl_collection(collection_id, status_msg, force)
         tracks_data = await get_or_crawl_collection_tracks(collection_id)
@@ -1145,10 +1181,18 @@ async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
         
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
                            artwork_url=artwork_url, cache_id=collection_id, owner_id=owner_id, delete_old=is_pagination)
-        await status_msg.delete()
+        
+        if status_msg:
+            try:
+                await status_msg.delete()
+            except:
+                pass
 
     except Exception as e:
-        await send_error_with_retry(bot, chat_id, f"خطا: {str(e)[:100]}", f"collection_retry:{collection_id}", status_msg)
+        if status_msg:
+            await send_error_with_retry(bot, chat_id, f"خطا: {str(e)[:100]}", f"collection_retry:{collection_id}", status_msg)
+        else:
+            logger.error(f"Error in show_collection_page: {e}")
 
 
 async def show_track_page(chat_id: int, track_id: int, message_to_edit: Optional[Message] = None, owner_id: int = None):
@@ -1220,45 +1264,64 @@ async def handle_search_command(chat_id: int, user_id: int, type_: str, term: st
 
 async def send_search_page(chat_id: int, type_: str, term: str, results: dict, page: int,
                            message_to_edit: Optional[Message] = None, owner_id: int = None, is_pagination: bool = False):
-    results_list = results["results"]
-    total_items = len(results_list)
-    total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-    page = max(1, min(page, total_pages))
-    start_idx = (page - 1) * ITEMS_PER_PAGE
-    end_idx = start_idx + ITEMS_PER_PAGE
-    page_items = results_list[start_idx:end_idx]
-    type_fa_map = {"artist": "هنرمند", "collection": "آلبوم", "track": "آهنگ"}
+    # ارسال پیام وضعیت مناسب برای pagination
+    status_msg = None
+    if is_pagination:
+        status_msg = await send_message(bot, chat_id, "📄 *در حال بارگذاری اطلاعات...*")
     
-    markup = []
-    header = f"📋 *نتایج جستجو برای {type_fa_map.get(type_, type_)}: {term}*\nتعداد کل: {total_items} مورد"
+    try:
+        results_list = results["results"]
+        total_items = len(results_list)
+        total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        page = max(1, min(page, total_pages))
+        start_idx = (page - 1) * ITEMS_PER_PAGE
+        end_idx = start_idx + ITEMS_PER_PAGE
+        page_items = results_list[start_idx:end_idx]
+        type_fa_map = {"artist": "هنرمند", "collection": "آلبوم", "track": "آهنگ"}
+        
+        markup = []
+        header = f"📋 *نتایج جستجو برای {type_fa_map.get(type_, type_)}: {term}*\nتعداد کل: {total_items} مورد"
 
-    for item in page_items:
-        wrapper = item.get("wrapperType")
-        if wrapper == "artist":
-            btn_text = f"🎤 {item.get('artistName', 'نامشخص')}"
-            callback = f"artist:{item['artistId']}:1"
-        elif wrapper == "collection":
-            btn_text = f"📀 {item.get('collectionName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]}"
-            callback = f"collection:{item['collectionId']}:1"
-        elif wrapper == "track":
-            btn_text = f"🎵 {item.get('trackName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]}"
-            callback = f"track:{item['trackId']}"
+        for item in page_items:
+            wrapper = item.get("wrapperType")
+            if wrapper == "artist":
+                btn_text = f"🎤 {item.get('artistName', 'نامشخص')}"
+                callback = f"artist:{item['artistId']}:1"
+            elif wrapper == "collection":
+                btn_text = f"📀 {item.get('collectionName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]}"
+                callback = f"collection:{item['collectionId']}:1"
+            elif wrapper == "track":
+                btn_text = f"🎵 {item.get('trackName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]}"
+                callback = f"track:{item['trackId']}"
+            else:
+                continue
+            markup.append([InlineKeyboardButton(text=btn_text, callback_data=callback)])
+
+        if total_pages > 1:
+            search_id = generate_search_hash(type_, term)
+            await store_search_cache(search_id, type_, term, results, owner_id)
+            pagination_row = create_pagination_row(f"page:search:{search_id}:{type_}", page, total_pages)
+            markup.append(pagination_row)
+
+        refine_term = term
+        markup.append([InlineKeyboardButton("🔍 آلبوم‌ها", f"refine:album:{refine_term}"),
+                       InlineKeyboardButton("🔍 هنرمندان", f"refine:artist:{refine_term}"),
+                       InlineKeyboardButton("🔍 آهنگ‌ها", f"refine:track:{refine_term}")])
+
+        await edit_or_send(bot, chat_id, message_to_edit, header, markup=markup, 
+                           owner_id=owner_id, delete_old=is_pagination)
+        
+        if status_msg:
+            try:
+                await status_msg.delete()
+            except:
+                pass
+                
+    except Exception as e:
+        if status_msg:
+            await send_error_with_retry(bot, chat_id, f"خطا: {str(e)[:100]}", None, status_msg)
         else:
-            continue
-        markup.append([InlineKeyboardButton(text=btn_text, callback_data=callback)])
-
-    if total_pages > 1:
-        search_id = generate_search_hash(type_, term)
-        await store_search_cache(search_id, type_, term, results, owner_id)
-        pagination_row = create_pagination_row(f"page:search:{search_id}:{type_}", page, total_pages)
-        markup.append(pagination_row)
-
-    refine_term = term
-    markup.append([InlineKeyboardButton("🔍 آلبوم‌ها", f"refine:album:{refine_term}"),
-                   InlineKeyboardButton("🔍 هنرمندان", f"refine:artist:{refine_term}"),
-                   InlineKeyboardButton("🔍 آهنگ‌ها", f"refine:track:{refine_term}")])
-
-    await edit_or_send(bot, chat_id, message_to_edit, header, markup=markup, owner_id=owner_id, delete_old=is_pagination)
+            logger.error(f"Error in send_search_page: {e}")
 
 
 async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
@@ -1824,7 +1887,6 @@ async def on_callback(callback_query: CallbackQuery):
                 await bot.answer_callback_query(callback_query.id, "❌ شما مالک نیستید", show_alert=True)
                 return
             album_tracker.cancel_download(owner_id_from_cb, collection_id)
-            # پاسخ به callback تا کاربر بداند لغو شروع شده
             await bot.answer_callback_query(callback_query.id, "⏹️ در حال توقف دانلود آلبوم...")
         return
 
@@ -1927,4 +1989,4 @@ if __name__ == "__main__":
             break
         except Exception as e:
             logger.exception(f"ربات crashed: {e}")
-            time.sleep(60) 
+            time.sleep(60)
