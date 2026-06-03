@@ -1013,7 +1013,7 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
 # Display Functions
 # ============================================================================
 async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
-                           message_to_edit: Optional[Message] = None, owner_id: int = None, force=False):
+                           message_to_edit: Optional[Message] = None, owner_id: int = None, force=False, is_pagination: bool = False):
     status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*")
 
     try:
@@ -1051,7 +1051,7 @@ async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
         
         markup.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
-                           owner_id=owner_id, artwork_url=artist_image, artist_id=artist_id, keep_original=True)
+                           owner_id=owner_id, artwork_url=artist_image, artist_id=artist_id, keep_original=not is_pagination)
         await status_msg.delete()
 
     except Exception as e:
@@ -1059,7 +1059,7 @@ async def show_artist_page(chat_id: int, artist_id: int, page: int = 1,
 
 
 async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
-                               message_to_edit: Optional[Message] = None, owner_id: int = None, force=False):
+                               message_to_edit: Optional[Message] = None, owner_id: int = None, force=False, is_pagination: bool = False):
     status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*")
     try:
         collection_data = await get_or_crawl_collection(collection_id, status_msg, force)
@@ -1112,7 +1112,7 @@ async def show_collection_page(chat_id: int, collection_id: int, page: int = 1,
         
         artwork_url = get_high_res_artwork(collection_data.get("artworkUrl100"))
         await edit_or_send(bot, chat_id, message_to_edit, text, markup=markup,
-                           artwork_url=artwork_url, cache_id=collection_id, owner_id=owner_id, keep_original=True)
+                           artwork_url=artwork_url, cache_id=collection_id, owner_id=owner_id, keep_original=not is_pagination)
         await status_msg.delete()
 
     except Exception as e:
@@ -1186,7 +1186,7 @@ async def handle_search_command(chat_id: int, user_id: int, type_: str, term: st
 
 
 async def send_search_page(chat_id: int, type_: str, term: str, results: dict, page: int,
-                           message_to_edit: Optional[Message] = None, owner_id: int = None):
+                           message_to_edit: Optional[Message] = None, owner_id: int = None, is_pagination: bool = False):
     results_list = results["results"]
     total_items = len(results_list)
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
@@ -1225,8 +1225,8 @@ async def send_search_page(chat_id: int, type_: str, term: str, results: dict, p
                    InlineKeyboardButton("🔍 هنرمندان", f"refine:artist:{refine_term}"),
                    InlineKeyboardButton("🔍 آهنگ‌ها", f"refine:track:{refine_term}")])
 
-    # برای نتایج جستجو، پیام قبلی را نگه می‌داریم (حذف نمی‌کنیم)
-    await edit_or_send(bot, chat_id, message_to_edit, header, markup=markup, owner_id=owner_id, keep_original=True)
+    # اگر pagination است، پیام قبلی حذف شود (keep_original=False)، در غیر این صورت نگه داشته شود (keep_original=True)
+    await edit_or_send(bot, chat_id, message_to_edit, header, markup=markup, owner_id=owner_id, keep_original=not is_pagination)
 
 
 async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Message], text: str,
@@ -1261,7 +1261,7 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
     if owner_id and msg and msg.chat.type in ["group", "supergroup"]:
         set_message_owner(msg.id, owner_id)
 
-    # فقط زمانی که keep_original=False باشد، پیام قبلی حذف می‌شود
+    # فقط زمانی که keep_original=False باشد، پیام قبلی حذف می‌شود (مثل pagination)
     if message_to_edit and not keep_original:
         try:
             if message_to_edit.id in MESSAGE_OWNER:
@@ -1808,8 +1808,9 @@ async def on_callback(callback_query: CallbackQuery):
                 if is_group and cached["owner_id"] != user_id:
                     await bot.answer_callback_query(callback_query.id, "❌ مالک شما نیستید", show_alert=True)
                     return
+                # برای pagination، is_pagination=True ارسال می‌شود تا پیام قبلی حذف شود
                 await send_search_page(chat_id, cached["type"], cached["term"], cached["results"], page,
-                                       callback_query.message, owner_id=cached["owner_id"])
+                                       callback_query.message, owner_id=cached["owner_id"], is_pagination=True)
             else:
                 await bot.answer_callback_query(callback_query.id, "⏳ نتایج منقضی شده", show_alert=True)
         elif data.startswith("refine:"):
@@ -1819,11 +1820,15 @@ async def on_callback(callback_query: CallbackQuery):
         elif data.startswith("artist:"):
             artist_id = int(parts[1])
             page = int(parts[2]) if len(parts) > 2 else 1
-            await show_artist_page(chat_id, artist_id, page, callback_query.message, user_id)
+            # برای pagination در صفحه هنرمند
+            is_pagination = len(parts) > 2 and parts[2].isdigit()
+            await show_artist_page(chat_id, artist_id, page, callback_query.message, user_id, is_pagination=is_pagination)
         elif data.startswith("collection:"):
             collection_id = int(parts[1])
             page = int(parts[2]) if len(parts) > 2 else 1
-            await show_collection_page(chat_id, collection_id, page, callback_query.message, user_id)
+            # برای pagination در صفحه آلبوم
+            is_pagination = len(parts) > 2 and parts[2].isdigit()
+            await show_collection_page(chat_id, collection_id, page, callback_query.message, user_id, is_pagination=is_pagination)
         elif data.startswith("track:"):
             track_id = int(parts[1])
             await show_track_page(chat_id, track_id, callback_query.message, user_id)
