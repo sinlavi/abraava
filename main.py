@@ -1991,7 +1991,7 @@ async def handle_message(message):
         return
 
     # Process broadcast messages from channels (AUTO FORWARD - like second code)
-    if message.chat.type == "channel":
+    if message.chat.type == "channel" and message.chat.id == INFO_CHANNEL_ID:
         await process_broadcast_message(message)
         return
 
