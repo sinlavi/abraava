@@ -2008,8 +2008,17 @@ async def handle_message(message):
     msg_text = message.content or ""
     user_id = message.author.id
     chat_id = message.chat.id
-
-    if not msg_text.startswith("/start"):
+    if is_group:
+        bot_mention = f"@{bot.user.username}"
+        if bot_mention not in msg_text:
+            return
+        if not is_valid_message(message):
+            return
+        msg_text = msg_text.replace(bot_mention, "").strip()
+        if len(msg_text) > 100:
+            await reply_message(message, "⚠️ *متن پیام خیلی طولانی است*\n\nحداکثر ۱۰۰ کاراکتر مجاز است.")
+            return
+    if (not msg_text.startswith("/start")):
         is_member, missing = await verify_all_memberships(user_id)
         if not is_member:
             channels_text = ""
@@ -2023,16 +2032,7 @@ async def handle_message(message):
             await reply_message(message, f"⚠️ *برای استفاده از ربات باید در کانال‌های زیر عضو شوید:*\n\n{channels_text}\n\nپس از عضویت، دوباره تلاش کنید.")
             return
 
-    if is_group:
-        bot_mention = f"@{bot.user.username}"
-        if bot_mention not in msg_text:
-            return
-        if not is_valid_message(message):
-            return
-        msg_text = msg_text.replace(bot_mention, "").strip()
-        if len(msg_text) > 100:
-            await reply_message(message, "⚠️ *متن پیام خیلی طولانی است*\n\nحداکثر ۱۰۰ کاراکتر مجاز است.")
-            return
+    
 
     if msg_text.startswith("/start"):
         welcome_text = (
