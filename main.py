@@ -783,7 +783,7 @@ async def get_cached_artwork_with_quality(entity_type: str, entity_id: int) -> O
     try:
         if entity_id:
             data = await get_mirror(entity_type, str(entity_id), 'artworkUrl')
-            if data.get("mirrors", {}).get('artworkUrl', False):
+            if data and data.get("mirrors", {}).get('artworkUrl', False):
                 cached_url = data["mirrors"]['artworkUrl']['url']
                 if cached_url and '<token>' in cached_url:
                     file_id = cached_url.split('<token>/')[1]
@@ -863,7 +863,9 @@ async def send_photo_with_retry(bot: Client, chat_id: int, photo_data, caption: 
                     
                     markup = [
                         [
-                            InlineKeyboardButton(text="✅ بله، دوباره تلاش کن", callback_data=f"retry_artwork:{entity_type}:{entity_id}:{chat_id}")],[
+                            InlineKeyboardButton(text="✅ بله، دوباره تلاش کن", callback_data=f"retry_artwork:{entity_type}:{entity_id}:{chat_id}")
+                        ],
+                        [
                             InlineKeyboardButton(text="❌ خیر، بدون تصویر بفرست", callback_data=f"skip_artwork:{chat_id}")
                         ]
                     ]
@@ -915,14 +917,14 @@ async def download_and_send_artwork(bot: Client, chat_id: int, artwork_url: str,
                 # Continue to download fresh
     
     # Download artwork
-    for attempt in range(1, 4):
+    for attempt in range(1):
         try:
             async with HTTP_SESSION.get(artwork_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status == 200:
                     artwork_bytes = await resp.read()
                     return await send_photo_with_retry(bot, chat_id, artwork_bytes, caption, reply_markup,
                                                         entity_type=entity_type, entity_id=entity_id,
-                                                        user_id=user_id, max_retries=2)
+                                                        user_id=user_id, max_retries=1)
                 else:
                     raise Exception(f"HTTP {resp.status}")
         except Exception as e:
@@ -1045,10 +1047,68 @@ async def send_audio_with_retry(bot: Client, chat_id: int, audio_path: str, file
     raise last_exception if last_exception else Exception("آپلود failed")
 
 
+async def get_album_artwork_from_cache(collection_id: int) -> Optional[bytes]:
+    """Get album artwork from cache (collection mirror)"""
+    try:
+        cached_artwork = await get_cached_artwork_with_quality('collection', collection_id)
+        if cached_artwork:
+            # If it's a file_id, we need to download it to get bytes
+            if isinstance(cached_artwork, str):
+                if cached_artwork.startswith('http'):
+                    async with HTTP_SESSION.get(cached_artwork) as resp:
+                        if resp.status == 200:
+                            return await resp.read()
+                else:
+                    # It's a file_id, we can't get bytes directly, but we can use it for sending
+                    # Return the file_id as a special marker
+                    return cached_artwork
+    except Exception as e:
+        logger.error(f"Error getting cached album artwork: {e}")
+    return None
+
+
+async def download_album_artwork(collection_id: int, collection_data: dict = None) -> Optional[bytes]:
+    """Download album artwork from source and cache it"""
+    try:
+        if not collection_data:
+            collection_data = await get_or_crawl_collection(collection_id, None, False)
+            if collection_data:
+                collection_data = collection_data['results'][0]
+        
+        if collection_data:
+            cover_url = get_high_res_artwork(collection_data.get("artworkUrl100"), size=600)
+            if cover_url and HTTP_SESSION:
+                async with HTTP_SESSION.get(cover_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status == 200:
+                        artwork_bytes = await resp.read()
+                        # Cache it to collection mirror
+                        # Note: We'll cache it when sending successfully
+                        return artwork_bytes
+    except Exception as e:
+        logger.error(f"Error downloading album artwork: {e}")
+    return None
+
+
+async def get_or_download_album_artwork(collection_id: int, collection_data: dict = None, 
+                                         user_id: int = None, chat_id: int = None) -> Optional[Union[bytes, str]]:
+    """Get album artwork from cache or download it"""
+    # First try cache
+    cached = await get_album_artwork_from_cache(collection_id)
+    if cached:
+        return cached
+    
+    # Download fresh
+    artwork_bytes = await download_album_artwork(collection_id, collection_data)
+    if artwork_bytes:
+        return artwork_bytes
+    
+    return None
+
+
 async def download_and_send_single_track(bot: Client, chat_id: int, track_id: int, user_id: int = None,
                                          status_msg: Message = None, is_batch: bool = False,
-                                         album_cover_bytes: bytes = None, collection_id: int = None,
-                                         selected_quality: str = None):
+                                         album_cover_bytes: Union[bytes, str] = None, collection_id: int = None,
+                                         selected_quality: str = None, album_artwork_from_collection: bool = True):
     if is_batch or status_msg is None:
         status_msg = await send_message(bot, chat_id, text="⏳ *در حال آماده‌سازی دانلود...*")
 
@@ -1166,7 +1226,9 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
                 cover_bytes = album_cover_bytes
                 show_artwork = user_show_artwork.get(user_id, True)
 
-                if show_artwork and cover_bytes is None and cover_url and HTTP_SESSION:
+                # If we're in album download mode and album_cover_bytes is provided, use it
+                if show_artwork and cover_bytes is None and cover_url and HTTP_SESSION and not album_artwork_from_collection:
+                    # Only download from track if not in album mode
                     try:
                         await update_status_with_close(status_msg, f"🖼️ *در حال دریافت کاور آلبوم...*")
                         async with HTTP_SESSION.get(cover_url) as resp:
@@ -1276,16 +1338,22 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
     show_artwork = user_show_artwork.get(user_id, True)
 
     if show_artwork and tracks:
-        first_track = tracks[0]
-        cover_url = get_high_res_artwork(first_track.get("artworkUrl100", first_track.get("artworkUrl")), size=600)
-        if cover_url and HTTP_SESSION:
-            try:
-                async with HTTP_SESSION.get(cover_url) as resp:
-                    if resp.status == 200:
-                        album_cover_bytes = await resp.read()
-                        album_tracker.set_cover_bytes(user_id, collection_id, album_cover_bytes)
-            except:
-                pass
+        # Get album artwork from collection cache or download it
+        try:
+            await update_status_with_close(status_msg, f"🖼️ *در حال دریافت کاور آلبوم {collection_name}...*", no=True)
+            album_artwork = await get_or_download_album_artwork(collection_id, None, user_id, chat_id)
+            
+            if album_artwork:
+                if isinstance(album_artwork, bytes):
+                    album_cover_bytes = album_artwork
+                    album_tracker.set_cover_bytes(user_id, collection_id, album_cover_bytes)
+                    logger.info(f"Album artwork loaded for collection {collection_id}")
+                else:
+                    # It's a file_id from cache, we can use it directly when sending
+                    album_cover_bytes = album_artwork
+                    album_tracker.set_cover_bytes(user_id, collection_id, album_cover_bytes)
+        except Exception as e:
+            logger.error(f"Failed to get album artwork: {e}")
 
     success_count = 0
     failed_tracks = []
@@ -1323,9 +1391,11 @@ async def download_and_send_album(bot: Client, chat_id: int, collection_id: int,
             break
 
         try:
+            # Pass the album cover bytes to the track download function
             await download_and_send_single_track(bot, chat_id, track_id, user_id, status_msg,
                                                  is_batch=True, album_cover_bytes=album_cover_bytes,
-                                                 collection_id=collection_id, selected_quality=quality_value)
+                                                 collection_id=collection_id, selected_quality=quality_value,
+                                                 album_artwork_from_collection=True)
             album_tracker.update_track_result(user_id, collection_id, track_name, True)
             success_count += 1
         except Exception as e:
@@ -1777,7 +1847,7 @@ async def retry_artwork_send(chat_id: int, entity_type: str, entity_id: int, use
                             # Try to send with the same caption and markup
                             msg = await send_photo(bot, chat_id, photo=io.BytesIO(artwork_bytes), 
                                                     caption=data.get("caption", ""), 
-                                                    reply_markup=data.get("reply_markup"),no=True)
+                                                    reply_markup=data.get("reply_markup"))
                             if msg and entity_type and entity_id:
                                 await set_mirror(entity_type, str(entity_id), 'artworkUrl',
                                                  'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
