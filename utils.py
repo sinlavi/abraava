@@ -141,10 +141,11 @@ async def send_message(bot: Client, chat_id: int, text: str, reply_markup=None, 
     return message
 
 
-async def send_photo(bot: Client, chat_id: int, photo, caption: str, reply_markup=None):
+async def send_photo(bot: Client, chat_id: int, photo, caption: str, reply_markup=None,no=False):
     if reply_markup is None:
         reply_markup = []
-    reply_markup.append([create_close_button()])
+    if not no:
+        reply_markup.append([create_close_button()])
     logger.info(photo)
     message = await bot.send_photo(chat_id, caption=f"{caption}{FOOTER}", photo=photo,
                                    reply_markup=InlineKeyboard(*reply_markup))
