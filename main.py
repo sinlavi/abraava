@@ -381,7 +381,7 @@ async def process_broadcast_message(message: Message):
 
     for user in users:
         try:
-            user_id = user.get('user_id')
+            user_id = user.get('id')
             if user_id:
                 # Forward the message
                 await bot.forward_message(chat_id=user_id, message_id=message.id, from_chat_id=message.chat.id)
@@ -405,48 +405,8 @@ async def process_broadcast_message(message: Message):
 
 
 # ============================================================================
-# Admin Broadcast Commands (Fixed Version)
+# Admin Broadcast Commands (Simple Version)
 # ============================================================================
-async def send_broadcast_to_users(bot: Client, message_text: str, photo_url: str = None, 
-                                   audio_id: str = None, video_id: str = None, document_id: str = None):
-    """Send broadcast message to all users with optional media"""
-    users_result = await api_client.get_active_users()
-    if not users_result.get('success'):
-        return 0, 0, 0
-    
-    users = users_result.get('data', [])
-    if not users:
-        return 0, 0, 0
-    
-    successful = 0
-    failed = 0
-    
-    for user in users:
-        try:
-            user_id = user.get('user_id')
-            if not user_id:
-                continue
-            
-            if photo_url:
-                await send_photo(bot, user_id, photo_url, caption=message_text)
-            elif audio_id:
-                await send_audio(bot, user_id, audio_id, caption=message_text)
-            elif video_id:
-                await bot.send_video(user_id, video_id, caption=message_text)
-            elif document_id:
-                await bot.send_document(user_id, document_id, caption=message_text)
-            else:
-                await send_message(bot, user_id, message_text)
-            
-            successful += 1
-            await asyncio.sleep(0.05)
-        except Exception as e:
-            failed += 1
-            logger.error(f"Failed to send to user {user.get('user_id')}: {e}")
-    
-    return len(users), successful, failed
-
-
 async def handle_broadcast_command(message: Message, bot: Client):
     user_id = message.author.id
     
@@ -461,7 +421,6 @@ async def handle_broadcast_command(message: Message, bot: Client):
         await reply_message(message, 
             "⚠️ *راهنمای برودکست:*\n\n"
             "📢 `/broadcast [متن]` - ارسال پیام به همه کاربران\n"
-            "📢 `/broadcast_photo [url] [متن]` - ارسال پیام با عکس\n"
             "📋 `/list_broadcast_channels` - لیست کانال‌های برودکست\n"
             "➕ `/add_broadcast_channel [id] [username] [name] [keywords]` - اضافه کردن کانال\n"
             "➖ `/remove_broadcast_channel [id]` - حذف کانال\n\n"
@@ -473,21 +432,44 @@ async def handle_broadcast_command(message: Message, bot: Client):
     
     command = parts[0].lower()
     
-    # Handle /broadcast command
     if command == "/broadcast":
         message_text = parts[1]
         
-        status_msg = await send_message(bot, message.chat.id, f"📢 *در حال ارسال برودکست به کاربران...*")
+        # Get all active users
+        users_result = await api_client.get_active_users()
+        if not users_result.get('success'):
+            await reply_message(message, "❌ خطا در دریافت لیست کاربران")
+            return
         
-        total_users, successful, failed = await send_broadcast_to_users(bot, message_text)
+        users = users_result.get('data', [])
+        
+        if not users:
+            await reply_message(message, "❌ هیچ کاربر فعالی یافت نشد")
+            return
+        
+        status_msg = await send_message(bot, message.chat.id, f"📢 *در حال ارسال برودکست به {len(users)} کاربر...*")
+        
+        successful = 0
+        failed = 0
+        
+        for user in users:
+            try:
+                user_id_target = user.get('user_id')
+                if user_id_target:
+                    await send_message(bot, user_id_target, message_text)
+                    successful += 1
+                    await asyncio.sleep(0.05)
+            except Exception as e:
+                failed += 1
+                logger.error(f"Failed to send to {user.get('user_id')}: {e}")
         
         await status_msg.delete()
         
         await reply_message(message, 
             f"✅ *برودکست با موفقیت ارسال شد*\n\n"
-            f"👥 کاربران: {total_users}\n"
             f"✅ موفق: {successful}\n"
-            f"❌ ناموفق: {failed}"
+            f"❌ ناموفق: {failed}\n"
+            f"📊 جمع کل: {len(users)}"
         )
         
         # Log broadcast
@@ -495,35 +477,11 @@ async def handle_broadcast_command(message: Message, bot: Client):
             message_id=str(int(time.time())),
             channel_id="admin",
             message_text=message_text[:200],
-            sent_to=total_users,
+            sent_to=len(users),
             successful=successful,
             failed=failed
         )
     
-    # Handle /broadcast_photo command
-    elif command == "/broadcast_photo":
-        args = parts[1].split(" ", 1)
-        if len(args) < 2:
-            await reply_message(message, "⚠️ فرمت صحیح: `/broadcast_photo [url] [متن]`")
-            return
-        
-        photo_url = args[0]
-        message_text = args[1]
-        
-        status_msg = await send_message(bot, message.chat.id, f"📢 *در حال ارسال برودکست با عکس به کاربران...*")
-        
-        total_users, successful, failed = await send_broadcast_to_users(bot, message_text, photo_url=photo_url)
-        
-        await status_msg.delete()
-        
-        await reply_message(message, 
-            f"✅ *برودکست با عکس ارسال شد*\n\n"
-            f"👥 کاربران: {total_users}\n"
-            f"✅ موفق: {successful}\n"
-            f"❌ ناموفق: {failed}"
-        )
-    
-    # Handle /add_broadcast_channel command
     elif command == "/add_broadcast_channel":
         args = parts[1].split(" ", 3)
         if len(args) < 3:
@@ -541,7 +499,6 @@ async def handle_broadcast_command(message: Message, bot: Client):
         else:
             await reply_message(message, f"❌ خطا: {result.get('message', 'نامشخص')}")
     
-    # Handle /remove_broadcast_channel command
     elif command == "/remove_broadcast_channel":
         if len(parts) < 2:
             await reply_message(message, "⚠️ فرمت صحیح: `/remove_broadcast_channel [channel_id]`")
@@ -554,7 +511,6 @@ async def handle_broadcast_command(message: Message, bot: Client):
         else:
             await reply_message(message, f"❌ خطا: {result.get('message', 'نامشخص')}")
     
-    # Handle /list_broadcast_channels command
     elif command == "/list_broadcast_channels":
         result = await api_client.get_broadcast_channels()
         if result.get('success'):
@@ -1001,99 +957,6 @@ async def ask_quality_simple(chat_id: int, track_id: int = None, track_name: str
     ]
     
     await send_message(bot, chat_id, text, reply_markup=markup)
-
-
-# ============================================================================
-# Enhanced Photo Send with Error Handling
-# ============================================================================
-async def send_photo_with_retry(bot: Client, chat_id: int, photo_input, caption: str = "",
-                                max_retries: int = 2, cache_id: int = None, 
-                                entity_type: str = None, user_id: int = None) -> Optional[Message]:
-    """
-    Send photo with retry and fallback mechanism.
-    If upload fails, asks user whether to retry with direct download or send without photo.
-    """
-    last_exception = None
-    
-    for attempt in range(1, max_retries + 1):
-        try:
-            msg = await send_photo(bot, chat_id=chat_id, photo=photo_input, caption=caption)
-            
-            # Cache the artwork after successful upload
-            if msg and cache_id and entity_type:
-                await set_mirror(entity_type, str(cache_id), 'artworkUrl',
-                                 'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
-            
-            # Clear error notification on success
-            await bale_error_notifier.check_and_clear_if_resolved(bot, test_success=True)
-            return msg
-            
-        except Exception as e:
-            error_str = str(e)
-            last_exception = e
-            logger.warning(f"send_photo attempt {attempt}/{max_retries} failed: {error_str}")
-            
-            # If this is a Bale upload error
-            if any(keyword in error_str.lower() for keyword in ['upload', 'timeout', 'connection', 'network']):
-                await bale_error_notifier.notify_upload_error(bot, error_str)
-                
-                # On first attempt failure, ask user what to do
-                if attempt == 1:
-                    result = await ask_user_photo_retry(bot, chat_id, user_id)
-                    
-                    if result == "retry":
-                        # User wants to retry - continue to next attempt
-                        continue
-                    elif result == "send_without":
-                        # User wants to send without photo
-                        await send_message(bot, chat_id, caption)
-                        return None
-                    else:
-                        # User cancelled or no response
-                        return None
-            
-            if attempt < max_retries:
-                wait_time = attempt * 2
-                await asyncio.sleep(wait_time)
-            else:
-                # Final attempt failed, send message without photo
-                await send_message(bot, chat_id, caption)
-                return None
-    
-    return None
-
-
-async def ask_user_photo_retry(bot: Client, chat_id: int, user_id: int) -> str:
-    """Ask user whether to retry photo upload or send without photo"""
-    question_text = (
-        "⚠️ *مشکل در ارسال کاور آلبوم*\n\n"
-        "در حال حاضر سرویس آپلود عکس بله با مشکل مواجه شده است.\n\n"
-        "آیا می‌خواهید:\n"
-        "🔄 مجدداً تلاش کنیم تا با کاور ارسال شود؟\n"
-        "📄 یا بدون کاور ارسال شود؟"
-    )
-    
-    markup = InlineKeyboard(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🔄 تلاش مجدد با کاور", callback_data=f"photo_retry:{user_id}"),
-                InlineKeyboardButton(text="📄 ارسال بدون کاور", callback_data=f"photo_no_retry:{user_id}")
-            ]
-        ]
-    )
-    
-    msg = await send_message(bot, chat_id, question_text, reply_markup=markup)
-    
-    # Wait for user response (simplified - in callback we'll handle)
-    # Store this message ID to handle response
-    pending_photo_requests[msg.id] = {"chat_id": chat_id, "user_id": user_id}
-    
-    # Return "wait" - actual response will come from callback
-    return "wait"
-
-
-# Global dict to track pending photo retry requests
-pending_photo_requests = {}
 
 
 # ============================================================================
@@ -1803,21 +1666,13 @@ async def edit_or_send(bot: Client, chat_id: int, message_to_edit: Optional[Mess
     if artwork_url and show_artwork:
         try:
             if artwork_cache:
-                # Use cached artwork
-                msg = await send_photo_with_retry(bot, chat_id, photo_input=artwork_cache, caption=text,
-                                                   cache_id=cache_id, entity_type=entity_type if cache_id else None,
-                                                   user_id=owner_id)
+                msg = await send_photo(bot, chat_id, photo=artwork_cache, caption=text, reply_markup=markup)
             else:
-                # Download and send with retry
-                msg = await send_photo_with_retry(bot, chat_id, photo_input=artwork_url, caption=text,
-                                                   cache_id=cache_id, entity_type=entity_type if cache_id else None,
-                                                   user_id=owner_id)
-            
-            # If send_photo_with_retry returned None (user chose to send without photo)
-            if msg is None:
-                # Send just text
-                msg = await send_message(bot, chat_id, text=text, reply_markup=markup)
-                
+                msg = await send_photo(bot, chat_id, photo=artwork_url, caption=text, reply_markup=markup)
+                if msg and cache_id and not artwork_cache:
+                    entity_type = "artist" if artist_id else "collection"
+                    await set_mirror(entity_type, str(cache_id), 'artworkUrl',
+                                     'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
         except Exception as e:
             logger.error(f"Failed to send photo: {e}")
             msg = await send_message(bot, chat_id, text=text, reply_markup=markup, no=True)
@@ -2136,12 +1991,15 @@ async def handle_message(message):
         return
 
     # Process broadcast messages from channels (AUTO FORWARD - like second code)
-    if message.chat.type == "channel":
+    if message.chat.type == "channel" and message.chat.id == INFO_CHANNEL_ID:
         await process_broadcast_message(message)
         return
 
     # Register user on any message
     await register_user(message)
+
+    if message.chat.type == "channel":
+        return
 
     if "abraava" in str(message.author.username):
         return
@@ -2241,8 +2099,7 @@ async def handle_message(message):
                             )
 
     elif msg_text.startswith("/broadcast") or msg_text.startswith("/add_broadcast_channel") or \
-         msg_text.startswith("/remove_broadcast_channel") or msg_text.startswith("/list_broadcast_channels") or \
-         msg_text.startswith("/broadcast_photo"):
+         msg_text.startswith("/remove_broadcast_channel") or msg_text.startswith("/list_broadcast_channels"):
         await handle_broadcast_command(message, bot)
 
     else:
@@ -2264,37 +2121,8 @@ async def on_callback(callback_query: CallbackQuery):
     chat_id = callback_query.message.chat.id
     user_id = callback_query.author.id
     is_group = callback_query.message.chat.type in ["group", "supergroup"]
-    
-    # Handle photo retry responses
-    if data.startswith("photo_retry:"):
-        requester_id = int(data.split(":")[1])
-        if user_id != requester_id:
-            await bot.answer_callback_query(callback_query.id, "❌ شما مالک این درخواست نیستید", show_alert=True)
-            return
-        
-        # User wants to retry with photo - we need to re-send the photo
-        # The original message that triggered this is in pending_photo_requests
-        await bot.answer_callback_query(callback_query.id, "🔄 در حال تلاش مجدد برای ارسال عکس...")
-        await callback_query.message.delete()
-        # Signal that we should retry (handled by caller)
-        return
-    
-    if data.startswith("photo_no_retry:"):
-        requester_id = int(data.split(":")[1])
-        if user_id != requester_id:
-            await bot.answer_callback_query(callback_query.id, "❌ شما مالک این درخواست نیستید", show_alert=True)
-            return
-        
-        # User wants to send without photo
-        await bot.answer_callback_query(callback_query.id, "📄 ارسال بدون عکس...")
-        await callback_query.message.delete()
-        return
-    
     if data == "close":
         await callback_query.message.delete()
-        await bot.answer_callback_query(callback_query.id)
-        return
-    
     if data == "ignore":
         await bot.answer_callback_query(callback_query.id)
         return
@@ -2682,3 +2510,4 @@ if __name__ == "__main__":
         except Exception as e:
             logger.exception(f"ربات crashed: {e}")
             time.sleep(60)
+
