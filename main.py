@@ -793,24 +793,73 @@ async def get_cached_artwork_by_entity(entity_type: str, entity_id: int) -> Opti
         # Make API call to get mirror - using artworkUrl as the url_type
         data = await get_mirror(entity_type, str(entity_id), 'artworkUrl')
         
-        if data and data.get("mirrors", {}).get('artworkUrl', False):
-            cached_data = data["mirrors"]['artworkUrl']
-            cached_url = cached_data.get('url') if isinstance(cached_data, dict) else cached_data
-            if cached_url and '<token>' in cached_url:
-                file_id = cached_url.split('<token>/')[1]
-                logger.info(f"Found cached artwork for {entity_type}:{entity_id} -> file_id: {file_id}")
-                return file_id
-            elif cached_url:
-                logger.info(f"Found cached artwork URL for {entity_type}:{entity_id} -> {cached_url[:50]}...")
-                return cached_url
+        # Log the response for debugging
+        logger.info(f"get_mirror response for {entity_type}:{entity_id}: {data}")
+        
+        # Check different possible response structures
+        if data:
+            # Case 1: Direct mirror in response
+            if isinstance(data, dict):
+                # Check if data has 'mirrors' key
+                if 'mirrors' in data:
+                    mirrors = data['mirrors']
+                    if isinstance(mirrors, dict):
+                        # Check for artworkUrl directly
+                        if 'artworkUrl' in mirrors:
+                            artwork_data = mirrors['artworkUrl']
+                            if isinstance(artwork_data, dict):
+                                cached_url = artwork_data.get('url')
+                            else:
+                                cached_url = artwork_data
+                            
+                            if cached_url:
+                                logger.info(f"Found artwork URL in mirrors: {cached_url[:80]}...")
+                                if '<token>' in cached_url:
+                                    file_id = cached_url.split('<token>/')[1]
+                                    logger.info(f"Extracted file_id: {file_id}")
+                                    return file_id
+                                return cached_url
+                
+                # Case 2: Response is a dict with 'success' and 'data'
+                if data.get('success') and 'data' in data:
+                    mirror_data = data['data']
+                    if mirror_data and 'mirrors' in mirror_data:
+                        mirrors = mirror_data['mirrors']
+                        if isinstance(mirrors, dict) and 'artworkUrl' in mirrors:
+                            artwork_data = mirrors['artworkUrl']
+                            if isinstance(artwork_data, dict):
+                                cached_url = artwork_data.get('url')
+                            else:
+                                cached_url = artwork_data
+                            
+                            if cached_url:
+                                logger.info(f"Found artwork URL in data.mirrors: {cached_url[:80]}...")
+                                if '<token>' in cached_url:
+                                    file_id = cached_url.split('<token>/')[1]
+                                    logger.info(f"Extracted file_id: {file_id}")
+                                    return file_id
+                                return cached_url
+                
+                # Case 3: Direct response with artworkUrl field
+                if 'artworkUrl' in data:
+                    cached_url = data['artworkUrl']
+                    if isinstance(cached_url, dict):
+                        cached_url = cached_url.get('url')
+                    if cached_url:
+                        logger.info(f"Found direct artworkUrl: {cached_url[:80]}...")
+                        if '<token>' in cached_url:
+                            file_id = cached_url.split('<token>/')[1]
+                            return file_id
+                        return cached_url
         
         logger.info(f"No cached artwork found for {entity_type}:{entity_id}")
         return None
+        
     except Exception as e:
         logger.error(f"Error getting cached artwork for {entity_type}:{entity_id}: {e}")
-    return None
-
-
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
 async def get_cached_artwork_for_track(track_data: dict) -> Optional[str]:
     """
     Get cached artwork for a track by using its collectionId
