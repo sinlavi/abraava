@@ -2121,7 +2121,8 @@ async def on_callback(callback_query: CallbackQuery):
     chat_id = callback_query.message.chat.id
     user_id = callback_query.author.id
     is_group = callback_query.message.chat.type in ["group", "supergroup"]
-
+    if data == "close":
+        await bot.delete_message(chat_id,callback_query.message.id)
     if data == "ignore":
         await bot.answer_callback_query(callback_query.id)
         return
