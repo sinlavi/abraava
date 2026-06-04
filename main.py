@@ -1343,6 +1343,8 @@ async def download_and_send_single_track(bot: Client, chat_id: int, track_id: in
         except Exception as e:
             logger.error(f"Error downloading track {track_id}: {e}")
             await send_error_with_retry(bot, chat_id, f"خطا در دانلود: {str(e)[:100]}", f"download_retry:{track_id}", status_msg)
+            await bale_error_notifier.notify_upload_error(bot, str(e))
+
         finally:
             if temp_dir_to_clean and os.path.exists(temp_dir_to_clean):
                 try:
