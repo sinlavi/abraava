@@ -1847,7 +1847,7 @@ async def retry_artwork_send(chat_id: int, entity_type: str, entity_id: int, use
                             # Try to send with the same caption and markup
                             msg = await send_photo(bot, chat_id, photo=io.BytesIO(artwork_bytes), 
                                                     caption=data.get("caption", ""), 
-                                                    reply_markup=data.get("reply_markup"))
+                                                    reply_markup=data.get("reply_markup"),no=True)
                             if msg and entity_type and entity_id:
                                 await set_mirror(entity_type, str(entity_id), 'artworkUrl',
                                                  'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
