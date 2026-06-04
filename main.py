@@ -863,7 +863,7 @@ async def send_photo_with_retry(bot: Client, chat_id: int, photo_data, caption: 
                     
                     markup = [
                         [
-                            InlineKeyboardButton(text="✅ بله، دوباره تلاش کن", callback_data=f"retry_artwork:{entity_type}:{entity_id}:{chat_id}"),
+                            InlineKeyboardButton(text="✅ بله، دوباره تلاش کن", callback_data=f"retry_artwork:{entity_type}:{entity_id}:{chat_id}")],[
                             InlineKeyboardButton(text="❌ خیر، بدون تصویر بفرست", callback_data=f"skip_artwork:{chat_id}")
                         ]
                     ]
@@ -1777,7 +1777,7 @@ async def retry_artwork_send(chat_id: int, entity_type: str, entity_id: int, use
                             # Try to send with the same caption and markup
                             msg = await send_photo(bot, chat_id, photo=io.BytesIO(artwork_bytes), 
                                                     caption=data.get("caption", ""), 
-                                                    reply_markup=data.get("reply_markup"))
+                                                    reply_markup=data.get("reply_markup"),no=True)
                             if msg and entity_type and entity_id:
                                 await set_mirror(entity_type, str(entity_id), 'artworkUrl',
                                                  'https://tapi.bale.ai/file/bot<token>/' + str(msg.photo[0].id))
