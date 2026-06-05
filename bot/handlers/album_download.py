@@ -4,6 +4,8 @@ from utils.messages import send_message, edit_message
 from crawlers.utils import get_or_crawl_collection, get_or_crawl_collection_tracks
 
 async def download_album(bot, chat_id, collection_id, user_id, download_service):
+    success_count = 0
+    failed_count = 0
     status_msg = await send_message(bot, chat_id, "⏳ *در حال آماده‌سازی دانلود آلبوم...*")
 
     if not await download_service.album_tracker.acquire_lock(user_id, collection_id):
@@ -30,10 +32,7 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service)
         cancel_markup = [[InlineKeyboardButton(text="❌ لغو دانلود آلبوم", callback_data=f"cancel_album:{user_id}:{collection_id}")]]
 
         # Get album cover
-        album_cover_bytes = await download_service._get_artwork_bytes(coll)
-
-        success_count = 0
-        failed_count = 0
+        album_cover_bytes = await download_service.artwork_service.get_artwork_bytes(coll.get('collectionId'), coll.get('artworkUrl100'))
 
         settings = await download_service.user_settings_service.get_settings(user_id)
         quality_value = settings.download_quality.value
@@ -59,8 +58,8 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service)
                                                             collection_id=collection_id, selected_quality=quality_value)
                 download_service.album_tracker.update_track_result(user_id, collection_id, track_name, True)
                 success_count += 1
-            except Exception as e:
-                download_service.album_tracker.update_track_result(user_id, collection_id, track_name, False, str(e))
+            except Exception:
+                download_service.album_tracker.update_track_result(user_id, collection_id, track_name, False, "Error")
                 failed_count += 1
 
             await asyncio.sleep(0.5)

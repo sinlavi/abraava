@@ -36,15 +36,14 @@ class DownloadService:
 
         track_data = await get_track(track_id, status_msg)
         if not track_data or not track_data.get("results"):
-            await send_message(self.bot, chat_id, "خطا در دریافت اطلاعات آهنگ.")
+            await edit_message(status_msg, "خطا در دریافت اطلاعات آهنگ.")
             return
 
         track = track_data["results"][0]
         settings = await self.user_settings_service.get_settings(user_id)
 
         quality_value = selected_quality or settings.download_quality.value
-        if quality_value == "ask":
-            quality_value = "192" # Fallback
+        if quality_value == "ask": quality_value = "192"
 
         caption = self._build_caption(track, quality_value)
 
@@ -70,7 +69,7 @@ class DownloadService:
         # Download from YouTube
         cover_bytes = album_cover_bytes
         if settings.show_artwork and cover_bytes is None:
-            cover_bytes = await self._get_artwork_bytes(track)
+            cover_bytes = await self.artwork_service.get_artwork_bytes(track.get('collectionId'), track.get('artworkUrl100'))
 
         await edit_message(status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*")
         video_id = await search_youtube_track(track.get("trackName", ""), track.get("artistName", ""),
@@ -89,8 +88,7 @@ class DownloadService:
 
                 await edit_message(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*")
                 mp3_path = await download_audio(video_url, quality=quality_value)
-                if not mp3_path:
-                    raise Exception("Download failed")
+                if not mp3_path: raise Exception("Download failed")
 
                 temp_dir = os.path.dirname(mp3_path)
                 self.tagging_service.tag_mp3(Path(mp3_path), track, cover_bytes)
@@ -114,8 +112,7 @@ class DownloadService:
             logger.error(f"Download error: {e}")
             await edit_message(status_msg, "خطا در دانلود.")
         finally:
-            if temp_dir:
-                shutil.rmtree(temp_dir, ignore_errors=True)
+            if temp_dir: shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _build_caption(self, track, quality_value):
         parts = [
@@ -133,17 +130,3 @@ class DownloadService:
             [InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"https://player.abraava.ir?id={track_id}")],
             [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
         ]
-
-    async def _get_artwork_bytes(self, track):
-        coll_id = track.get('collectionId')
-        if coll_id:
-            url = get_high_res_artwork(track.get("artworkUrl100"), 600)
-            if url:
-                session = await HttpClient.get_session()
-                try:
-                    async with session.get(url, timeout=30) as resp:
-                        if resp.status == 200:
-                            return await resp.read()
-                except:
-                    pass
-        return None

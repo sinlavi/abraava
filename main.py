@@ -1,4 +1,4 @@
-from core.config import BOT_TOKEN, ADMIN_IDS, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
+from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
 from balethon import Client
 from balethon.objects import Message, CallbackQuery
 from core.logger import logger
