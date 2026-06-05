@@ -44,7 +44,7 @@ class iTunesCache:
 
 _itunes_cache = iTunesCache()
 
-ALTERNATIVE_ENDPOINTS = ["https://itunes.apple.com", "https://ax.itunes.apple.com", "https://buy.itunes.apple.com"]
+ALTERNATIVE_ENDPOINTS = [ITUNES_BASE_URL, "https://itunes.apple.com", "https://ax.itunes.apple.com", "https://buy.itunes.apple.com"]
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
