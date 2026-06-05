@@ -1,0 +1,169 @@
+from balethon.objects import InlineKeyboardButton, InlineKeyboard
+from core.config import ITEMS_PER_PAGE
+from bot.keyboards import create_pagination_row, create_close_button
+from utils.messages import send_message, edit_message
+from utils.helpers import get_high_res_artwork, format_duration
+from crawlers.utils import get_or_crawl_artist, get_or_crawl_artist_collections, get_or_crawl_collection, get_or_crawl_collection_tracks, get_track
+from crawlers.youtube import get_artist_image
+
+async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner_id, message_to_edit=None, force=False):
+    status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*")
+    try:
+        artist_data = await get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force)
+        if not artist_data or not artist_data.get('results'):
+            await send_message(bot, chat_id, "هنرمند مورد نظر یافت نشد.")
+            return
+
+        artist = artist_data['results'][0]
+        artist_name = artist.get('artistName', 'نامشخص')
+        artist_image = get_artist_image(artist_name)
+
+        text = f"🎤 *نام هنرمند:* {artist_name}\n"
+        text += f"🎭 *سبک:* {artist.get('primaryGenreName', 'نامشخص')}\n"
+
+        collections_data = await get_or_crawl_artist_collections(artist_id)
+        collections = collections_data["results"] if collections_data else []
+
+        markup_rows = []
+        if collections:
+            total_items = len(collections)
+            total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+            page = max(1, min(page, total_pages))
+
+            page_items = collections[(page-1)*ITEMS_PER_PAGE : page*ITEMS_PER_PAGE]
+            text += f"\n📀 *آلبوم‌ها (مجموع {total_items} آلبوم):*\n"
+
+            for coll in page_items:
+                if coll['wrapperType'] == 'collection':
+                    btn_text = f"📀 {coll.get('collectionName', 'نامشخص')[:40]} - {coll.get('artistName', 'نامشخص')[:30]}"
+                    markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"collection:{coll['collectionId']}:1")])
+
+            pagination = create_pagination_row(f"artist:{artist_id}", page, total_pages)
+            if pagination:
+                markup_rows.append(pagination)
+
+        markup_rows.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
+
+        artwork_data = await artwork_service.get_artwork_for_display("artist", artist_id, artist_image, owner_id)
+
+        if artwork_data:
+            await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, InlineKeyboard(*markup_rows), "artist", artist_id)
+        else:
+            await send_message(bot, chat_id, text, reply_markup=InlineKeyboard(*markup_rows))
+
+        await status_msg.delete()
+        if message_to_edit:
+            await message_to_edit.delete()
+
+    except Exception as e:
+        await send_message(bot, chat_id, f"خطا در نمایش صفحه هنرمند: {e}")
+
+async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False):
+    status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*")
+    try:
+        collection_data = await get_or_crawl_collection(collection_id, status_msg, force)
+        tracks_data = await get_or_crawl_collection_tracks(collection_id)
+
+        if not collection_data or not collection_data.get('results'):
+            await send_message(bot, chat_id, "آلبوم مورد نظر یافت نشد.")
+            return
+
+        coll = collection_data['results'][0]
+        tracks = tracks_data["results"] if tracks_data else []
+        release_date = coll.get('releaseDate', 'نامشخص')[:10]
+
+        text = f"📀 *نام آلبوم:* {coll.get('collectionName', 'نامشخص')}\n"
+        text += f"🎤 *نام هنرمند:* {coll.get('artistName', 'نامشخص')}\n"
+        text += f"📅 *سال انتشار:* {release_date}\n"
+
+        markup_rows = []
+        if tracks:
+            total_items = len(tracks)
+            total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+            page = max(1, min(page, total_pages))
+
+            page_items = tracks[(page-1)*ITEMS_PER_PAGE : page*ITEMS_PER_PAGE]
+            text += f"\n🎵 *لیست قطعات (مجموع {total_items} قطعه):*\n"
+
+            for i, track in enumerate(page_items, (page-1)*ITEMS_PER_PAGE + 1):
+                duration = format_duration(track.get('trackTimeMillis', 0))
+                text += f"{i}. {track.get('trackName', 'نامشخص')} ({duration})\n"
+
+                if track['wrapperType'] == 'track':
+                    btn_text = f"🎵 {track.get('trackName', 'نامشخص')[:35]} - {track.get('artistName', 'نامشخص')[:25]}"
+                    markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"track:{track['trackId']}")])
+
+            pagination = create_pagination_row(f"collection:{collection_id}", page, total_pages)
+            if pagination:
+                markup_rows.append(pagination)
+
+            is_private = (await bot.get_chat(chat_id)).type not in ["group", "supergroup"]
+            if is_private:
+                markup_rows.append([InlineKeyboardButton(text="⬇️ دانلود کل آلبوم", callback_data=f"download_album:{collection_id}")])
+
+        if coll.get("artistId"):
+            markup_rows.append([InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{coll['artistId']}:1")])
+
+        markup_rows.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:collection:{collection_id}")])
+
+        artwork_url = get_high_res_artwork(coll.get("artworkUrl100"))
+        artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id, artwork_url, owner_id)
+
+        if artwork_data:
+            await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, InlineKeyboard(*markup_rows), "collection", collection_id)
+        else:
+            await send_message(bot, chat_id, text, reply_markup=InlineKeyboard(*markup_rows))
+
+        await status_msg.delete()
+        if message_to_edit:
+            await message_to_edit.delete()
+
+    except Exception as e:
+        await send_message(bot, chat_id, f"خطا در نمایش صفحه آلبوم: {e}")
+
+async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, message_to_edit=None):
+    status_msg = await send_message(bot, chat_id, "🔄 *در حال بارگذاری اطلاعات آهنگ...*")
+    try:
+        data = await get_track(track_id, status_msg)
+        if not data or not data.get("results"):
+            await send_message(bot, chat_id, "آهنگ مورد نظر یافت نشد.")
+            return
+
+        track = data["results"][0]
+        duration = format_duration(track.get('trackTimeMillis', 0))
+
+        text = f"🎵 *نام آهنگ:* {track.get('trackName', 'نامشخص')}\n"
+        text += f"🎤 *نام هنرمند:* {track.get('artistName', 'نامشخص')}\n"
+        text += f"💿 *نام آلبوم:* {track.get('collectionName', 'نامشخص')}\n"
+        text += f"⏱️ *مدت زمان:* {duration}\n"
+
+        markup_rows = []
+        dl_btns = [InlineKeyboardButton(text="⬇️ دانلود", callback_data=f"download:{track_id}")]
+        if track.get("previewUrl"):
+            dl_btns.append(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}"))
+        markup_rows.append(dl_btns)
+
+        links = []
+        if track.get('collectionId'):
+            links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{track['collectionId']}:1"))
+        if track.get('artistId'):
+            links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{track['artistId']}:1"))
+        if links:
+            markup_rows.append(links)
+
+        artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
+        collection_id = track.get('collectionId')
+
+        artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id, artwork_url, owner_id)
+
+        if artwork_data:
+            await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, InlineKeyboard(*markup_rows), "collection", collection_id)
+        else:
+            await send_message(bot, chat_id, text, reply_markup=InlineKeyboard(*markup_rows))
+
+        await status_msg.delete()
+        if message_to_edit:
+            await message_to_edit.delete()
+
+    except Exception as e:
+        await send_message(bot, chat_id, f"خطا در نمایش صفحه آهنگ: {e}")
