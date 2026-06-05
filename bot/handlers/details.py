@@ -31,19 +31,23 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
             page = max(1, min(page, total_pages))
 
             page_items = collections[(page-1)*ITEMS_PER_PAGE : page*ITEMS_PER_PAGE]
-            text += f"\n📀 *آلبوم‌ها (مجموع {total_items} آلبوم):*\n"
+            text += f"\n📀 *آثار (مجموع {total_items} مورد):*\n"
 
             for coll in page_items:
                 if coll['wrapperType'] == 'collection':
-                    btn_text = f"📀 {coll.get('collectionName', 'نامشخص')[:40]} - {coll.get('artistName', 'نامشخص')[:30]}"
-                    markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"collection:{coll['collectionId']}:1")])
+                    if coll.get('trackCount') == 1:
+                        btn_text = f"🎵 {coll.get('collectionName', 'نامشخص')[:40]}"
+                        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"single_album:{coll['collectionId']}")])
+                    else:
+                        btn_text = f"📀 {coll.get('collectionName', 'نامشخص')[:40]} - {coll.get('artistName', 'نامشخص')[:30]}"
+                        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"collection:{coll['collectionId']}:1")])
 
             pagination = create_pagination_row(f"artist:{artist_id}", page, total_pages)
-            if pagination:
-                markup_rows.append(pagination)
+            if pagination: markup_rows.append(pagination)
 
         markup_rows.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
 
+        # NAVIGATION RULE: If we are paginating (message_to_edit is photo), EDIT. Otherwise SEND NEW.
         if message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
             await edit_message(message_to_edit, text, reply_markup=markup_rows)
             await status_msg.delete()
@@ -52,15 +56,10 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
             if artwork_data:
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "artist", artist_id)
                 await status_msg.delete()
-                if message_to_edit: await message_to_edit.delete()
             else:
                 await edit_message(status_msg, text, reply_markup=markup_rows)
-                if message_to_edit: await message_to_edit.delete()
 
     except Exception as e:
-        import traceback
-        import core.logger as logger
-        logger.logger.error(f"Error in show_artist_page: {e}\n{traceback.format_exc()}")
         await edit_message(status_msg, f"خطا در نمایش صفحه هنرمند: {e}")
 
 async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False):
@@ -80,12 +79,8 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         text = f"📀 *نام آلبوم:* {coll.get('collectionName', 'نامشخص')}\n"
         text += f"🎤 *نام هنرمند:* {coll.get('artistName', 'نامشخص')}\n"
         text += f"📅 *سال انتشار:* {release_date}\n"
-        if coll.get('primaryGenreName'):
-            text += f"🎸 *سبک:* {coll.get('primaryGenreName')}\n"
-        if coll.get('trackCount'):
-            text += f"🎵 *تعداد قطعات:* {coll.get('trackCount')}\n"
-        if coll.get('copyright'):
-            text += f"⚖️ *کپی‌رایت:* {coll.get('copyright')}\n"
+        if coll.get('primaryGenreName'): text += f"🎸 *سبک:* {coll.get('primaryGenreName')}\n"
+        if coll.get('trackCount'): text += f"🎵 *تعداد قطعات:* {coll.get('trackCount')}\n"
 
         markup_rows = []
         if tracks:
@@ -94,7 +89,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
             page = max(1, min(page, total_pages))
 
             page_items = tracks[(page-1)*ITEMS_PER_PAGE : page*ITEMS_PER_PAGE]
-            text += f"\n🎵 *لیست قطعات (مجموع {total_items} قطعه):*\n"
+            text += f"\n🎵 *لیست قطعات:*\n"
 
             for i, track in enumerate(page_items, (page-1)*ITEMS_PER_PAGE + 1):
                 duration = format_duration(track.get('trackTimeMillis', 0))
@@ -105,8 +100,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
                     markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"track:{track['trackId']}")])
 
             pagination = create_pagination_row(f"collection:{collection_id}", page, total_pages)
-            if pagination:
-                markup_rows.append(pagination)
+            if pagination: markup_rows.append(pagination)
 
             is_private = (await bot.get_chat(chat_id)).type not in ["group", "supergroup"]
             if is_private:
@@ -126,10 +120,8 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
             if artwork_data:
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id)
                 await status_msg.delete()
-                if message_to_edit: await message_to_edit.delete()
             else:
                 await edit_message(status_msg, text, reply_markup=markup_rows)
-                if message_to_edit: await message_to_edit.delete()
 
     except Exception as e:
         await edit_message(status_msg, f"خطا در نمایش صفحه آلبوم: {e}")
@@ -150,12 +142,9 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         text += f"🎤 *نام هنرمند:* {track.get('artistName', 'نامشخص')}\n"
         text += f"💿 *نام آلبوم:* {track.get('collectionName', 'نامشخص')}\n"
         text += f"⏱️ *مدت زمان:* {duration}\n"
-        if release_year:
-            text += f"📅 *سال انتشار:* {release_year}\n"
-        if track.get('primaryGenreName'):
-            text += f"🎸 *سبک:* {track.get('primaryGenreName')}\n"
-        if track.get('trackExplicitness') == 'explicit':
-            text += f"🔞 *Explicit:* بله\n"
+        if release_year: text += f"📅 *سال انتشار:* {release_year}\n"
+        if track.get('primaryGenreName'): text += f"🎸 *سبک:* {track.get('primaryGenreName')}\n"
+        if track.get('trackExplicitness') == 'explicit': text += f"🔞 *Explicit:* بله\n"
 
         markup_rows = []
         dl_btns = [InlineKeyboardButton(text="⬇️ دانلود", callback_data=f"download:{track_id}")]
@@ -168,24 +157,19 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
             links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{track['collectionId']}:1"))
         if track.get('artistId'):
             links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{track['artistId']}:1"))
-        if links:
-            markup_rows.append(links)
+        if links: markup_rows.append(links)
 
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
         collection_id = track.get('collectionId')
 
-        if message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
-            await edit_message(message_to_edit, text, reply_markup=markup_rows)
+        # Tracks usually don't have pagination, so we always send a new message unless it's a direct refresh?
+        # User wants "not delete previous message", so SEND NEW.
+        artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id, artwork_url, owner_id)
+        if artwork_data:
+            await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id)
             await status_msg.delete()
         else:
-            artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id, artwork_url, owner_id)
-            if artwork_data:
-                await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id)
-                await status_msg.delete()
-                if message_to_edit: await message_to_edit.delete()
-            else:
-                await edit_message(status_msg, text, reply_markup=markup_rows)
-                if message_to_edit: await message_to_edit.delete()
+            await edit_message(status_msg, text, reply_markup=markup_rows)
 
     except Exception as e:
         await edit_message(status_msg, f"خطا در نمایش صفحه آهنگ: {e}")

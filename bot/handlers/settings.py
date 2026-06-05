@@ -13,10 +13,10 @@ async def settings_command(bot: Client, message: Message, user_settings_service)
 
     settings_text = (
         f"⚙️ *تنظیمات ربات {BOT_NAME}*\n\n"
-        f"⚡ *حالت سریع:* {'فعال' if settings.quick_mode else 'غیرفعال'}\n\n"
-        f"🎵 *کیفیت دانلود:* {quality_text}\n\n"
-        f"🖼️ *نمایش کاور:* {'فعال' if settings.show_artwork else 'غیرفعال'}\n\n"
-        f"⚡ *دانلود خودکار:* {'فعال' if settings.auto_download else 'غیرفعال'}\n\n"
+        f"⚡ *حالت سریع:* {'فعال' if settings.quick_mode else 'غیرفعال'}\n"
+        f"🎵 *کیفیت دانلود:* {quality_text}\n"
+        f"🖼️ *نمایش کاور:* {'فعال' if settings.show_artwork else 'غیرفعال'}\n"
+        f"⚡ *دانلود خودکار:* {'فعال' if settings.auto_download else 'غیرفعال'}\n"
         f"🔔 *دریافت اعلان:* {'فعال' if settings.notifications else 'غیرفعال'}\n\n"
         f"📊 برای مشاهده آمار دقیق، روی دکمه «آمار من» کلیک کنید."
     )
@@ -27,6 +27,25 @@ async def settings_command(bot: Client, message: Message, user_settings_service)
     )
 
     await send_message(bot, message.chat.id, settings_text, reply_markup=markup)
+
+async def stats_command_logic(bot, message, user_id, api_client, rate_limiter, download_rate_limiter):
+    remaining_search = rate_limiter.get_user_remaining(user_id)
+    remaining_download = download_rate_limiter.get_remaining(user_id)
+
+    user_data = await api_client.get_user(user_id)
+    total_searches = user_data.get('data', {}).get('total_searches', 0) if user_data.get('success') else 0
+    total_downloads = user_data.get('data', {}).get('total_downloads', 0) if user_data.get('success') else 0
+
+    text = (
+        f"📊 *آمار شما*\n\n"
+        f"🔍 جستجوی باقی‌مانده: {remaining_search}/{rate_limiter.max_requests}\n"
+        f"⬇️ دانلود باقی‌مانده: {remaining_download}/{download_rate_limiter.max_downloads}\n\n"
+        f"📈 آمار کلی:\n"
+        f"🔹 جستجوها: {total_searches}\n"
+        f"🔹 دانلودها: {total_downloads}"
+    )
+
+    await edit_message(message, text, reply_markup=[])
 
 async def stats_command(bot: Client, message: Message, api_client, rate_limiter, download_rate_limiter):
     user_id = message.author.id

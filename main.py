@@ -1,6 +1,6 @@
 from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
 from balethon import Client
-from balethon.objects import Message, CallbackQuery
+from balethon.objects import Message, CallbackQuery, InlineKeyboardButton
 from core.logger import logger
 from core.http_client import HttpClient
 
@@ -86,12 +86,17 @@ async def on_message(message: Message):
     if not text.startswith("/start"):
         is_member, missing = await verify_all_memberships(bot, user_id, api_client)
         if not is_member:
-            channels_text = ""
+            markup_rows = []
+            channels_text = "⚠️ *برای استفاده از ربات باید در کانال‌های زیر عضو شوید:*"
             for ch in missing:
                 name = ch.get('channel_name', ch.get('channel_username', ch.get('channel_id')))
                 link = ch.get('invite_link', '')
-                channels_text += f"[{name}]({link})\n" if link else f"{name}\n"
-            await send_message(bot, chat_id, f"⚠️ *برای استفاده از ربات باید در کانال‌های زیر عضو شوید:*\n\n{channels_text}\n\nپس از عضویت، دوباره تلاش کنید.")
+                if link:
+                    markup_rows.append([InlineKeyboardButton(text=f"📢 {name}", url=link)])
+                else:
+                    channels_text += f"\n\n🔸 {name}"
+
+            await send_message(bot, chat_id, channels_text, reply_markup=markup_rows)
             return
 
     if text.startswith("/start"):
@@ -99,15 +104,11 @@ async def on_message(message: Message):
     elif text.startswith("/help"):
         await help_command(bot, message)
     elif text.startswith("/settings"):
-        if is_group:
-            await message.reply("⚙️ تنظیمات فقط در پیوی در دسترس است.")
-        else:
-            await settings_command(bot, message, user_settings_service)
+        if is_group: await message.reply("⚙️ تنظیمات فقط در پیوی در دسترس است.")
+        else: await settings_command(bot, message, user_settings_service)
     elif text.startswith("/stats"):
-        if is_group:
-            await message.reply("📊 آمار فقط در پیوی در دسترس است.")
-        else:
-            await stats_command(bot, message, api_client, rate_limiter, download_rate_limiter)
+        if is_group: await message.reply("📊 آمار فقط در پیوی در دسترس است.")
+        else: await stats_command(bot, message, api_client, rate_limiter, download_rate_limiter)
     elif text.startswith("/about"):
         await about_command(bot, message)
     else:
@@ -137,8 +138,7 @@ if __name__ == "__main__":
     while True:
         try:
             bot.run()
-        except KeyboardInterrupt:
-            break
+        except KeyboardInterrupt: break
         except Exception as e:
             logger.exception(f"Bot crashed: {e}")
             time.sleep(60)

@@ -53,6 +53,7 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service)
                 break
 
             try:
+                # We pass is_batch=True to avoid sending individual status messages
                 await download_service.download_and_send_track(chat_id, track['trackId'], user_id, status_msg,
                                                             is_batch=True, album_cover_bytes=album_cover_bytes,
                                                             collection_id=collection_id, selected_quality=quality_value)
@@ -64,7 +65,7 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service)
 
             await asyncio.sleep(0.5)
 
-        final_text = f"✅ دانلود آلبوم {coll_name} به پایان رسید.\nموفق: {success_count}\nناموفق: {failed_count}"
+        final_text = f"✅ دانلود آلبوم {coll_name} به پایان رسید.\n🎵 مجموع قطعات: {len(tracks)}\n✅ موفق: {success_count}\n❌ ناموفق: {failed_count}"
         await send_message(bot, chat_id, final_text)
 
     finally:

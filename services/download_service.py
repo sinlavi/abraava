@@ -31,7 +31,7 @@ class DownloadService:
                                      is_batch=False, album_cover_bytes=None, collection_id=None,
                                      selected_quality=None):
 
-        if is_batch or status_msg is None:
+        if status_msg is None and not is_batch:
             status_msg = await send_message(self.bot, chat_id, "⏳ *در حال آماده‌سازی دانلود...*")
 
         track_data = await get_track(track_id, status_msg)

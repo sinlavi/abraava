@@ -67,19 +67,16 @@ class ArtworkService:
                                   caption: str, reply_markup=None,
                                   entity_type: str = None, entity_id: int = None):
         try:
-            if reply_markup is None: reply_markup = []
-            if isinstance(reply_markup, list):
-                has_close = any(any(getattr(btn, 'callback_data', '') == 'close' for btn in row) for row in reply_markup if isinstance(row, list))
-                if not has_close:
-                    reply_markup.append([create_close_button()])
-                reply_markup = InlineKeyboard(*reply_markup)
+            from utils.messages import _prepare_markup
+            from core.config import FOOTER
+            reply_markup = _prepare_markup(reply_markup, False)
 
             if isinstance(artwork_data, str):
-                msg = await bot.send_photo(chat_id, photo=artwork_data, caption=caption, reply_markup=reply_markup)
+                msg = await bot.send_photo(chat_id, photo=artwork_data, caption=f"{caption}{FOOTER}", reply_markup=reply_markup)
             else:
                 photo_io = io.BytesIO(artwork_data)
                 photo_io.name = "artwork.jpg"
-                msg = await bot.send_photo(chat_id, photo=photo_io, caption=caption, reply_markup=reply_markup)
+                msg = await bot.send_photo(chat_id, photo=photo_io, caption=f"{caption}{FOOTER}", reply_markup=reply_markup)
 
                 if msg and msg.photo and entity_type and entity_id:
                     file_id = str(msg.photo[0].id)

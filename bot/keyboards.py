@@ -1,32 +1,24 @@
-from balethon.objects import InlineKeyboardButton, InlineKeyboard
-from core.config import FOOTER
+from balethon.objects import InlineKeyboard, InlineKeyboardButton
+from core.config import FOOTER, INFO_CHANNEL_USERNAME
 
 def create_close_button() -> InlineKeyboardButton:
     return InlineKeyboardButton(text="❌ بستن", callback_data="close")
+
+def create_info_channel_button() -> InlineKeyboardButton:
+    return InlineKeyboardButton(text="📢 کانال اطلاع‌رسانی", url=f"https://ble.ir/{INFO_CHANNEL_USERNAME.lstrip('@')}")
 
 def create_retry_button(callback_data: str, button_text: str = "🔄 تلاش مجدد") -> InlineKeyboardButton:
     return InlineKeyboardButton(text=button_text, callback_data=f"retry:{callback_data}")
 
 def create_pagination_row(callback_prefix: str, current_page: int, total_pages: int):
     """Create pagination buttons for navigation"""
-    if total_pages <= 1:
-        return []
-
+    if total_pages <= 1: return []
     buttons = []
     if current_page > 1:
-        buttons.append(InlineKeyboardButton(
-            text="▶️ قبلی",
-            callback_data=f"{callback_prefix}:{current_page - 1}"
-        ))
-    buttons.append(InlineKeyboardButton(
-        text=f"{current_page}/{total_pages}",
-        callback_data="ignore"
-    ))
+        buttons.append(InlineKeyboardButton(text="▶️ قبلی", callback_data=f"{callback_prefix}:{current_page - 1}"))
+    buttons.append(InlineKeyboardButton(text=f"{current_page}/{total_pages}", callback_data="ignore"))
     if current_page < total_pages:
-        buttons.append(InlineKeyboardButton(
-            text="بعدی ◀️",
-            callback_data=f"{callback_prefix}:{current_page + 1}"
-        ))
+        buttons.append(InlineKeyboardButton(text="بعدی ◀️", callback_data=f"{callback_prefix}:{current_page + 1}"))
     return buttons
 
 def get_settings_keyboard(quick_mode, quality_text, show_artwork, auto_download, notifications):
@@ -47,4 +39,10 @@ def get_quality_keyboard(current_quality):
         [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.LOW else ''}🎧 ۱۲۸ kbps", callback_data="set_quality:128")],
         [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.ASK else ''}❓ هر بار بپرس", callback_data="set_quality:ask")],
         [InlineKeyboardButton(text="🔙 بازگشت به تنظیمات", callback_data="back_to_settings")]
+    ]
+
+def get_confirmation_keyboard(setting_type, new_value):
+    return [
+        [InlineKeyboardButton(text="✅ بله، تغییر کن", callback_data=f"confirm_{setting_type}:{int(new_value)}")],
+        [InlineKeyboardButton(text="❌ خیر، انصراف", callback_data="back_to_settings")]
     ]
