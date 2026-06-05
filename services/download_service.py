@@ -12,7 +12,7 @@ from models.schemas import DownloadQuality
 from crawlers.utils import get_track, get_or_crawl_collection, get_or_crawl_collection_tracks
 from crawlers.youtube import search_youtube_track, download_audio
 from crawlers.itunes import get_cached_audio, set_mirror, get_cached_artwork, get_mirror
-from utils.helpers import get_high_res_artwork, format_duration
+from utils.helpers import get_high_res_artwork, format_duration, generate_deep_link
 from utils.messages import send_message, edit_message
 
 class DownloadService:
@@ -30,10 +30,13 @@ class DownloadService:
 
     async def download_and_send_track(self, chat_id, track_id, user_id, status_msg=None,
                                      is_batch=False, album_cover_bytes=None, collection_id=None,
-                                     selected_quality=None):
+                                     selected_quality=None, track_name_hint=None, track_index=None):
 
-        if status_msg is None and not is_batch:
-            status_msg = await send_message(self.bot, chat_id, "⏳ *در حال آماده‌سازی دانلود...*")
+        # In batch mode, if no status_msg provided, create a track-specific one
+        if status_msg is None:
+            prefix = f"({track_index}) " if track_index else ""
+            hint = f" {track_name_hint}" if track_name_hint else ""
+            status_msg = await send_message(self.bot, chat_id, f"⏳ *{prefix}در حال آماده‌سازی دانلود{hint}...*")
 
         track_data = await get_track(track_id, status_msg)
         if not track_data or not track_data.get("results"):
@@ -55,7 +58,7 @@ class DownloadService:
                 await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
                 markup = self._build_audio_markup(track_id)
                 await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=InlineKeyboard(*markup))
-                if not is_batch: await status_msg.delete()
+                await status_msg.delete()
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
                                                  track.get('artistName', ''), track.get('collectionName', ''),
                                                  0, 'cache', quality_value)
@@ -114,7 +117,7 @@ class DownloadService:
                                                  file_size, 'youtube', quality_value)
                 self.download_rate_limiter.record_download(user_id, quality_value)
                 await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
-                if not is_batch: await status_msg.delete()
+                await status_msg.delete()
         except Exception as e:
             logger.error(f"Download error: {e}")
             await edit_message(status_msg, "خطا در دانلود.")
@@ -127,10 +130,18 @@ class DownloadService:
             if temp_dir: shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _build_caption(self, track, quality_value):
+        artist_id = track.get('artistId')
+        artist_name = track.get('artistName', 'Unknown')
+        artist_link = f"[{artist_name}]({generate_deep_link('artist', artist_id)})" if artist_id else artist_name
+
+        coll_id = track.get('collectionId')
+        coll_name = track.get('collectionName', 'Unknown')
+        coll_link = f"[{coll_name}]({generate_deep_link('collection', coll_id)})" if coll_id else coll_name
+
         fields = {
             "🎵 نام آهنگ": track.get('trackName'),
-            "🎤 نام هنرمند": track.get('artistName'),
-            "💿 نام آلبوم": track.get('collectionName'),
+            "🎤 نام هنرمند": artist_link,
+            "💿 نام آلبوم": coll_link,
             "📅 سال انتشار": track.get('releaseDate', '')[:4],
             "🎸 سبک": track.get('primaryGenreName'),
             "⏱️ مدت زمان": format_duration(track.get('trackTimeMillis', 0)),

@@ -118,8 +118,7 @@ async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50
 
 async def lookup_itunes(id: int, entity: Optional[str] = None, bypass_cache: bool = False, status_msg: Message = None, status_text: str = None) -> Optional[Dict[str, Any]]:
     if status_msg and status_text:
-        try:
-            await status_msg.edit(f"{status_text}{FOOTER}")
+        try: await status_msg.edit(f"{status_text}{FOOTER}")
         except: pass
     return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache)
 
@@ -144,5 +143,12 @@ async def get_cached_artwork(entity_type: str, entity_id: int) -> Optional[str]:
     data = await get_mirror(entity_type, str(entity_id), 'artworkUrl')
     if data and data.get("mirrors", {}).get('artworkUrl'):
         url = data["mirrors"]['artworkUrl']['url']
+        return url.split('<token>/')[1] if '<token>' in url else url
+    return None
+
+async def get_cached_preview(track_id: int) -> Optional[str]:
+    data = await get_mirror('track', str(track_id), 'previewUrl')
+    if data and data.get("mirrors", {}).get('previewUrl'):
+        url = data["mirrors"]['previewUrl']['url']
         return url.split('<token>/')[1] if '<token>' in url else url
     return None

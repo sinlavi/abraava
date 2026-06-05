@@ -2,7 +2,7 @@ from balethon.objects import InlineKeyboardButton, InlineKeyboard
 from core.config import ITEMS_PER_PAGE
 from bot.keyboards import create_pagination_row, create_close_button
 from utils.messages import send_message, edit_message
-from utils.helpers import get_high_res_artwork, format_duration
+from utils.helpers import get_high_res_artwork, format_duration, generate_deep_link
 from crawlers.utils import get_or_crawl_artist, get_or_crawl_artist_collections, get_or_crawl_collection, get_or_crawl_collection_tracks, get_track
 from crawlers.youtube import get_artist_image
 import logging
@@ -21,7 +21,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         artist_name = artist.get('artistName', 'نامشخص')
         artist_image = get_artist_image(artist_name)
 
-        text = f"🎤 *نام هنرمند:* {artist_name}\n"
+        text = f"🎤 *نام هنرمند:* [{artist_name}]({generate_deep_link('artist', artist_id)})\n"
         text += f"🎭 *سبک:* {artist.get('primaryGenreName', 'نامشخص')}\n"
 
         collections_data = await get_or_crawl_artist_collections(artist_id)
@@ -38,11 +38,14 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
             for coll in page_items:
                 if coll['wrapperType'] == 'collection':
+                    year = coll.get('releaseDate', '')[:4]
+                    year_str = f" ({year})" if year else ""
+
                     if coll.get('trackCount') == 1:
-                        btn_text = f"🎵 {coll.get('collectionName', 'نامشخص')[:40]}"
+                        btn_text = f"🎵 {coll.get('collectionName', 'نامشخص')[:35]}{year_str}"
                         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"single_album:{coll['collectionId']}")])
                     else:
-                        btn_text = f"📀 {coll.get('collectionName', 'نامشخص')[:40]} - {coll.get('artistName', 'نامشخص')[:30]}"
+                        btn_text = f"📀 {coll.get('collectionName', 'نامشخص')[:35]}{year_str}"
                         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"collection:{coll['collectionId']}:1")])
 
             pagination = create_pagination_row(f"artist:{artist_id}", page, total_pages)
@@ -50,7 +53,6 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
         markup_rows.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
 
-        # RULE: Only edit if it's explicitly a pagination action on the SAME entity.
         if is_pagination and message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
             await edit_message(message_to_edit, text, reply_markup=markup_rows)
             await status_msg.delete()
@@ -79,9 +81,15 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         coll = collection_data['results'][0]
         tracks = tracks_data["results"] if tracks_data else []
         release_date = coll.get('releaseDate', 'نامشخص')[:10]
+        artist_name = coll.get('artistName', 'نامشخص')
+        artist_id = coll.get('artistId')
 
         text = f"📀 *نام آلبوم:* {coll.get('collectionName', 'نامشخص')}\n"
-        text += f"🎤 *نام هنرمند:* {coll.get('artistName', 'نامشخص')}\n"
+        if artist_id:
+            text += f"🎤 *نام هنرمند:* [{artist_name}]({generate_deep_link('artist', artist_id)})\n"
+        else:
+            text += f"🎤 *نام هنرمند:* {artist_name}\n"
+
         text += f"📅 *سال انتشار:* {release_date}\n"
         if coll.get('primaryGenreName'): text += f"🎸 *سبک:* {coll.get('primaryGenreName')}\n"
         if coll.get('trackCount'): text += f"🎵 *تعداد قطعات:* {coll.get('trackCount')}\n"
@@ -96,11 +104,13 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
             text += f"\n🎵 *لیست قطعات:*\n"
 
             for i, track in enumerate(page_items, (page-1)*ITEMS_PER_PAGE + 1):
+                # Track number from API if available, else positional
+                track_num = track.get('trackNumber', i)
                 duration = format_duration(track.get('trackTimeMillis', 0))
-                text += f"{i}. {track.get('trackName', 'نامشخص')} ({duration})\n"
+                text += f"{track_num}. {track.get('trackName', 'نامشخص')} ({duration})\n"
 
                 if track['wrapperType'] == 'track':
-                    btn_text = f"🎵 {track.get('trackName', 'نامشخص')[:35]} - {track.get('artistName', 'نامشخص')[:25]}"
+                    btn_text = f"🎵 {track_num}. {track.get('trackName', 'نامشخص')[:35]}"
                     markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"track:{track['trackId']}")])
 
             pagination = create_pagination_row(f"collection:{collection_id}", page, total_pages)
@@ -110,8 +120,8 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
             if is_private:
                 markup_rows.append([InlineKeyboardButton(text="⬇️ دانلود کل آلبوم", callback_data=f"download_album:{collection_id}")])
 
-        if coll.get("artistId"):
-            markup_rows.append([InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{coll['artistId']}:1")])
+        if artist_id:
+            markup_rows.append([InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}:1")])
 
         markup_rows.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:collection:{collection_id}")])
 
@@ -128,6 +138,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
                 await edit_message(status_msg, text, reply_markup=markup_rows)
 
     except Exception as e:
+        logger.error(f"Error in show_collection_page: {e}")
         await edit_message(status_msg, f"خطا در نمایش صفحه آلبوم: {e}")
 
 async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, message_to_edit=None):
@@ -141,10 +152,22 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         track = data["results"][0]
         duration = format_duration(track.get('trackTimeMillis', 0))
         release_year = track.get("releaseDate", "").split("-")[0] if track.get("releaseDate") else ""
+        artist_name = track.get('artistName', 'نامشخص')
+        artist_id = track.get('artistId')
+        collection_id = track.get('collectionId')
+        collection_name = track.get('collectionName', 'نامشخص')
 
         text = f"🎵 *نام آهنگ:* {track.get('trackName', 'نامشخص')}\n"
-        text += f"🎤 *نام هنرمند:* {track.get('artistName', 'نامشخص')}\n"
-        text += f"💿 *نام آلبوم:* {track.get('collectionName', 'نامشخص')}\n"
+        if artist_id:
+            text += f"🎤 *نام هنرمند:* [{artist_name}]({generate_deep_link('artist', artist_id)})\n"
+        else:
+            text += f"🎤 *نام هنرمند:* {artist_name}\n"
+
+        if collection_id:
+            text += f"💿 *نام آلبوم:* [{collection_name}]({generate_deep_link('collection', collection_id)})\n"
+        else:
+            text += f"💿 *نام آلبوم:* {collection_name}\n"
+
         text += f"⏱️ *مدت زمان:* {duration}\n"
         if release_year: text += f"📅 *سال انتشار:* {release_year}\n"
         if track.get('primaryGenreName'): text += f"🎸 *سبک:* {track.get('primaryGenreName')}\n"
@@ -157,21 +180,21 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         markup_rows.append(dl_btns)
 
         links = []
-        if track.get('collectionId'):
-            links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{track['collectionId']}:1"))
-        if track.get('artistId'):
-            links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{track['artistId']}:1"))
+        if collection_id:
+            links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{collection_id}:1"))
+        if artist_id:
+            links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}:1"))
         if links: markup_rows.append(links)
 
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
-        collection_id = track.get('collectionId')
 
-        artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id, artwork_url, owner_id)
+        artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id or track_id, artwork_url, owner_id)
         if artwork_data:
-            await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id)
+            await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id or track_id)
             await status_msg.delete()
         else:
             await edit_message(status_msg, text, reply_markup=markup_rows)
 
     except Exception as e:
+        logger.error(f"Error in show_track_page: {e}")
         await edit_message(status_msg, f"خطا در نمایش صفحه آهنگ: {e}")

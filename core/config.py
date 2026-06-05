@@ -8,6 +8,7 @@ BOT_NAME = "ابرآوا"
 BOT_USERNAME = "@abraava_bot"
 INFO_CHANNEL_USERNAME = "@abraava"
 FOOTER = f'\n\n{BOT_USERNAME}\n{INFO_CHANNEL_USERNAME}'
+DEEP_LINK_BASE = f"https://ble.ir/{BOT_USERNAME.lstrip('@')}?start="
 
 # Connection Settings
 PROXY = os.getenv("proxy")

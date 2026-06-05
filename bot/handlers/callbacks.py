@@ -4,6 +4,7 @@ from bot.handlers.details import show_artist_page, show_collection_page, show_tr
 from bot.handlers.search_results import send_search_results
 from bot.handlers.album_download import download_album
 from bot.handlers.search import handle_search
+from bot.handlers.preview import send_voice_preview
 import crawlers.utils
 from bot.keyboards import get_settings_keyboard, get_quality_keyboard, get_confirmation_keyboard
 from utils.messages import send_message, edit_message
@@ -86,13 +87,10 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         return
 
     # Details and Navigation
-    # Rule: Transitions between different entities use new messages (show_..._page does this).
-    # Pagination within the same photo message uses edit (show_..._page handles this).
-
     parts = data.split(":")
     if data.startswith("artist:"):
         artist_id, page = int(parts[1]), int(parts[2]) if len(parts) > 2 else 1
-        is_pag = len(parts) > 2 # Pagination usually includes page
+        is_pag = len(parts) > 2
         await show_artist_page(bot, chat_id, artist_id, page, artwork_service, user_id, callback_query.message, is_pagination=is_pag)
     elif data.startswith("collection:"):
         coll_id, page = int(parts[1]), int(parts[2]) if len(parts) > 2 else 1
@@ -106,10 +104,8 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         tracks_data = await crawlers.utils.get_or_crawl_collection_tracks(coll_id)
         if tracks_data and tracks_data.get("results"):
             track_id = tracks_data["results"][0].get("trackId")
-            if track_id:
-                await show_track_page(bot, chat_id, track_id, artwork_service, user_id, callback_query.message)
-            else:
-                await bot.answer_callback_query(callback_query.id, "❌ خطایی رخ داد", show_alert=True)
+            if track_id: await show_track_page(bot, chat_id, track_id, artwork_service, user_id, callback_query.message)
+            else: await bot.answer_callback_query(callback_query.id, "❌ خطایی رخ داد", show_alert=True)
     elif data.startswith("recrawl:"):
         type_, eid = parts[1], int(parts[2])
         if type_ == "artist": await show_artist_page(bot, chat_id, eid, 1, artwork_service, user_id, callback_query.message, force=True)
@@ -120,16 +116,13 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         search_id, type_, page = parts[2], parts[3], int(parts[4])
         cached = await search_cache_service.get(search_id)
         if cached:
-            # Paginating search results should EDIT the message.
             await send_search_results(bot, chat_id, type_, cached["term"], cached["results"], page,
                                      search_cache_service, user_id, callback_query.message)
         else:
             await bot.answer_callback_query(callback_query.id, "جستجو منقضی شده است", show_alert=True)
     elif data.startswith("refine:"):
-        # Fixed parsing for refine:type:term where term might have colons
         type_ = parts[1]
         term = ":".join(parts[2:])
-        # Refinement (switching category) should send a NEW message
         await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE)
 
     # Downloads
@@ -137,6 +130,10 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         track_id = int(parts[1])
         await bot.answer_callback_query(callback_query.id, "⏳ در حال آماده‌سازی...")
         await download_service.download_and_send_track(chat_id, track_id, user_id)
+    elif data.startswith("preview:"):
+        track_id = int(parts[1])
+        await bot.answer_callback_query(callback_query.id, "⏳ در حال دریافت...")
+        asyncio.create_task(send_voice_preview(bot, chat_id, track_id, user_id))
     elif data.startswith("download_album:"):
         coll_id = int(parts[1])
         await bot.answer_callback_query(callback_query.id, "📀 شروع دانلود آلبوم...")
@@ -146,6 +143,18 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         if user_id == owner_id_from_cb:
             download_service.album_tracker.cancel_download(user_id, coll_id)
             await bot.answer_callback_query(callback_query.id, "⏹️ توقف دانلود...")
+
+    # Retry logic
+    elif data.startswith("retry:"):
+        retry_data = data[6:]
+        if retry_data.startswith("search_retry:"):
+            _, t, term = retry_data.split(":", 2)
+            await handle_search(bot, chat_id, user_id, t, term, api_client, search_cache_service, OFFLINE_MODE)
+        elif retry_data.startswith("download_retry:"):
+            _, tid = retry_data.split(":")
+            await download_service.download_and_send_track(chat_id, int(tid), user_id)
+        try: await callback_query.message.delete()
+        except: pass
 
 async def update_settings_msg(bot, message, user_id, user_settings_service):
     settings = await user_settings_service.get_settings(user_id)
