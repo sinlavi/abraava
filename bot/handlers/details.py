@@ -5,6 +5,9 @@ from utils.messages import send_message, edit_message
 from utils.helpers import get_high_res_artwork, format_duration
 from crawlers.utils import get_or_crawl_artist, get_or_crawl_artist_collections, get_or_crawl_collection, get_or_crawl_collection_tracks, get_track
 from crawlers.youtube import get_artist_image
+import logging
+
+logger = logging.getLogger("ABRAAVA:DETAILS")
 
 async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner_id, message_to_edit=None, force=False):
     status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*")
@@ -16,6 +19,8 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
         artist = artist_data['results'][0]
         artist_name = artist.get('artistName', 'نامشخص')
+
+        # Consistent use of get_artist_image from crawlers.youtube
         artist_image = get_artist_image(artist_name)
 
         text = f"🎤 *نام هنرمند:* {artist_name}\n"
@@ -47,7 +52,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
         markup_rows.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
 
-        # NAVIGATION RULE: If we are paginating (message_to_edit is photo), EDIT. Otherwise SEND NEW.
+        # Paginating on same photo message
         if message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
             await edit_message(message_to_edit, text, reply_markup=markup_rows)
             await status_msg.delete()
@@ -60,6 +65,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
                 await edit_message(status_msg, text, reply_markup=markup_rows)
 
     except Exception as e:
+        logger.error(f"Error in show_artist_page: {e}")
         await edit_message(status_msg, f"خطا در نمایش صفحه هنرمند: {e}")
 
 async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False):
@@ -162,8 +168,6 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
         collection_id = track.get('collectionId')
 
-        # Tracks usually don't have pagination, so we always send a new message unless it's a direct refresh?
-        # User wants "not delete previous message", so SEND NEW.
         artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id, artwork_url, owner_id)
         if artwork_data:
             await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id)

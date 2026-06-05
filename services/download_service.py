@@ -7,6 +7,7 @@ from balethon import Client
 from balethon.objects import Message, InlineKeyboardButton, InlineKeyboard
 from core.logger import logger
 from core.config import OFFLINE_MODE, DEFAULT_QUALITY
+from core.http_client import HttpClient
 from models.schemas import DownloadQuality
 from crawlers.utils import get_track, get_or_crawl_collection, get_or_crawl_collection_tracks
 from crawlers.youtube import search_youtube_track, download_audio
@@ -58,9 +59,14 @@ class DownloadService:
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
                                                  track.get('artistName', ''), track.get('collectionName', ''),
                                                  0, 'cache', quality_value)
+                # Clear error notification if it was active and we succeeded
+                await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
                 return
             except Exception as e:
                 logger.error(f"Cache send failed: {e}")
+                if collection_id:
+                    async def cancel_album(): self.album_tracker.cancel_download(user_id, collection_id)
+                    await self.error_notifier.notify_upload_error(self.bot, str(e), cancel_album)
 
         if OFFLINE_MODE:
             await edit_message(status_msg, "بات در حالت آفلاین است.")
@@ -103,14 +109,22 @@ class DownloadService:
                                          f'https://tapi.bale.ai/file/bot<token>/{msg.audio.id}',
                                          quality=quality_value)
 
+                file_size = os.path.getsize(mp3_path)
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
                                                  track.get('artistName', ''), track.get('collectionName', ''),
-                                                 os.path.getsize(mp3_path), 'youtube', quality_value)
+                                                 file_size, 'youtube', quality_value)
                 self.download_rate_limiter.record_download(user_id, quality_value)
+                await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
                 await status_msg.delete()
         except Exception as e:
             logger.error(f"Download error: {e}")
             await edit_message(status_msg, "خطا در دانلود.")
+            # Trigger error notification
+            cancel_cb = None
+            if collection_id:
+                async def cancel_album(): self.album_tracker.cancel_download(user_id, collection_id)
+                cancel_cb = cancel_album
+            await self.error_notifier.notify_upload_error(self.bot, str(e), cancel_cb)
         finally:
             if temp_dir: shutil.rmtree(temp_dir, ignore_errors=True)
 

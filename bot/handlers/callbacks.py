@@ -3,9 +3,11 @@ from models.schemas import DownloadQuality
 from bot.handlers.details import show_artist_page, show_collection_page, show_track_page
 from bot.handlers.search_results import send_search_results
 from bot.handlers.album_download import download_album
+from bot.handlers.search import handle_search
 import crawlers.utils
 from bot.keyboards import get_settings_keyboard, get_quality_keyboard, get_confirmation_keyboard
 from utils.messages import send_message, edit_message
+from core.config import OFFLINE_MODE
 from core.logger import logger
 import asyncio
 
@@ -17,7 +19,8 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     user_id = callback_query.author.id
 
     if data == "close":
-        await callback_query.message.delete()
+        try: await callback_query.message.delete()
+        except: pass
         return
 
     if data == "ignore":
@@ -83,6 +86,9 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         return
 
     # Details and Navigation
+    # Rule: Transitions between different entities use new messages (show_..._page does this).
+    # Pagination within the same photo message uses edit (show_..._page handles this).
+
     parts = data.split(":")
     if data.startswith("artist:"):
         artist_id, page = int(parts[1]), int(parts[2]) if len(parts) > 2 else 1
@@ -112,10 +118,17 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         search_id, type_, page = parts[2], parts[3], int(parts[4])
         cached = await search_cache_service.get(search_id)
         if cached:
+            # Paginating search results should EDIT the message.
             await send_search_results(bot, chat_id, type_, cached["term"], cached["results"], page,
                                      search_cache_service, user_id, callback_query.message)
         else:
             await bot.answer_callback_query(callback_query.id, "جستجو منقضی شده است", show_alert=True)
+    elif data.startswith("refine:"):
+        # Fixed parsing for refine:type:term where term might have colons
+        type_ = parts[1]
+        term = ":".join(parts[2:])
+        # Refinement (switching category) should send a NEW message
+        await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE)
 
     # Downloads
     elif data.startswith("download:"):
