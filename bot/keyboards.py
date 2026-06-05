@@ -30,23 +30,21 @@ def create_pagination_row(callback_prefix: str, current_page: int, total_pages: 
     return buttons
 
 def get_settings_keyboard(quick_mode, quality_text, show_artwork, auto_download, notifications):
-    return InlineKeyboard(
+    return [
         [InlineKeyboardButton(text=f"{'✅' if quick_mode else '❌'} حالت سریع", callback_data="menu_quick_mode")],
         [InlineKeyboardButton(text=f"🎵 کیفیت دانلود ({quality_text})", callback_data="show_quality_menu")],
         [InlineKeyboardButton(text=f"{'🖼️' if show_artwork else '🚫'} نمایش کاور", callback_data="menu_artwork")],
         [InlineKeyboardButton(text=f"{'⚡' if auto_download else '⏸️'} دانلود خودکار", callback_data="menu_auto_download")],
         [InlineKeyboardButton(text=f"{'🔔' if notifications else '🔕'} دریافت اعلان", callback_data="menu_notifications")],
-        [InlineKeyboardButton(text="📊 آمار من", callback_data="show_stats")],
-        [create_close_button()]
-    )
+        [InlineKeyboardButton(text="📊 آمار من", callback_data="show_stats")]
+    ]
 
 def get_quality_keyboard(current_quality):
     from models.schemas import DownloadQuality
-    return InlineKeyboard(
+    return [
         [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.HIGH else ''}🎵 ۳۲۰ kbps", callback_data="set_quality:320")],
         [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.MEDIUM else ''}🎶 ۱۹۲ kbps", callback_data="set_quality:192")],
         [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.LOW else ''}🎧 ۱۲۸ kbps", callback_data="set_quality:128")],
         [InlineKeyboardButton(text=f"{'✅ ' if current_quality == DownloadQuality.ASK else ''}❓ هر بار بپرس", callback_data="set_quality:ask")],
-        [InlineKeyboardButton(text="🔙 بازگشت به تنظیمات", callback_data="back_to_settings")],
-        [create_close_button()]
-    )
+        [InlineKeyboardButton(text="🔙 بازگشت به تنظیمات", callback_data="back_to_settings")]
+    ]

@@ -42,14 +42,12 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
             markup_rows.append(pagination)
 
     markup_rows.append([
-        InlineKeyboardButton("🔍 آلبوم‌ها", f"refine:album:{term}"),
-        InlineKeyboardButton("🔍 هنرمندان", f"refine:artist:{term}"),
-        InlineKeyboardButton("🔍 آهنگ‌ها", f"refine:track:{term}")
+        InlineKeyboardButton(text="🔍 آلبوم‌ها", callback_data=f"refine:album:{term}"),
+        InlineKeyboardButton(text="🔍 هنرمندان", callback_data=f"refine:artist:{term}"),
+        InlineKeyboardButton(text="🔍 آهنگ‌ها", callback_data=f"refine:track:{term}")
     ])
 
-    markup = InlineKeyboard(*markup_rows)
-
     if message_to_edit:
-        await edit_message(message_to_edit, header, reply_markup=markup)
+        await edit_message(message_to_edit, header, reply_markup=markup_rows)
     else:
-        await send_message(bot, chat_id, header, reply_markup=markup)
+        await send_message(bot, chat_id, header, reply_markup=markup_rows)

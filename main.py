@@ -1,18 +1,20 @@
-from core.config import BOT_TOKEN, ADMIN_IDS
+from core.config import BOT_TOKEN, ADMIN_IDS, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
 from balethon import Client
 from balethon.objects import Message, CallbackQuery
 from core.logger import logger
-from core.config import API_BASE_URL, API_TOKEN, OFFLINE_MODE
+from core.http_client import HttpClient
+
 from services.api_client import APIClient
 from services.user_settings_service import UserSettingsService
 from services.artwork_service import ArtworkService
 from services.search_cache_service import search_cache_service
-from services.message_owner_service import message_owner_service
 from services.rate_limiter import RateLimiter, DownloadRateLimiter
 from services.tracker import AlbumDownloadTracker
 from services.tagging_service import TaggingService
 from services.error_notifier import BaleUploadErrorNotifier
 from services.download_service import DownloadService
+from services.membership_service import verify_all_memberships
+from services.registration_service import UserRegistrationService
 
 from bot.handlers.commands import start_command, help_command, about_command
 from bot.handlers.settings import settings_command, stats_command
@@ -21,14 +23,17 @@ from bot.handlers.callbacks import handle_callback
 from bot.handlers.broadcast import process_broadcast_message
 from utils.parser import parse_search_query
 from utils.messages import send_message
+from utils.validation import is_valid_message
 
 import asyncio
 import signal
 import sys
+import time
 
 # Initialize Services
 api_client = APIClient(API_BASE_URL, API_TOKEN)
 user_settings_service = UserSettingsService(api_client)
+registration_service = UserRegistrationService(api_client, user_settings_service)
 artwork_service = ArtworkService(api_client, user_settings_service)
 rate_limiter = RateLimiter()
 download_rate_limiter = DownloadRateLimiter()
@@ -44,25 +49,65 @@ download_service = DownloadService(bot, api_client, user_settings_service, artwo
 async def on_init():
     logger.info(f"Bot initialized. Offline Mode: {OFFLINE_MODE}")
 
+@bot.on_shutdown()
+async def on_shutdown():
+    await HttpClient.close()
+    logger.info("Bot shutting down...")
+
 @bot.on_message()
 async def on_message(message: Message):
     if message.author.is_bot: return
+
+    # Broadcast forward handling
+    if message.chat.type == "channel" and message.chat.id == INFO_CHANNEL_ID:
+        await process_broadcast_message(bot, message, api_client)
+        return
 
     user_id = message.author.id
     chat_id = message.chat.id
     text = message.content or ""
 
-    # Register user (simple version)
-    await user_settings_service.get_settings(user_id)
+    # Register user
+    await registration_service.register_user(message)
+
+    if message.chat.type == "channel": return
+
+    is_group = message.chat.type in ["group", "supergroup"]
+    if is_group:
+        bot_mention = f"@{bot.user.username}"
+        if bot_mention not in text: return
+        if not is_valid_message(message): return
+        text = text.replace(bot_mention, "").strip()
+        if len(text) > 100:
+            await message.reply("⚠️ *متن پیام خیلی طولانی است*\n\nحداکثر ۱۰۰ کاراکتر مجاز است.")
+            return
+
+    # Membership check
+    if not text.startswith("/start"):
+        is_member, missing = await verify_all_memberships(bot, user_id, api_client)
+        if not is_member:
+            channels_text = ""
+            for ch in missing:
+                name = ch.get('channel_name', ch.get('channel_username', ch.get('channel_id')))
+                link = ch.get('invite_link', '')
+                channels_text += f"[{name}]({link})\n" if link else f"{name}\n"
+            await send_message(bot, chat_id, f"⚠️ *برای استفاده از ربات باید در کانال‌های زیر عضو شوید:*\n\n{channels_text}\n\nپس از عضویت، دوباره تلاش کنید.")
+            return
 
     if text.startswith("/start"):
         await start_command(bot, message)
     elif text.startswith("/help"):
         await help_command(bot, message)
     elif text.startswith("/settings"):
-        await settings_command(bot, message, user_settings_service)
+        if is_group:
+            await message.reply("⚙️ تنظیمات فقط در پیوی در دسترس است.")
+        else:
+            await settings_command(bot, message, user_settings_service)
     elif text.startswith("/stats"):
-        await stats_command(bot, message, api_client, rate_limiter, download_rate_limiter)
+        if is_group:
+            await message.reply("📊 آمار فقط در پیوی در دسترس است.")
+        else:
+            await stats_command(bot, message, api_client, rate_limiter, download_rate_limiter)
     elif text.startswith("/about"):
         await about_command(bot, message)
     else:
@@ -87,4 +132,13 @@ def signal_handler(sig, frame):
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    bot.run()
+
+    logger.info("ABRAAVA bot is starting...")
+    while True:
+        try:
+            bot.run()
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            logger.exception(f"Bot crashed: {e}")
+            time.sleep(60)

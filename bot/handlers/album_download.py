@@ -27,7 +27,7 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service)
         for idx, track in enumerate(tracks, 1):
             download_service.album_tracker.add_track(user_id, collection_id, track.get('trackName', 'Unknown'), idx)
 
-        cancel_markup = InlineKeyboard([InlineKeyboardButton(text="❌ لغو دانلود آلبوم", callback_data=f"cancel_album:{user_id}:{collection_id}")])
+        cancel_markup = [[InlineKeyboardButton(text="❌ لغو دانلود آلبوم", callback_data=f"cancel_album:{user_id}:{collection_id}")]]
 
         # Get album cover
         album_cover_bytes = await download_service._get_artwork_bytes(coll)

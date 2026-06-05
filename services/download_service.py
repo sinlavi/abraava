@@ -1,6 +1,7 @@
 import asyncio
 import os
 import shutil
+from pathlib import Path
 from typing import Optional, Union, List
 from balethon import Client
 from balethon.objects import Message, InlineKeyboardButton, InlineKeyboard
@@ -53,7 +54,7 @@ class DownloadService:
             try:
                 await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
                 markup = self._build_audio_markup(track_id)
-                await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=markup)
+                await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=InlineKeyboard(*markup))
                 await status_msg.delete()
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
                                                  track.get('artistName', ''), track.get('collectionName', ''),
@@ -98,7 +99,7 @@ class DownloadService:
 
                 markup = self._build_audio_markup(track_id)
                 with open(mp3_path, 'rb') as f:
-                    msg = await self.bot.send_audio(chat_id, audio=f, caption=caption, reply_markup=markup)
+                    msg = await self.bot.send_audio(chat_id, audio=f, caption=caption, reply_markup=InlineKeyboard(*markup))
                     if msg and track_id:
                         await set_mirror('track', str(track_id), 'audioUrl',
                                          f'https://tapi.bale.ai/file/bot<token>/{msg.audio.id}',
@@ -127,11 +128,11 @@ class DownloadService:
         return "\n".join(parts)
 
     def _build_audio_markup(self, track_id):
-        return InlineKeyboard(
+        return [
             [InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://player.abraava.ir?id={track_id}")],
             [InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"https://player.abraava.ir?id={track_id}")],
             [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
-        )
+        ]
 
     async def _get_artwork_bytes(self, track):
         coll_id = track.get('collectionId')

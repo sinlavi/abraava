@@ -49,7 +49,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         if artwork_data:
             await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, InlineKeyboard(*markup_rows), "artist", artist_id)
         else:
-            await send_message(bot, chat_id, text, reply_markup=InlineKeyboard(*markup_rows))
+            await send_message(bot, chat_id, text, reply_markup=markup_rows)
 
         await status_msg.delete()
         if message_to_edit:
@@ -112,7 +112,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         if artwork_data:
             await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, InlineKeyboard(*markup_rows), "collection", collection_id)
         else:
-            await send_message(bot, chat_id, text, reply_markup=InlineKeyboard(*markup_rows))
+            await send_message(bot, chat_id, text, reply_markup=markup_rows)
 
         await status_msg.delete()
         if message_to_edit:
@@ -159,7 +159,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         if artwork_data:
             await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, InlineKeyboard(*markup_rows), "collection", collection_id)
         else:
-            await send_message(bot, chat_id, text, reply_markup=InlineKeyboard(*markup_rows))
+            await send_message(bot, chat_id, text, reply_markup=markup_rows)
 
         await status_msg.delete()
         if message_to_edit:

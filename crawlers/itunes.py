@@ -6,9 +6,10 @@ import random
 from typing import Optional, Dict, Any, Literal, List
 from pathlib import Path
 
-from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY
+from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY, FOOTER
 from core.logger import logger
 from core.http_client import HttpClient
+from balethon.objects import Message
 
 
 class iTunesCache:
@@ -85,7 +86,7 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
     max_attempts = 1 if is_mirror else 3
 
     for attempt in range(max_attempts):
-        base_url = ITUNES_BASE_URL if is_mirror else endpoint_manager.get_endpoint()
+        base_url = endpoint_manager.get_endpoint() if not is_mirror else ITUNES_BASE_URL
         api_path = f"/{endpoint}" if not endpoint.startswith("/") else endpoint
         url = f"{base_url}{api_path}"
 
@@ -115,8 +116,12 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
 async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50) -> Optional[Dict[str, Any]]:
     return await fetch_itunes("search", {"term": term, "media": "music", "limit": limit, "entity": entity} if entity else {"term": term, "media": "music", "limit": limit})
 
-async def lookup_itunes(id: int, entity: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id})
+async def lookup_itunes(id: int, entity: Optional[str] = None, bypass_cache: bool = False, status_msg: Message = None, status_text: str = None) -> Optional[Dict[str, Any]]:
+    if status_msg and status_text:
+        try:
+            await status_msg.edit(f"{status_text}{FOOTER}")
+        except: pass
+    return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache)
 
 async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url: str, quality: str = None) -> Optional[Dict[str, Any]]:
     payload = {"entityType": entity_type, "entityId": entity_id, "urlType": url_type, "mirrorUrl": mirror_url}
