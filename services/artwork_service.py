@@ -8,6 +8,7 @@ from core.logger import logger
 from core.http_client import HttpClient
 from services.api_client import APIClient
 from crawlers.itunes import set_mirror, get_mirror
+from crawlers.youtube import get_artist_image
 from utils.helpers import get_high_res_artwork
 from bot.keyboards import create_close_button
 
@@ -47,17 +48,23 @@ class ArtworkService:
 
     async def get_artwork_for_display(self, entity_type: str, entity_id: int,
                                        artwork_url: Optional[str] = None,
-                                       user_id: Optional[int] = None) -> Optional[Union[str, bytes]]:
+                                       user_id: Optional[int] = None,
+                                       entity_name: str = None) -> Optional[Union[str, bytes]]:
         settings = await self.user_settings_service.get_settings(user_id)
         if not settings.show_artwork: return None
 
         cached_file_id = await self.get_cached_artwork_url(entity_type, entity_id)
         if cached_file_id: return cached_file_id
 
-        if artwork_url:
+        # Fallback for artist artwork from YouTube Music
+        final_url = artwork_url
+        if entity_type == "artist" and not final_url and entity_name:
+            final_url = get_artist_image(entity_name)
+
+        if final_url:
             try:
                 session = await HttpClient.get_session()
-                async with session.get(artwork_url, timeout=30) as resp:
+                async with session.get(final_url, timeout=30) as resp:
                     if resp.status == 200: return await resp.read()
             except Exception as e:
                 logger.error(f"Error downloading artwork: {e}")
@@ -67,8 +74,7 @@ class ArtworkService:
                                   caption: str, reply_markup=None,
                                   entity_type: str = None, entity_id: int = None):
         try:
-            from utils.messages import _prepare_markup
-            from core.config import FOOTER
+            from utils.messages import _prepare_markup, FOOTER
             reply_markup = _prepare_markup(reply_markup, False)
 
             if isinstance(artwork_data, str):

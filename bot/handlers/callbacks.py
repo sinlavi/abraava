@@ -92,10 +92,12 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     parts = data.split(":")
     if data.startswith("artist:"):
         artist_id, page = int(parts[1]), int(parts[2]) if len(parts) > 2 else 1
-        await show_artist_page(bot, chat_id, artist_id, page, artwork_service, user_id, callback_query.message)
+        is_pag = len(parts) > 2 # Pagination usually includes page
+        await show_artist_page(bot, chat_id, artist_id, page, artwork_service, user_id, callback_query.message, is_pagination=is_pag)
     elif data.startswith("collection:"):
         coll_id, page = int(parts[1]), int(parts[2]) if len(parts) > 2 else 1
-        await show_collection_page(bot, chat_id, coll_id, page, artwork_service, user_id, callback_query.message)
+        is_pag = len(parts) > 2
+        await show_collection_page(bot, chat_id, coll_id, page, artwork_service, user_id, callback_query.message, is_pagination=is_pag)
     elif data.startswith("track:"):
         track_id = int(parts[1])
         await show_track_page(bot, chat_id, track_id, artwork_service, user_id, callback_query.message)

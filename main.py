@@ -15,12 +15,14 @@ from services.error_notifier import BaleUploadErrorNotifier
 from services.download_service import DownloadService
 from services.membership_service import verify_all_memberships
 from services.registration_service import UserRegistrationService
+from services.direct_download_service import DirectDownloadService
 
 from bot.handlers.commands import start_command, help_command, about_command
 from bot.handlers.settings import settings_command, stats_command
 from bot.handlers.search import handle_search, quick_search
 from bot.handlers.callbacks import handle_callback
 from bot.handlers.broadcast import process_broadcast_message
+from bot.handlers.details import show_track_page, show_collection_page
 from utils.parser import parse_search_query
 from utils.messages import send_message
 from utils.validation import is_valid_message
@@ -44,6 +46,7 @@ error_notifier = BaleUploadErrorNotifier(api_client)
 bot = Client(token=BOT_TOKEN)
 download_service = DownloadService(bot, api_client, user_settings_service, artwork_service,
                                    tagging_service, error_notifier, album_tracker, download_rate_limiter)
+direct_download_service = DirectDownloadService(bot, tagging_service)
 
 @bot.on_initialize()
 async def on_init():
@@ -91,11 +94,8 @@ async def on_message(message: Message):
             for ch in missing:
                 name = ch.get('channel_name', ch.get('channel_username', ch.get('channel_id')))
                 link = ch.get('invite_link', '')
-                if link:
-                    markup_rows.append([InlineKeyboardButton(text=f"📢 {name}", url=link)])
-                else:
-                    channels_text += f"\n\n🔸 {name}"
-
+                if link: markup_rows.append([InlineKeyboardButton(text=f"📢 {name}", url=link)])
+                else: channels_text += f"\n\n🔸 {name}"
             await send_message(bot, chat_id, channels_text, reply_markup=markup_rows)
             return
 
@@ -118,6 +118,12 @@ async def on_message(message: Message):
             settings = await user_settings_service.get_settings(user_id)
             if type_ == "quick" or settings.quick_mode:
                 await quick_search(bot, chat_id, user_id, term, api_client, user_settings_service, download_service)
+            elif type_ == "itunes_track":
+                await show_track_page(bot, chat_id, int(term), artwork_service, user_id)
+            elif type_ == "itunes_album":
+                await show_collection_page(bot, chat_id, int(term), 1, artwork_service, user_id)
+            elif type_ == "direct_link":
+                await direct_download_service.download_direct(chat_id, term, user_id, settings.download_quality.value if settings.download_quality.value != "ask" else "192")
             else:
                 await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE)
 

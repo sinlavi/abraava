@@ -12,7 +12,7 @@ from models.schemas import DownloadQuality
 from crawlers.utils import get_track, get_or_crawl_collection, get_or_crawl_collection_tracks
 from crawlers.youtube import search_youtube_track, download_audio
 from crawlers.itunes import get_cached_audio, set_mirror, get_cached_artwork, get_mirror
-from utils.helpers import get_high_res_artwork
+from utils.helpers import get_high_res_artwork, format_duration
 from utils.messages import send_message, edit_message
 
 class DownloadService:
@@ -55,11 +55,10 @@ class DownloadService:
                 await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
                 markup = self._build_audio_markup(track_id)
                 await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=InlineKeyboard(*markup))
-                await status_msg.delete()
+                if not is_batch: await status_msg.delete()
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
                                                  track.get('artistName', ''), track.get('collectionName', ''),
                                                  0, 'cache', quality_value)
-                # Clear error notification if it was active and we succeeded
                 await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
                 return
             except Exception as e:
@@ -115,11 +114,10 @@ class DownloadService:
                                                  file_size, 'youtube', quality_value)
                 self.download_rate_limiter.record_download(user_id, quality_value)
                 await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
-                await status_msg.delete()
+                if not is_batch: await status_msg.delete()
         except Exception as e:
             logger.error(f"Download error: {e}")
             await edit_message(status_msg, "خطا در دانلود.")
-            # Trigger error notification
             cancel_cb = None
             if collection_id:
                 async def cancel_album(): self.album_tracker.cancel_download(user_id, collection_id)
@@ -129,14 +127,16 @@ class DownloadService:
             if temp_dir: shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _build_caption(self, track, quality_value):
-        parts = [
-            f"🎵 *نام آهنگ:* {track.get('trackName', 'Unknown')}",
-            f"🎤 *نام هنرمند:* {track.get('artistName', 'Unknown')}",
-        ]
-        if track.get('collectionName'):
-            parts.append(f"💿 *نام آلبوم:* {track.get('collectionName')}")
-        parts.append(f"📀 *کیفیت دانلود:* {quality_value} kbps")
-        return "\n".join(parts)
+        fields = {
+            "🎵 نام آهنگ": track.get('trackName'),
+            "🎤 نام هنرمند": track.get('artistName'),
+            "💿 نام آلبوم": track.get('collectionName'),
+            "📅 سال انتشار": track.get('releaseDate', '')[:4],
+            "🎸 سبک": track.get('primaryGenreName'),
+            "⏱️ مدت زمان": format_duration(track.get('trackTimeMillis', 0)),
+            "📀 کیفیت دانلود": f"{quality_value} kbps"
+        }
+        return "\n".join([f"{k}: {v}" for k, v in fields.items() if v and str(v).strip()])
 
     def _build_audio_markup(self, track_id):
         return [

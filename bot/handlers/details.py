@@ -9,7 +9,7 @@ import logging
 
 logger = logging.getLogger("ABRAAVA:DETAILS")
 
-async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner_id, message_to_edit=None, force=False):
+async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False):
     status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*")
     try:
         artist_data = await get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force)
@@ -19,8 +19,6 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
         artist = artist_data['results'][0]
         artist_name = artist.get('artistName', 'نامشخص')
-
-        # Consistent use of get_artist_image from crawlers.youtube
         artist_image = get_artist_image(artist_name)
 
         text = f"🎤 *نام هنرمند:* {artist_name}\n"
@@ -52,12 +50,12 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
         markup_rows.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
 
-        # Paginating on same photo message
-        if message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
+        # RULE: Only edit if it's explicitly a pagination action on the SAME entity.
+        if is_pagination and message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
             await edit_message(message_to_edit, text, reply_markup=markup_rows)
             await status_msg.delete()
         else:
-            artwork_data = await artwork_service.get_artwork_for_display("artist", artist_id, artist_image, owner_id)
+            artwork_data = await artwork_service.get_artwork_for_display("artist", artist_id, artist_image, owner_id, entity_name=artist_name)
             if artwork_data:
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "artist", artist_id)
                 await status_msg.delete()
@@ -68,7 +66,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         logger.error(f"Error in show_artist_page: {e}")
         await edit_message(status_msg, f"خطا در نمایش صفحه هنرمند: {e}")
 
-async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False):
+async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False):
     status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*")
     try:
         collection_data = await get_or_crawl_collection(collection_id, status_msg, force)
@@ -117,7 +115,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
 
         markup_rows.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:collection:{collection_id}")])
 
-        if message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
+        if is_pagination and message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
             await edit_message(message_to_edit, text, reply_markup=markup_rows)
             await status_msg.delete()
         else:
