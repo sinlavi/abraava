@@ -107,14 +107,37 @@ class DirectDownloadService:
             await edit_message(status_msg, "❌ خطا در دریافت اطلاعات پیوند.")
             return
 
-        text = f"🎵 *اطلاعات یافت شده:*\n\n"
-        text += f"🎵 *نام آهنگ:* [{meta['title']}]({url})\n"
-        text += f"🎤 *نام هنرمند:* {meta['uploader']}\n"
-        if meta['album']: text += f"💿 *نام آلبوم:* {meta['album']}\n"
-        if meta['duration']:
-            from utils.helpers import format_duration
-            text += f"⏱️ *مدت زمان:* {format_duration(meta['duration'] * 1000)}\n"
-        text += f"\nآیا مایل به دانلود این ترک هستید؟"
+        # Prepare dummy track data for build_caption
+        dummy_track = {
+            "trackName": meta.get('title'),
+            "artistName": meta.get('uploader'),
+            "collectionName": meta.get('album'),
+            "trackTimeMillis": (meta.get('duration') or 0) * 1000,
+            "trackViewUrl": url,
+            "releaseDate": meta.get('upload_date', '')[:4]
+        }
+
+        from services.download_service import DownloadService
+        # We need a dummy DownloadService or just the static method if it was static.
+        # It's not static, but we can call it if we have an instance or use the logic.
+        # Let's use the logic to be safe or create a local helper.
+
+        from utils.helpers import format_duration
+        fields = {
+            "🎵 نام آهنگ": f"[{dummy_track['trackName']}]({url})" if dummy_track['trackName'] else None,
+            "🎤 نام هنرمند": dummy_track['artistName'],
+            "💿 نام آلبوم": dummy_track['collectionName'],
+            "📅 سال انتشار": dummy_track['releaseDate'],
+            "⏱️ مدت زمان": format_duration(dummy_track['trackTimeMillis']) if dummy_track['trackTimeMillis'] > 0 else None
+        }
+
+        caption_lines = ["🎵 *اطلاعات یافت شده:*\n"]
+        for k, v in fields.items():
+            if v and str(v).strip() and "Unknown" not in str(v) and "نامشخص" not in str(v) and "None" not in str(v):
+                caption_lines.append(f"{k}: {v}")
+
+        caption_lines.append(f"\nآیا مایل به دانلود این ترک هستید؟")
+        text = "\n".join(caption_lines)
 
         from bot.handlers.callbacks import store_direct_link
         link_id = await store_direct_link(url)

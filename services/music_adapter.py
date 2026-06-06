@@ -71,20 +71,39 @@ class MusicAdapter:
             else:
                 artist_name = "Unknown"
 
-            album = ytm_data.get("album") or {}
+            album = ytm_data.get("album")
+            if isinstance(album, dict):
+                album_name = album.get("name")
+            else:
+                album_name = album if album else None
+
             thumbnails = ytm_data.get("thumbnails", [])
+            artwork_url = thumbnails[-1]["url"] if thumbnails else None
+            if artwork_url and "w120-h120" in artwork_url:
+                artwork_url = artwork_url.replace("w120-h120", "w1000-h1000")
 
             # Extract videoId properly
             v_id = ytm_data.get('videoId') or ytm_data.get('id')
+
+            duration = ytm_data.get("duration_seconds") or ytm_data.get("duration") or 0
+            if isinstance(duration, str):
+                # Handle cases where duration might be like "4:24"
+                if ":" in duration:
+                    parts = duration.split(":")
+                    if len(parts) == 2: duration = int(parts[0]) * 60 + int(parts[1])
+                    elif len(parts) == 3: duration = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                else:
+                    try: duration = int(duration)
+                    except: duration = 0
 
             return {
                 "wrapperType": "track",
                 "trackId": f"yt_{v_id}" if v_id else None,
                 "trackName": ytm_data.get("title", "Unknown"),
                 "artistName": artist_name,
-                "collectionName": album.get("name") if isinstance(album, dict) else (album if album else None),
-                "artworkUrl100": thumbnails[-1]["url"] if thumbnails else None,
-                "trackTimeMillis": (ytm_data.get("duration_seconds") or ytm_data.get("duration", 0)) * 1000,
+                "collectionName": album_name,
+                "artworkUrl100": artwork_url,
+                "trackTimeMillis": duration * 1000,
                 "releaseDate": str(ytm_data.get("year", "")) if ytm_data.get("year") else None,
                 "trackViewUrl": f"https://music.youtube.com/watch?v={v_id}" if v_id else None
             }
@@ -137,7 +156,15 @@ class MusicAdapter:
         loop = asyncio.get_event_loop()
         try:
             filter_map = {"track": "songs", "album": "albums", "artist": "artists"}
-            results = await loop.run_in_executor(None, lambda: self.ytm.search(term, filter=filter_map.get(entity_type, "songs"), limit=limit))
+            yt_filter = filter_map.get(entity_type, "songs")
+
+            results = await loop.run_in_executor(None, lambda: self.ytm.search(term, filter=yt_filter, limit=limit))
+
+            # Fallback if filter returned nothing
+            if not results:
+                results = await loop.run_in_executor(None, lambda: self.ytm.search(term, limit=limit))
+                results = [r for r in results if r.get('resultType') in ['video', 'song']] if entity_type == 'track' else results
+
             return [self._ytm_to_itunes(item, entity_type) for item in results]
         except Exception as e:
             logger.error(f"YTM search error: {e}")
@@ -225,14 +252,22 @@ class MusicAdapter:
         try:
             if video_id.startswith("yt_"): video_id = video_id[3:]
             track = await loop.run_in_executor(None, lambda: self.ytm.get_song(video_id))
-            # get_song returns a different format, need to adjust
+
             video_details = track.get("videoDetails", {})
+            if not video_details:
+                return None
+
+            thumbnails = video_details.get("thumbnail", {}).get("thumbnails", [])
+            artwork_url = thumbnails[-1]["url"] if thumbnails else None
+            if artwork_url and "w120-h120" in artwork_url:
+                artwork_url = artwork_url.replace("w120-h120", "w1000-h1000")
+
             return {
                 "wrapperType": "track",
                 "trackId": f"yt_{video_id}",
                 "trackName": video_details.get("title"),
                 "artistName": video_details.get("author"),
-                "artworkUrl100": video_details.get("thumbnail", {}).get("thumbnails", [{}])[-1].get("url"),
+                "artworkUrl100": artwork_url,
                 "trackTimeMillis": int(video_details.get("lengthSeconds", 0)) * 1000,
                 "trackViewUrl": f"https://music.youtube.com/watch?v={video_id}"
             }

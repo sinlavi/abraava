@@ -6,7 +6,7 @@ from bot.handlers.album_download import download_album
 from bot.handlers.search import handle_search
 from bot.handlers.preview import send_voice_preview
 import crawlers.utils
-from bot.keyboards import get_settings_keyboard, get_quality_keyboard, get_confirmation_keyboard
+from bot.keyboards import get_settings_keyboard, get_quality_keyboard, get_confirmation_keyboard, create_close_button
 from utils.messages import send_message, edit_message
 from core.config import OFFLINE_MODE
 from core.logger import logger

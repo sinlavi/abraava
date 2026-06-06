@@ -173,7 +173,7 @@ class DownloadService:
 
         caption_lines = []
         for k, v in fields.items():
-            if v and str(v).strip() and "Unknown" not in str(v):
+            if v and str(v).strip() and "Unknown" not in str(v) and "نامشخص" not in str(v) and "None" not in str(v):
                 caption_lines.append(f"{k}: {v}")
 
         return "\n".join(caption_lines) + f"\n\n{FOOTER}"
@@ -182,5 +182,6 @@ class DownloadService:
         return [
             [InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://player.abraava.ir?id={track_id}")],
             [InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"https://player.abraava.ir?id={track_id}")],
+            [InlineKeyboardButton(text="🌐 اطلاعات بیشتر", web_app=f"https://player.abraava.ir?id={track_id}")],
             [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
         ]
