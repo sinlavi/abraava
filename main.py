@@ -1,6 +1,6 @@
+from balethon.objects import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboard
 from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
 from balethon import Client
-from balethon.objects import Message, CallbackQuery, InlineKeyboardButton
 from core.logger import logger
 from core.http_client import HttpClient
 
@@ -61,7 +61,7 @@ async def on_shutdown():
 
 @bot.on_message()
 async def on_message(message: Message):
-    if message.author.is_bot: return
+    if not message.author or message.author.is_bot: return
 
     # Broadcast forward handling
     if message.chat.type == "channel" and str(message.chat.id) == str(INFO_CHANNEL_ID):
@@ -106,7 +106,7 @@ async def on_message(message: Message):
                     markup_rows.append([InlineKeyboardButton(text=f"📢 عضویت در {name}", url=link)])
                 else:
                     channels_text += f"\n\n🔸 {name}"
-            await send_message(bot, chat_id, channels_text, reply_markup=InlineKeyboard(*markup_rows) if markup_rows else None)
+            await send_message(bot, chat_id, channels_text, reply_markup=InlineKeyboard(*markup_rows) if markup_rows else None, user_id=user_id)
             return
 
     if text.startswith("/start"):
@@ -144,7 +144,7 @@ async def on_message(message: Message):
                     "ytm": "🎧 *راهنمای جستجو در یوتیوب موزیک:*\n\nکافیست نام آهنگ را مقابل دستور بنویسید.\nمثال: `/ytm shape of you`",
                     "sc": "☁️ *راهنمای جستجو در ساندکلاد:*\n\nکافیست نام آهنگ را مقابل دستور بنویسید.\nمثال: `/sc shadow of the day`"
                 }
-                await send_message(bot, chat_id, usage_map.get(type_, "⚠️ لطفا عبارت مورد نظر خود را وارد کنید."))
+                await send_message(bot, chat_id, usage_map.get(type_, "⚠️ لطفا عبارت مورد نظر خود را وارد کنید."), user_id=user_id)
                 return
 
             settings = await user_settings_service.get_settings(user_id)
@@ -157,10 +157,10 @@ async def on_message(message: Message):
             elif type_ == "itunes_artist":
                 await show_artist_page(bot, chat_id, int(term), 1, artwork_service, user_id)
             elif type_ == "music_link":
-                status_msg = await send_message(bot, chat_id, "🔍 *در حال بررسی پیوند...*")
+                status_msg = await send_message(bot, chat_id, "🔍 *در حال بررسی پیوند...*", user_id=user_id)
                 resolved = await OdesliService.resolve_link(term)
                 if not resolved:
-                    await edit_message(status_msg, "❌ متأسفانه اطلاعاتی برای این پیوند یافت نشد.")
+                    await edit_message(status_msg, "❌ متأسفانه اطلاعاتی برای این پیوند یافت نشد.", user_id=user_id)
                     return
 
                 res_type = resolved.get("type")
@@ -183,20 +183,20 @@ async def on_message(message: Message):
                             await show_track_page(bot, chat_id, f"yt_{m.group(1)}", artwork_service, user_id, message_to_edit=status_msg)
                         else:
                             await status_msg.delete()
-                            await direct_download_service.ask_confirmation(chat_id, yt_url)
+                            await direct_download_service.ask_confirmation(chat_id, yt_url, user_id=user_id)
                     else:
                         # No link at all, try searching
                         title, artist = resolved.get("title"), resolved.get("artist")
                         if title and artist:
-                            await edit_message(status_msg, f"🔍 *در حال جستجوی آهنگ در یوتیوب...*\n\n🎵 {title} - {artist}")
+                            await edit_message(status_msg, f"🔍 *در حال جستجوی آهنگ در یوتیوب...*\n\n🎵 {title} - {artist}", user_id=user_id)
                             from crawlers.youtube import search_youtube_track
                             vid_id = await search_youtube_track(title, artist, resolved.get("album", ""), "")
                             if vid_id:
                                 await show_track_page(bot, chat_id, f"yt_{vid_id}", artwork_service, user_id, message_to_edit=status_msg)
                             else:
-                                await edit_message(status_msg, "❌ متأسفانه نسخه قابل دانلودی یافت نشد.")
+                                await edit_message(status_msg, "❌ متأسفانه نسخه قابل دانلودی یافت نشد.", user_id=user_id)
                         else:
-                            await edit_message(status_msg, "❌ متأسفانه اطلاعات کافی برای این پیوند یافت نشد.")
+                            await edit_message(status_msg, "❌ متأسفانه اطلاعات کافی برای این پیوند یافت نشد.", user_id=user_id)
             elif type_ == "direct_link":
                 yt_m = re.search(r'(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})', term)
                 sc_m = re.search(r'soundcloud\.com\/([a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+)', term)
@@ -206,7 +206,7 @@ async def on_message(message: Message):
                 elif sc_m:
                     await show_track_page(bot, chat_id, f"sc_{sc_m.group(1)}", artwork_service, user_id)
                 else:
-                    await direct_download_service.ask_confirmation(chat_id, term)
+                    await direct_download_service.ask_confirmation(chat_id, term, user_id=user_id)
             else:
                 await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE)
 
