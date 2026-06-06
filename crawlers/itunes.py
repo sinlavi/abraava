@@ -5,6 +5,7 @@ import time
 import random
 from typing import Optional, Dict, Any, Literal, List
 from pathlib import Path
+import aiosqlite
 
 from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY, FOOTER
 from core.logger import logger
@@ -13,38 +14,63 @@ from balethon.objects import Message
 from utils.messages import edit_message
 
 
-class iTunesCache:
-    def __init__(self, cache_dir: str = "cache/itunes", ttl_seconds: int = 4 * 3600):
-        self.cache_dir = Path(cache_dir)
+class iTunesSQLiteCache:
+    def __init__(self, db_path: str = "cache/itunes_cache.db", ttl_seconds: int = 4 * 3600):
+        self.db_path = db_path
         self.ttl_seconds = ttl_seconds
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._db: Optional[aiosqlite.Connection] = None
+        self._lock = asyncio.Lock()
+
+    async def _get_db(self) -> aiosqlite.Connection:
+        async with self._lock:
+            if self._db is None:
+                self._db = await aiosqlite.connect(self.db_path)
+                await self._db.execute(
+                    "CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, response TEXT, timestamp REAL)"
+                )
+                await self._db.commit()
+            return self._db
 
     def _get_cache_key(self, endpoint: str, params: dict) -> str:
         key_data = f"{endpoint}:{json.dumps(params, sort_keys=True)}"
         return hashlib.md5(key_data.encode()).hexdigest()
 
-    def get(self, endpoint: str, params: dict) -> Optional[Dict[str, Any]]:
+    async def get(self, endpoint: str, params: dict) -> Optional[Dict[str, Any]]:
         cache_key = self._get_cache_key(endpoint, params)
-        cache_path = self.cache_dir / f"{cache_key}.json"
-        if not cache_path.exists(): return None
         try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                cached_data = json.load(f)
-            if time.time() - cached_data.get("_cache_timestamp", 0) > self.ttl_seconds:
-                cache_path.unlink(missing_ok=True)
-                return None
-            return cached_data.get("response")
-        except Exception: return None
+            db = await self._get_db()
+            async with db.execute("SELECT response, timestamp FROM cache WHERE key = ?", (cache_key,)) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    response_json, timestamp = row
+                    if time.time() - timestamp > self.ttl_seconds:
+                        await db.execute("DELETE FROM cache WHERE key = ?", (cache_key,))
+                        await db.commit()
+                        return None
+                    return json.loads(response_json)
+        except Exception as e:
+            logger.error(f"Error reading from SQLite cache: {e}")
+        return None
 
-    def set(self, endpoint: str, params: dict, response: Dict[str, Any]):
+    async def set(self, endpoint: str, params: dict, response: Dict[str, Any]):
         cache_key = self._get_cache_key(endpoint, params)
-        cache_path = self.cache_dir / f"{cache_key}.json"
         try:
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump({"_cache_timestamp": time.time(), "response": response}, f, ensure_ascii=False, indent=2)
-        except Exception: pass
+            db = await self._get_db()
+            await db.execute(
+                "INSERT OR REPLACE INTO cache (key, response, timestamp) VALUES (?, ?, ?)",
+                (cache_key, json.dumps(response), time.time())
+            )
+            await db.commit()
+        except Exception as e:
+            logger.error(f"Error writing to SQLite cache: {e}")
 
-_itunes_cache = iTunesCache()
+    async def close(self):
+        if self._db:
+            await self._db.close()
+            self._db = None
+
+_itunes_cache = iTunesSQLiteCache()
 
 ALTERNATIVE_ENDPOINTS = [ITUNES_BASE_URL, "https://itunes.apple.com", "https://ax.itunes.apple.com", "https://buy.itunes.apple.com"]
 USER_AGENTS = [
@@ -76,7 +102,7 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
                        method: Literal["GET", "POST", "PUT", "DELETE"] = "GET", payload: dict = None) -> Optional[Dict[str, Any]]:
     params = params or {}
     if method == "GET" and not bypass_cache and not OFFLINE_MODE:
-        cached = _itunes_cache.get(endpoint, params)
+        cached = await _itunes_cache.get(endpoint, params)
         if cached: return cached
 
     if OFFLINE_MODE: return None
@@ -99,7 +125,7 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
                     if resp.status == 200:
                         data = await resp.json()
                         if not is_mirror:
-                            _itunes_cache.set(endpoint, params, data)
+                            await _itunes_cache.set(endpoint, params, data)
                             endpoint_manager.report_success(base_url)
                         return data
                     else:

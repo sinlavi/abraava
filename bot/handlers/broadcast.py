@@ -22,8 +22,8 @@ async def process_broadcast_message(bot: Client, message: Message, api_client: A
         if "@abraava" not in text or "@abraava_bot" not in text:
             try:
                 new_text = text
-                if "@abraava_bot" not in new_text: new_text += "\n@abraava_bot"
                 if "@abraava" not in new_text: new_text += "\n@abraava"
+                if "@abraava_bot" not in new_text: new_text += "\n@abraava_bot"
 
                 if message.content: await message.edit(text=new_text)
                 elif message.caption: await message.edit_caption(caption=new_text)
