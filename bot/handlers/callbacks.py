@@ -111,27 +111,34 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
 
     # Details and Navigation
     if data.startswith("artist:"):
-        artist_id, page = int(parts[1]), int(parts[2]) if len(parts) > 2 else 1
+        artist_id = parts[1]
+        if artist_id.isdigit(): artist_id = int(artist_id)
+        page = int(parts[2]) if len(parts) > 2 else 1
         is_pag = (len(parts) > 2 and parts[2].isdigit()) # Only True if it's explicitly a page click
         msg_to_edit = callback_query.message if is_pag else None
         await show_artist_page(bot, chat_id, artist_id, page, artwork_service, user_id, msg_to_edit, is_pagination=is_pag)
     elif data.startswith("collection:"):
-        coll_id, page = int(parts[1]), int(parts[2]) if len(parts) > 2 else 1
+        coll_id = parts[1]
+        if coll_id.isdigit(): coll_id = int(coll_id)
+        page = int(parts[2]) if len(parts) > 2 else 1
         is_pag = (len(parts) > 2 and parts[2].isdigit()) # Only True if it's explicitly a page click
         msg_to_edit = callback_query.message if is_pag else None
         await show_collection_page(bot, chat_id, coll_id, page, artwork_service, user_id, msg_to_edit, is_pagination=is_pag)
     elif data.startswith("track:"):
-        track_id = int(parts[1])
+        track_id = parts[1]
+        if track_id.isdigit(): track_id = int(track_id)
         await show_track_page(bot, chat_id, track_id, artwork_service, user_id)
     elif data.startswith("single_album:"):
-        coll_id = int(parts[1])
+        coll_id = parts[1]
+        if coll_id.isdigit(): coll_id = int(coll_id)
         tracks_data = await crawlers.utils.get_or_crawl_collection_tracks(coll_id)
         if tracks_data and tracks_data.get("results"):
             track_id = tracks_data["results"][0].get("trackId")
             if track_id: await show_track_page(bot, chat_id, track_id, artwork_service, user_id)
             else: await bot.answer_callback_query(callback_query.id, text="❌ خطایی رخ داد", show_alert=True)
     elif data.startswith("recrawl:"):
-        type_, eid = parts[1], int(parts[2])
+        type_, eid = parts[1], parts[2]
+        if eid.isdigit(): eid = int(eid)
         if type_ == "artist": await show_artist_page(bot, chat_id, eid, 1, artwork_service, user_id, callback_query.message, force=True)
         elif type_ == "collection": await show_collection_page(bot, chat_id, eid, 1, artwork_service, user_id, callback_query.message, force=True)
 
@@ -170,19 +177,23 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
 
     # Downloads
     elif data.startswith("download:"):
-        track_id = int(parts[1])
+        track_id = parts[1]
+        if track_id.isdigit(): track_id = int(track_id)
         await bot.answer_callback_query(callback_query.id, text="⏳ در حال آماده‌سازی...")
         await download_service.download_and_send_track(chat_id, track_id, user_id)
     elif data.startswith("preview:"):
-        track_id = int(parts[1])
+        track_id = parts[1]
+        if track_id.isdigit(): track_id = int(track_id)
         await bot.answer_callback_query(callback_query.id, text="⏳ در حال دریافت...")
         asyncio.create_task(send_voice_preview(bot, chat_id, track_id, user_id))
     elif data.startswith("download_album:"):
-        coll_id = int(parts[1])
+        coll_id = parts[1]
+        if coll_id.isdigit(): coll_id = int(coll_id)
         await bot.answer_callback_query(callback_query.id, text="📀 شروع دانلود آلبوم...")
         asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service))
     elif data.startswith("cancel_album:"):
-        owner_id_from_cb, coll_id = int(parts[1]), int(parts[2])
+        owner_id_from_cb, coll_id = int(parts[1]), parts[2]
+        if coll_id.isdigit(): coll_id = int(coll_id)
         if user_id == owner_id_from_cb:
             download_service.album_tracker.cancel_download(user_id, coll_id)
             await bot.answer_callback_query(callback_query.id, text="⏹️ توقف دانلود...")
@@ -204,7 +215,8 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             await handle_search(bot, chat_id, user_id, t, term, api_client, search_cache_service, OFFLINE_MODE)
         elif retry_data.startswith("download_retry:"):
             _, tid = retry_data.split(":")
-            await download_service.download_and_send_track(chat_id, int(tid), user_id)
+            if tid.isdigit(): tid = int(tid)
+            await download_service.download_and_send_track(chat_id, tid, user_id)
         try: await callback_query.message.delete()
         except: pass
 

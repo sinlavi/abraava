@@ -1,8 +1,8 @@
 from balethon import Client
-from balethon.objects import Message
-from core.config import BOT_NAME, INFO_CHANNEL_ID
+from balethon.objects import Message, InlineKeyboardButton, InlineKeyboard
+from core.config import BOT_NAME, INFO_CHANNEL_ID, REQUIRED_CHANNELS
 from utils.messages import send_message, edit_message
-from bot.keyboards import get_settings_keyboard
+from bot.keyboards import get_settings_keyboard, create_info_channel_button
 
 async def start_command(bot: Client, message: Message):
     welcome_text = (
@@ -11,9 +11,16 @@ async def start_command(bot: Client, message: Message):
         f"فقط کافیه اسم آهنگ رو بگی، خودم بلدم چیکار کنم 😉\n\n"
         f"🆘 راهنما: /help"
     )
+
+    markup = []
     if INFO_CHANNEL_ID:
-        welcome_text += f"\n\n📢 *کانال اطلاع‌رسانی:* ble.ir/join/4T95Zt7P5X"
-    await send_message(bot, message.chat.id, welcome_text)
+        markup.append([create_info_channel_button()])
+
+    if REQUIRED_CHANNELS:
+        for channel in REQUIRED_CHANNELS:
+            markup.append([InlineKeyboardButton(text=f"📢 عضویت در {channel['name']}", url=f"https://ble.ir/{channel['username'].lstrip('@')}")])
+
+    await send_message(bot, message.chat.id, welcome_text, reply_markup=InlineKeyboard(*markup) if markup else None)
 
 async def help_command(bot: Client, message: Message):
     is_group = message.chat.type in ["group", "supergroup"]
@@ -38,7 +45,9 @@ async def help_command(bot: Client, message: Message):
             "   🔹 ```/album [نام آلبوم]```\n"
             "   🔹 ```/artist [نام هنرمند]```\n"
             "   🔹 ```/ytm [نام آهنگ]``` - جستجو در یوتیوب موزیک\n"
-            "   🔹 ```/sc [نام آهنگ]``` - جستجو در ساندکلاد\n\n"
+            "   🔹 ```/sc [نام آهنگ]``` - جستجو در ساندکلاد\n"
+            "   🔹 ```/sp [نام آهنگ]``` - جستجو در اسپاتیفای\n"
+            "   🔹 ```/itunes [نام آهنگ]``` - جستجو در آیتیونز رسمی\n\n"
             "⚡ *قابلیت‌های کاربردی:*\n"
             "🔹 ```/quick [نام آهنگ]``` - دانلود فوری با بهترین کیفیت\n"
             "🔹 *لینک مستقیم:* ارسال لینک YouTube Music یا Apple Music جهت دانلود مستقیم.\n\n"

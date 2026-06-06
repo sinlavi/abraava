@@ -6,3 +6,5 @@ aiohttp
 mutagen
 dotenv
 rapidfuzz
+spotipy
+pillow
