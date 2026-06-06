@@ -33,12 +33,14 @@ class DownloadService:
                                      selected_quality=None, track_name_hint=None, track_index=None):
 
         # In batch mode, if no status_msg provided, create a track-specific one
+        created_status = False
         if status_msg is None:
             prefix = f"({track_index}) " if track_index else ""
             hint = f" {track_name_hint}" if track_name_hint else ""
             status_msg = await send_message(self.bot, chat_id, f"⏳ *{prefix}در حال آماده‌سازی دانلود{hint}...*", show_cancel=True)
+            created_status = True
 
-        track_data = await get_track(track_id, status_msg)
+        track_data = await get_track(track_id, status_msg if created_status else None)
         if not track_data or not track_data.get("results"):
             await edit_message(status_msg, "خطا در دریافت اطلاعات آهنگ.")
             return
@@ -56,10 +58,10 @@ class DownloadService:
         if audio_cache:
             logger.info(f"Using cached audio for track {track_id} (quality: {quality_value}) -> {audio_cache}")
             try:
-                await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
+                if created_status: await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
                 markup = self._build_audio_markup(track_id, track.get("trackViewUrl"))
                 await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=InlineKeyboard(*markup))
-                await status_msg.delete()
+                if created_status: await status_msg.delete()
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
                                                  track.get('artistName', ''), track.get('collectionName', ''),
                                                  0, 'cache', quality_value)
@@ -86,7 +88,7 @@ class DownloadService:
             logger.info(f"Using direct URL for external track {track_id}: {video_url}")
 
         if not video_url:
-            await edit_message(status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*")
+            if created_status: await edit_message(status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*")
             logger.info(f"Searching YouTube for track {track_id}: {track.get('trackName')} - {track.get('artistName')}")
             video_id = await search_youtube_track(track.get("trackName", ""), track.get("artistName", ""),
                                                 track.get("collectionName", ""), track.get("releaseDate", "")[:4])
@@ -102,15 +104,16 @@ class DownloadService:
                 if collection_id:
                     self.album_tracker.start_track(user_id, collection_id, track.get("trackName", ""))
 
-                await edit_message(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*", show_cancel=True)
+                if created_status: await edit_message(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*", show_cancel=True)
                 logger.info(f"Downloading from YouTube: {video_url} with quality {quality_value}")
                 mp3_path = await download_audio(video_url, quality=quality_value)
                 if not mp3_path: raise Exception("Download failed")
 
                 temp_dir = os.path.dirname(mp3_path)
+                if created_status: await edit_message(status_msg, "🏷️ *در حال تگ‌گذاری فایل...*")
                 self.tagging_service.tag_mp3(Path(mp3_path), track, cover_bytes)
 
-                await edit_message(status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*")
+                if created_status: await edit_message(status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*")
 
                 markup = self._build_audio_markup(track_id, track.get("trackViewUrl"))
                 with open(mp3_path, 'rb') as f:
@@ -126,7 +129,7 @@ class DownloadService:
                                                  file_size, 'youtube', quality_value)
                 self.download_rate_limiter.record_download(user_id, quality_value)
                 await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
-                await status_msg.delete()
+                if created_status: await status_msg.delete()
         except Exception as e:
             logger.error(f"Download error: {e}")
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}")]]

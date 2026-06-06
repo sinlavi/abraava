@@ -11,6 +11,7 @@ from services.api_client import APIClient
 from crawlers.itunes import set_mirror, get_mirror
 from crawlers.youtube import get_artist_image
 from utils.helpers import get_high_res_artwork
+from utils.image_utils import crop_to_square
 from bot.keyboards import create_close_button
 
 class ArtworkService:
@@ -84,7 +85,11 @@ class ArtworkService:
             try:
                 session = await HttpClient.get_session()
                 async with session.get(final_url, timeout=30) as resp:
-                    if resp.status == 200: return await resp.read()
+                    if resp.status == 200:
+                        artwork_bytes = await resp.read()
+                        if isinstance(entity_id, str) and entity_id.startswith(("yt_", "sc_")):
+                            artwork_bytes = crop_to_square(artwork_bytes)
+                        return artwork_bytes
             except Exception as e:
                 logger.error(f"Error downloading artwork: {e}")
         return None
@@ -125,14 +130,18 @@ class ArtworkService:
             logger.error(f"Failed in send_artwork_photo helper: {e}")
             raise
 
-    async def get_artwork_bytes(self, entity_id: int, artwork_url100: str):
+    async def get_artwork_bytes(self, entity_id: Union[int, str], artwork_url100: str):
         if entity_id:
             url = get_high_res_artwork(artwork_url100, 600)
             if url:
                 session = await HttpClient.get_session()
                 try:
                     async with session.get(url, timeout=30) as resp:
-                        if resp.status == 200: return await resp.read()
+                        if resp.status == 200:
+                            artwork_bytes = await resp.read()
+                            if isinstance(entity_id, str) and entity_id.startswith(("yt_", "sc_")):
+                                artwork_bytes = crop_to_square(artwork_bytes)
+                            return artwork_bytes
                 except: pass
         return None
 
