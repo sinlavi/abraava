@@ -80,16 +80,22 @@ class DownloadService:
         if settings.show_artwork and cover_bytes is None:
             cover_bytes = await self.artwork_service.get_artwork_bytes(track.get('collectionId'), track.get('artworkUrl100'))
 
-        await edit_message(status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*")
-        logger.info(f"Searching YouTube for track {track_id}: {track.get('trackName')} - {track.get('artistName')}")
-        video_id = await search_youtube_track(track.get("trackName", ""), track.get("artistName", ""),
-                                            track.get("collectionName", ""), track.get("releaseDate", "")[:4])
+        video_url = None
+        if isinstance(track_id, str) and track_id.startswith(("yt_", "sc_")):
+            video_url = track.get("trackViewUrl")
+            logger.info(f"Using direct URL for external track {track_id}: {video_url}")
 
-        if not video_id:
-            await edit_message(status_msg, "لینک مناسبی یافت نشد.")
-            return
+        if not video_url:
+            await edit_message(status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*")
+            logger.info(f"Searching YouTube for track {track_id}: {track.get('trackName')} - {track.get('artistName')}")
+            video_id = await search_youtube_track(track.get("trackName", ""), track.get("artistName", ""),
+                                                track.get("collectionName", ""), track.get("releaseDate", "")[:4])
 
-        video_url = f"https://music.youtube.com/watch?v={video_id}"
+            if not video_id:
+                await edit_message(status_msg, "لینک مناسبی یافت نشد.")
+                return
+
+            video_url = f"https://music.youtube.com/watch?v={video_id}"
         temp_dir = None
         try:
             async with self.download_semaphore:
@@ -109,7 +115,7 @@ class DownloadService:
                 markup = self._build_audio_markup(track_id)
                 with open(mp3_path, 'rb') as f:
                     msg = await self.bot.send_audio(chat_id, audio=f, caption=caption, reply_markup=InlineKeyboard(*markup))
-                    if msg and track_id and not str(track_id).startswith(("yt_", "sc_", "sp_")):
+                    if msg and track_id and not str(track_id).startswith(("yt_", "sc_", "sp_", "it_")):
                         await set_mirror('track', str(track_id), 'audioUrl',
                                          f'https://tapi.bale.ai/file/bot<token>/{msg.audio.id}',
                                          quality=quality_value)

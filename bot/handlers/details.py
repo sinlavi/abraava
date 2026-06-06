@@ -262,19 +262,44 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         if links: markup_rows.append(links)
 
         itunes_url = track.get('trackViewUrl') or track.get('viewUrl') or f"https://music.apple.com/song/{track_id}"
-        markup_rows.append([
-            InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}track_{track_id}"),
-            InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=itunes_url)
-        ])
+
+        is_external = str(track_id).startswith(("yt_", "sc_", "sp_"))
+
+        if not is_external:
+            markup_rows.append([
+                InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}track_{track_id}"),
+                InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=itunes_url)
+            ])
+        else:
+            source_map = {"yt": "یوتیوب موزیک", "sc": "ساندکلاد", "sp": "اسپاتیفای"}
+            source_name = source_map.get(str(track_id)[:2], "منابع خارجی")
+            markup_rows.append([
+                InlineKeyboardButton(text=f"🌐 مشاهده در {source_name}", url=itunes_url),
+                InlineKeyboardButton(text="❌ بستن", callback_data="close")
+            ])
 
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
 
-        artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id or track_id, artwork_url, owner_id)
-        if artwork_data:
-            await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id or track_id, user_id=owner_id)
-            await status_msg.delete()
+        if is_external:
+            # For external tracks, we don't use mirrors and don't necessarily have a collectionId that makes sense for the mirror API
+            # Just send the message with the artwork URL directly if possible, or use the artwork service but ensure it doesn't mirror
+            if artwork_url:
+                try:
+                    from core.config import FOOTER
+                    await bot.send_photo(chat_id, photo=artwork_url, caption=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*markup_rows))
+                    await status_msg.delete()
+                except Exception as e:
+                    logger.warning(f"Failed to send external artwork: {e}")
+                    await edit_message(status_msg, text, reply_markup=markup_rows)
+            else:
+                await edit_message(status_msg, text, reply_markup=markup_rows)
         else:
-            await edit_message(status_msg, text, reply_markup=markup_rows)
+            artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id or track_id, artwork_url, owner_id)
+            if artwork_data:
+                await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id or track_id, user_id=owner_id)
+                await status_msg.delete()
+            else:
+                await edit_message(status_msg, text, reply_markup=markup_rows)
 
     except Exception as e:
         logger.error(f"Error in show_track_page: {e}")

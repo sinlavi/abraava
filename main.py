@@ -32,6 +32,7 @@ import asyncio
 import signal
 import sys
 import time
+import re
 
 # Initialize Services
 api_client = APIClient(API_BASE_URL, API_TOKEN)
@@ -170,8 +171,13 @@ async def on_message(message: Message):
                     # No iTunes ID found, try fallback to YouTube/YouTube Music
                     yt_url = resolved.get("youtube_url")
                     if yt_url:
-                        await status_msg.delete()
-                        await direct_download_service.ask_confirmation(chat_id, yt_url)
+                        # Extract video ID if possible for show_track_page
+                        m = re.search(r'(?:v=|\/)([a-zA-Z0-9_-]{11})(?:&|\?|$)', yt_url)
+                        if m:
+                            await show_track_page(bot, chat_id, f"yt_{m.group(1)}", artwork_service, user_id, message_to_edit=status_msg)
+                        else:
+                            await status_msg.delete()
+                            await direct_download_service.ask_confirmation(chat_id, yt_url)
                     else:
                         # No link at all, try searching
                         title, artist = resolved.get("title"), resolved.get("artist")
@@ -180,14 +186,21 @@ async def on_message(message: Message):
                             from crawlers.youtube import search_youtube_track
                             vid_id = await search_youtube_track(title, artist, resolved.get("album", ""), "")
                             if vid_id:
-                                await status_msg.delete()
-                                await direct_download_service.ask_confirmation(chat_id, f"https://www.youtube.com/watch?v={vid_id}")
+                                await show_track_page(bot, chat_id, f"yt_{vid_id}", artwork_service, user_id, message_to_edit=status_msg)
                             else:
                                 await edit_message(status_msg, "❌ متأسفانه نسخه قابل دانلودی یافت نشد.")
                         else:
                             await edit_message(status_msg, "❌ متأسفانه اطلاعات کافی برای این پیوند یافت نشد.")
             elif type_ == "direct_link":
-                await direct_download_service.ask_confirmation(chat_id, term)
+                yt_m = re.search(r'(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})', term)
+                sc_m = re.search(r'soundcloud\.com\/([a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+)', term)
+
+                if yt_m:
+                    await show_track_page(bot, chat_id, f"yt_{yt_m.group(1)}", artwork_service, user_id)
+                elif sc_m:
+                    await show_track_page(bot, chat_id, f"sc_{sc_m.group(1)}", artwork_service, user_id)
+                else:
+                    await direct_download_service.ask_confirmation(chat_id, term)
             else:
                 await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE)
 
