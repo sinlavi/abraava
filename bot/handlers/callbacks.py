@@ -16,7 +16,8 @@ import time
 DIRECT_LINKS = {} # id -> url
 
 async def store_direct_link(url: str) -> str:
-    link_id = str(int(time.time()))[-8:]
+    import uuid
+    link_id = uuid.uuid4().hex[:10]
     DIRECT_LINKS[link_id] = url
     return link_id
 

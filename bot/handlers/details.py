@@ -38,7 +38,11 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         genre = artist.get('primaryGenreName')
         if genre:
             text += f"🎭 *سبک:* {genre}\n"
-            text += f"#{genre.replace(' ', '_').replace('-', '_')}\n"
+
+        hashtags = []
+        if genre: hashtags.append(f"#{genre.replace(' ', '_')}")
+        hashtags.append(f"#{artist_name.replace(' ', '_')}")
+        text += f"{' '.join(hashtags)}\n"
 
         collections = collections_data["results"] if collections_data else []
 
@@ -142,7 +146,8 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
 
         hashtags = []
         if release_date[:4].isdigit(): hashtags.append(f"#{release_date[:4]}")
-        if coll.get('primaryGenreName'): hashtags.append(f"#{coll.get('primaryGenreName').replace(' ', '_').replace('-', '_')}")
+        if coll.get('primaryGenreName'): hashtags.append(f"#{coll.get('primaryGenreName').replace(' ', '_')}")
+        hashtags.append(f"#{artist_name.replace(' ', '_')}")
         if hashtags: text += f"\n{' '.join(hashtags)}\n"
 
         markup_rows = []
@@ -241,7 +246,8 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
 
         hashtags = []
         if release_year: hashtags.append(f"#{release_year}")
-        if track.get('primaryGenreName'): hashtags.append(f"#{track.get('primaryGenreName').replace(' ', '_').replace('-', '_')}")
+        if track.get('primaryGenreName'): hashtags.append(f"#{track.get('primaryGenreName').replace(' ', '_')}")
+        hashtags.append(f"#{artist_name.replace(' ', '_')}")
         if hashtags: text += f"\n{' '.join(hashtags)}\n"
 
         markup_rows = []

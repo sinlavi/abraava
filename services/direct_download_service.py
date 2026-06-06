@@ -108,12 +108,12 @@ class DirectDownloadService:
             return
 
         text = f"🎵 *اطلاعات یافت شده:*\n\n"
-        text += f"🔹 نام: {meta['title']}\n"
-        text += f"🔹 هنرمند: {meta['uploader']}\n"
-        if meta['album']: text += f"🔹 آلبوم: {meta['album']}\n"
+        text += f"🎵 *نام آهنگ:* {meta['title']}\n"
+        text += f"🎤 *نام هنرمند:* {meta['uploader']}\n"
+        if meta['album']: text += f"💿 *نام آلبوم:* {meta['album']}\n"
         if meta['duration']:
             from utils.helpers import format_duration
-            text += f"⏱️ مدت زمان: {format_duration(meta['duration'] * 1000)}\n"
+            text += f"⏱️ *مدت زمان:* {format_duration(meta['duration'] * 1000)}\n"
         text += f"\nآیا مایل به دانلود این ترک هستید؟"
 
         from bot.handlers.callbacks import store_direct_link
@@ -126,13 +126,13 @@ class DirectDownloadService:
 
         if meta.get("thumbnail"):
             try:
-                await self.bot.send_photo(chat_id, photo=meta["thumbnail"], caption=f"{text}{FOOTER}", reply_markup=InlineKeyboard(markup))
+                await self.bot.send_photo(chat_id, photo=meta["thumbnail"], caption=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*markup))
                 await status_msg.delete()
             except Exception as e:
                 logger.warning(f"Failed to send thumbnail: {e}")
-                await edit_message(status_msg, text, reply_markup=markup)
+                await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
         else:
-            await edit_message(status_msg, text, reply_markup=markup)
+            await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
 
     async def download_direct(self, chat_id, url, user_id, quality="192"):
         status_msg = await send_message(self.bot, chat_id, f"⏳ *در حال شروع دانلود...*")
