@@ -1,6 +1,7 @@
-/__pycache__
-/crawlers/__pycache__
-/db/__pycache__
+__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
 bot.log
 /.idea
 .env

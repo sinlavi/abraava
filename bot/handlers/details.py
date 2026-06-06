@@ -66,7 +66,10 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
             InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:artist:{artist_id}"),
             InlineKeyboardButton(text="🔗 اشتراک‌گذاری", url=f"https://ble.ir/share/url?url={DEEP_LINK_BASE}artist_{artist_id}")
         ])
-        markup_rows.append([InlineKeyboardButton(text="🍎 مشاهده در اپل موزیک", url=itunes_url)])
+        markup_rows.append([
+            InlineKeyboardButton(text="🍎 مشاهده در اپل موزیک", url=itunes_url),
+            InlineKeyboardButton(text="🔍 جستجوی آهنگ‌ها", callback_data=f"refine:track:{artist_name}")
+        ])
 
         if is_pagination and message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
             await edit_message(message_to_edit, text, reply_markup=markup_rows)
@@ -146,7 +149,10 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
             InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:collection:{collection_id}"),
             InlineKeyboardButton(text="🔗 اشتراک‌گذاری", url=f"https://ble.ir/share/url?url={DEEP_LINK_BASE}collection_{collection_id}")
         ])
-        markup_rows.append([InlineKeyboardButton(text="🍎 مشاهده در اپل موزیک", url=itunes_url)])
+        markup_rows.append([
+            InlineKeyboardButton(text="🍎 مشاهده در اپل موزیک", url=itunes_url),
+            InlineKeyboardButton(text="🎤 آثار دیگر هنرمند", callback_data=f"artist:{artist_id}")
+        ])
 
         if is_pagination and message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
             await edit_message(message_to_edit, text, reply_markup=markup_rows)
