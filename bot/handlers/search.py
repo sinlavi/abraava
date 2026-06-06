@@ -26,11 +26,13 @@ async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, ter
             await status_msg.delete()
             await api_client.log_search(user_id, type_, term, results.get("resultCount", 0))
         else:
-            await send_message(bot, chat_id, f"هیچ نتیجه‌ای برای '{term}' یافت نشد.")
+            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}")]]
+            await send_message(bot, chat_id, f"هیچ نتیجه‌ای برای '{term}' یافت نشد.", reply_markup=retry_markup)
             await status_msg.delete()
     except Exception as e:
         logger.error(f"Search error: {e}")
-        await send_message(bot, chat_id, "خطا در جستجو.")
+        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}")]]
+        await send_message(bot, chat_id, "خطا در جستجو.", reply_markup=retry_markup)
         await status_msg.delete()
 
 async def quick_search(bot: Client, chat_id: int, user_id: int, term: str,
