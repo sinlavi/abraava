@@ -1,7 +1,7 @@
 from balethon.objects import CallbackQuery, InlineKeyboard, InlineKeyboardButton
 from models.schemas import DownloadQuality
 from bot.handlers.details import show_artist_page, show_collection_page, show_track_page
-from bot.handlers.search_results import send_search_results
+from bot.handlers.search_results import send_search_results, send_external_search_results
 from bot.handlers.album_download import download_album
 from bot.handlers.search import handle_search
 from bot.handlers.preview import send_voice_preview
@@ -147,6 +147,25 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         type_ = parts[1]
         term = ":".join(parts[2:])
         await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE)
+
+    elif data.startswith("ext_dl:"):
+        link_id = parts[1]
+        url = DIRECT_LINKS.get(link_id)
+        if url:
+            await direct_download_service.ask_confirmation(chat_id, url)
+        else:
+            await bot.answer_callback_query(callback_query.id, text="❌ پیوند منقضی شده است", show_alert=True)
+        try: await callback_query.message.delete()
+        except: pass
+
+    elif data.startswith("page:ext_search:"):
+        search_id, type_, page = parts[2], parts[3], int(parts[4])
+        cached = await search_cache_service.get(search_id)
+        if cached:
+            await send_external_search_results(bot, chat_id, type_, cached["term"], cached["results"]["results"], page,
+                                              search_cache_service, user_id, callback_query.message)
+        else:
+            await bot.answer_callback_query(callback_query.id, text="جستجو منقضی شده است", show_alert=True)
 
     # Downloads
     elif data.startswith("download:"):

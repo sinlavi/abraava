@@ -70,9 +70,6 @@ class DirectDownloadService:
 
         proxy = self._get_proxy()
 
-        # Method 1: Default with random headers
-        # Method 2: With Proxy
-        # Method 3: With specific extractor args for YouTube
         if method == 2 and proxy:
             opts['proxy'] = proxy
         elif method == 3:
@@ -83,7 +80,6 @@ class DirectDownloadService:
         return opts
 
     async def get_metadata(self, url):
-        # Try different methods to get metadata
         for method in [1, 2, 3]:
             opts = self._build_opts(url, method=method)
             try:
@@ -95,7 +91,9 @@ class DirectDownloadService:
                         'uploader': info.get('uploader', info.get('artist', 'Unknown')),
                         'album': info.get('album', ''),
                         'url': url,
-                        'upload_date': info.get('upload_date', '')
+                        'upload_date': info.get('upload_date', ''),
+                        'thumbnail': info.get('thumbnail'),
+                        'duration': info.get('duration')
                     }
             except Exception as e:
                 logger.debug(f"Metadata fetch failed with method {method}: {e}")
@@ -106,13 +104,16 @@ class DirectDownloadService:
         status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*")
         meta = await self.get_metadata(url)
         if not meta:
-            await edit_message(status_msg, "❌ خطا در دریافت اطلاعات پیوند. ممکن است پیوند نامعتبر باشد یا دسترسی به آن مسدود شده باشد.")
+            await edit_message(status_msg, "❌ خطا در دریافت اطلاعات پیوند.")
             return
 
         text = f"🎵 *اطلاعات یافت شده:*\n\n"
         text += f"🔹 نام: {meta['title']}\n"
         text += f"🔹 هنرمند: {meta['uploader']}\n"
         if meta['album']: text += f"🔹 آلبوم: {meta['album']}\n"
+        if meta['duration']:
+            from utils.helpers import format_duration
+            text += f"⏱️ مدت زمان: {format_duration(meta['duration'] * 1000)}\n"
         text += f"\nآیا مایل به دانلود این ترک هستید؟"
 
         from bot.handlers.callbacks import store_direct_link
@@ -122,7 +123,16 @@ class DirectDownloadService:
             [InlineKeyboardButton(text="✅ بله، دانلود کن", callback_data=f"confirm_dl:{link_id}")],
             [InlineKeyboardButton(text="❌ خیر، انصراف", callback_data="close")]
         ]
-        await edit_message(status_msg, text, reply_markup=markup)
+
+        if meta.get("thumbnail"):
+            try:
+                await self.bot.send_photo(chat_id, photo=meta["thumbnail"], caption=f"{text}{FOOTER}", reply_markup=InlineKeyboard(markup))
+                await status_msg.delete()
+            except Exception as e:
+                logger.warning(f"Failed to send thumbnail: {e}")
+                await edit_message(status_msg, text, reply_markup=markup)
+        else:
+            await edit_message(status_msg, text, reply_markup=markup)
 
     async def download_direct(self, chat_id, url, user_id, quality="192"):
         status_msg = await send_message(self.bot, chat_id, f"⏳ *در حال شروع دانلود...*")
@@ -136,7 +146,6 @@ class DirectDownloadService:
         mp3_path = None
 
         try:
-            # Try different methods for download
             for method in [1, 2, 3]:
                 opts = self._build_opts(url, output_dir=temp_dir, quality=quality, method=method)
                 try:
@@ -173,7 +182,7 @@ class DirectDownloadService:
                     await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard([[create_close_button()]]))
                 await status_msg.delete()
             else:
-                await edit_message(status_msg, "❌ دانلود با خطا مواجه شد. تمامی روش‌ها ناموفق بودند.")
+                await edit_message(status_msg, "❌ دانلود با خطا مواجه شد.")
 
         except Exception as e:
             logger.error(f"Direct download service error: {e}")
