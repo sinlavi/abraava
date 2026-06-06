@@ -92,6 +92,7 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
         url = f"{base_url}{api_path}"
 
         headers = {"User-Agent": random.choice(USER_AGENTS)}
+        logger.info(f"iTunes Request [{method}]: {url} - Params: {params}")
         try:
             if method == "GET":
                 async with session.get(url, params=params, headers=headers, ssl=False, proxy=PROXY, timeout=10) as resp:
@@ -110,7 +111,7 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
             logger.error(f"iTunes fetch failed (attempt {attempt+1}): {e}")
             if not is_mirror: endpoint_manager.report_failure(base_url)
 
-        if not is_mirror: await asyncio.sleep(1)
+        if not is_mirror: await asyncio.sleep(0.5)
 
     return None
 
@@ -137,7 +138,9 @@ async def get_cached_audio(track_id: int, quality: str = None) -> Optional[str]:
     data = await get_mirror('track', str(track_id), 'audioUrl', quality=quality or "192")
     if data and data.get("mirrors", {}).get('audioUrl'):
         url = data["mirrors"]['audioUrl']['url']
+        logger.info(f"Cached audio found for {track_id}: {url}")
         return url.split('<token>/')[1] if '<token>' in url else url
+    logger.info(f"No cached audio for {track_id} with quality {quality or '192'}")
     return None
 
 async def get_cached_artwork(entity_type: str, entity_id: int) -> Optional[str]:

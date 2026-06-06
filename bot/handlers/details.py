@@ -15,7 +15,12 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
     else:
         status_msg = None
     try:
-        artist_data = await get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force)
+        # Concurrent fetching for performance
+        artist_task = get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force)
+        collections_task = get_or_crawl_artist_collections(artist_id)
+
+        artist_data, collections_data = await asyncio.gather(artist_task, collections_task)
+
         if not artist_data or not artist_data.get('results'):
             await edit_message(status_msg, "هنرمند مورد نظر یافت نشد.")
             return
@@ -30,7 +35,6 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
             text += f"🎭 *سبک:* {genre}\n"
             text += f"#{genre.replace(' ', '_').replace('-', '_')}\n"
 
-        collections_data = await get_or_crawl_artist_collections(artist_id)
         collections = collections_data["results"] if collections_data else []
 
         markup_rows = []
@@ -102,8 +106,11 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
     else:
         status_msg = None
     try:
-        collection_data = await get_or_crawl_collection(collection_id, status_msg, force)
-        tracks_data = await get_or_crawl_collection_tracks(collection_id)
+        # Concurrent fetching for performance
+        collection_task = get_or_crawl_collection(collection_id, status_msg, force)
+        tracks_task = get_or_crawl_collection_tracks(collection_id)
+
+        collection_data, tracks_data = await asyncio.gather(collection_task, tracks_task)
 
         if not collection_data or not collection_data.get('results'):
             await edit_message(status_msg, "آلبوم مورد نظر یافت نشد.")

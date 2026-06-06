@@ -36,7 +36,7 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
             if not has_close_now:
                 reply_markup.append([create_close_button()])
 
-        return InlineKeyboard(reply_markup)
+        return InlineKeyboard(*reply_markup)
     return reply_markup
 
 async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None, show_cancel=False):
