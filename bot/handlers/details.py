@@ -1,5 +1,5 @@
 from balethon.objects import InlineKeyboardButton, InlineKeyboard
-from core.config import ITEMS_PER_PAGE
+from core.config import ITEMS_PER_PAGE, DEEP_LINK_BASE
 from bot.keyboards import create_pagination_row, create_close_button
 from utils.messages import send_message, edit_message
 from utils.helpers import get_high_res_artwork, format_duration, generate_deep_link
@@ -22,7 +22,10 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         artist_image = get_artist_image(artist_name)
 
         text = f"🎤 *نام هنرمند:* [{artist_name}]({generate_deep_link('artist', artist_id)})\n"
-        text += f"🎭 *سبک:* {artist.get('primaryGenreName', 'نامشخص')}\n"
+        genre = artist.get('primaryGenreName')
+        if genre:
+            text += f"🎭 *سبک:* {genre}\n"
+            text += f"#{genre.replace(' ', '_').replace('-', '_')}\n"
 
         collections_data = await get_or_crawl_artist_collections(artist_id)
         collections = collections_data["results"] if collections_data else []
@@ -43,20 +46,27 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
                     name = coll.get('collectionName') or coll.get('trackName') or 'نامشخص'
 
-                    # Requirement: show all albums, but single-track ones get a track emoji and direct link
-                    if str(coll.get('trackCount')) == "1" or coll.get('wrapperType') == 'track':
-                        # Use LRM (\u200e) for RTL alignment of English names with numbers
-                        btn_text = f"\u200e{i}. 🎵 {name[:35]}{year_str}"
+                    track_count = coll.get('trackCount')
+                    # Improved album detection: check if trackCount is > 1
+                    is_single = (track_count == 1) or (coll.get('wrapperType') == 'track')
+
+                    if is_single:
+                        btn_text = f"🎵 \u200e{i}. {name[:35]}{year_str}"
                         item_id = coll.get('collectionId') or coll.get('trackId')
                         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"single_album:{item_id}")])
                     else:
-                        btn_text = f"\u200e{i}. 📀 {name[:35]}{year_str}"
+                        btn_text = f"📀 \u200e{i}. {name[:35]}{year_str}"
                         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"collection:{coll['collectionId']}:1")])
 
             pagination = create_pagination_row(f"artist:{artist_id}", page, total_pages)
             if pagination: markup_rows.append(pagination)
 
-        markup_rows.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:artist:{artist_id}")])
+        itunes_url = artist.get('artistLinkUrl') or f"https://music.apple.com/artist/{artist_id}"
+        markup_rows.append([
+            InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:artist:{artist_id}"),
+            InlineKeyboardButton(text="🔗 اشتراک‌گذاری", url=f"https://ble.ir/share/url?url={DEEP_LINK_BASE}artist_{artist_id}")
+        ])
+        markup_rows.append([InlineKeyboardButton(text="🍎 مشاهده در اپل موزیک", url=itunes_url)])
 
         if is_pagination and message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
             await edit_message(message_to_edit, text, reply_markup=markup_rows)
@@ -97,6 +107,11 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         if coll.get('primaryGenreName'): text += f"🎸 *سبک:* {coll.get('primaryGenreName')}\n"
         if coll.get('trackCount'): text += f"🎵 *تعداد قطعات:* {coll.get('trackCount')}\n"
 
+        hashtags = []
+        if release_date[:4].isdigit(): hashtags.append(f"#{release_date[:4]}")
+        if coll.get('primaryGenreName'): hashtags.append(f"#{coll.get('primaryGenreName').replace(' ', '_').replace('-', '_')}")
+        if hashtags: text += f"\n{' '.join(hashtags)}\n"
+
         markup_rows = []
         if tracks:
             total_items = len(tracks)
@@ -110,10 +125,10 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
                 track_num = track.get('trackNumber', i)
                 duration = format_duration(track.get('trackTimeMillis', 0))
                 track_name = track.get('trackName', 'نامشخص')
-                text += f"\u200e{track_num}. {track_name} ({duration})\n"
+                text += f"🎵 \u200e{track_num}. {track_name} ({duration})\n"
 
                 if track.get('wrapperType') == 'track':
-                    btn_text = f"\u200e{track_num}. 🎵 {track_name[:35]}"
+                    btn_text = f"🎵 \u200e{track_num}. {track_name[:35]}"
                     markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"track:{track['trackId']}")])
 
             pagination = create_pagination_row(f"collection:{collection_id}", page, total_pages)
@@ -124,9 +139,14 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
                 markup_rows.append([InlineKeyboardButton(text="⬇️ دانلود کل آلبوم", callback_data=f"download_album:{collection_id}")])
 
         if artist_id:
-            markup_rows.append([InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}:1")])
+            markup_rows.append([InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}")])
 
-        markup_rows.append([InlineKeyboardButton(text="🔄 تازه‌سازی اطلاعات", callback_data=f"recrawl:collection:{collection_id}")])
+        itunes_url = coll.get('collectionViewUrl') or f"https://music.apple.com/album/{collection_id}"
+        markup_rows.append([
+            InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:collection:{collection_id}"),
+            InlineKeyboardButton(text="🔗 اشتراک‌گذاری", url=f"https://ble.ir/share/url?url={DEEP_LINK_BASE}collection_{collection_id}")
+        ])
+        markup_rows.append([InlineKeyboardButton(text="🍎 مشاهده در اپل موزیک", url=itunes_url)])
 
         if is_pagination and message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
             await edit_message(message_to_edit, text, reply_markup=markup_rows)
@@ -172,6 +192,11 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         if track.get('primaryGenreName'): text += f"🎸 *سبک:* {track.get('primaryGenreName')}\n"
         if track.get('trackExplicitness') == 'explicit': text += f"🔞 *Explicit:* بله\n"
 
+        hashtags = []
+        if release_year: hashtags.append(f"#{release_year}")
+        if track.get('primaryGenreName'): hashtags.append(f"#{track.get('primaryGenreName').replace(' ', '_').replace('-', '_')}")
+        if hashtags: text += f"\n{' '.join(hashtags)}\n"
+
         markup_rows = []
         dl_btns = [InlineKeyboardButton(text="⬇️ دانلود", callback_data=f"download:{track_id}")]
         if track.get("previewUrl"):
@@ -179,9 +204,15 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         markup_rows.append(dl_btns)
 
         links = []
-        if collection_id: links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{collection_id}:1"))
-        if artist_id: links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}:1"))
+        if collection_id: links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{collection_id}"))
+        if artist_id: links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}"))
         if links: markup_rows.append(links)
+
+        itunes_url = track.get('trackViewUrl') or f"https://music.apple.com/song/{track_id}"
+        markup_rows.append([
+            InlineKeyboardButton(text="🔗 اشتراک‌گذاری", url=f"https://ble.ir/share/url?url={DEEP_LINK_BASE}track_{track_id}"),
+            InlineKeyboardButton(text="🍎 اپل موزیک", url=itunes_url)
+        ])
 
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
 

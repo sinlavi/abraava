@@ -98,12 +98,12 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     parts = data.split(":")
     if data.startswith("artist:"):
         artist_id, page = int(parts[1]), int(parts[2]) if len(parts) > 2 else 1
-        is_pag = len(parts) > 2
+        is_pag = (len(parts) > 2 and parts[2].isdigit()) # Only True if it's explicitly a page click
         msg_to_edit = callback_query.message if is_pag else None
         await show_artist_page(bot, chat_id, artist_id, page, artwork_service, user_id, msg_to_edit, is_pagination=is_pag)
     elif data.startswith("collection:"):
         coll_id, page = int(parts[1]), int(parts[2]) if len(parts) > 2 else 1
-        is_pag = len(parts) > 2
+        is_pag = (len(parts) > 2 and parts[2].isdigit()) # Only True if it's explicitly a page click
         msg_to_edit = callback_query.message if is_pag else None
         await show_collection_page(bot, chat_id, coll_id, page, artwork_service, user_id, msg_to_edit, is_pagination=is_pag)
     elif data.startswith("track:"):
