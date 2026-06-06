@@ -1,5 +1,5 @@
 import aiohttp
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from core.logger import logger
 from core.http_client import HttpClient
 
