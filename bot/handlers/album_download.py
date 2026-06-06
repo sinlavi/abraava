@@ -26,7 +26,8 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service)
         # Log download start
         download_service.album_tracker.start_download(user_id, collection_id, parent_msg, len(tracks), coll_name)
 
-        await edit_message(parent_msg, f"📀 *آلبوم:* {coll_name}\n🎵 *تعداد قطعات:* {len(tracks)}\n⬇️ *در حال دانلود...*")
+        markup = [[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{user_id}:{collection_id}")]]
+        await edit_message(parent_msg, f"📀 *آلبوم:* {coll_name}\n🎵 *تعداد قطعات:* {len(tracks)}\n⬇️ *در حال دانلود...*", reply_markup=markup)
 
         # Get album cover
         album_cover_bytes = await download_service.artwork_service.get_artwork_bytes(coll.get('collectionId'), coll.get('artworkUrl100'))
@@ -42,17 +43,28 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service)
             if download_service.album_tracker.is_cancelled(user_id, collection_id):
                 break
 
-            # Each track download gets its own status message that gets deleted upon completion
-            await download_service.download_and_send_track(
-                chat_id, track['trackId'], user_id,
-                is_batch=True, album_cover_bytes=album_cover_bytes,
-                collection_id=collection_id, selected_quality=quality_value,
-                track_name_hint=track.get('trackName'), track_index=idx
-            )
-            success_count += 1
+            try:
+                # Each track download gets its own status message that gets deleted upon completion
+                await download_service.download_and_send_track(
+                    chat_id, track['trackId'], user_id,
+                    is_batch=True, album_cover_bytes=album_cover_bytes,
+                    collection_id=collection_id, selected_quality=quality_value,
+                    track_name_hint=track.get('trackName'), track_index=idx
+                )
+                success_count += 1
+            except Exception as e:
+                logger.error(f"Error downloading track {idx} in album: {e}")
+                failed_count += 1
+
             await asyncio.sleep(0.5)
 
-        await send_message(bot, chat_id, f"✅ دانلود آلبوم {coll_name} به پایان رسید.\n🎵 مجموع قطعات: {len(tracks)}\n✅ موفق: {success_count}")
+        final_text = f"✅ دانلود آلبوم {coll_name} به پایان رسید.\n🎵 مجموع قطعات: {len(tracks)}\n✅ موفق: {success_count}"
+        if failed_count > 0:
+            final_text += f"\n❌ ناموفق: {failed_count}"
+            final_text += "\n\n💡 میتوانید برای قطعات ناموفق مجدداً تلاش کنید."
+
+        markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد برای آلبوم", callback_data=f"download_album:{collection_id}")]]
+        await send_message(bot, chat_id, final_text, reply_markup=markup)
 
     finally:
         download_service.album_tracker.finish_download(user_id, collection_id, success_count, failed_count)

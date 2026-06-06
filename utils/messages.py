@@ -9,21 +9,30 @@ logger = logging.getLogger("ABRAAVA:MESSAGES")
 def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None):
     if reply_markup is None: reply_markup = []
     if isinstance(reply_markup, list):
-        has_close = False
-        for row in reply_markup:
-            if isinstance(row, list):
-                for btn in row:
-                    if getattr(btn, 'callback_data', '') == 'close':
-                        has_close = True
-                        break
+        # Flatten and check for close button in all nested lists
+        has_close = any(
+            getattr(btn, 'callback_data', '') == 'close'
+            for row in reply_markup
+            if isinstance(row, list)
+            for btn in row
+        )
+
         if not no_close and not has_close:
             if task_id:
                 reply_markup.append([create_cancel_button(task_id)])
             elif show_info:
                 reply_markup.append([create_info_channel_button()])
 
-            if not any(any(getattr(btn, 'callback_data', '') == 'close' for btn in row) for row in reply_markup if isinstance(row, list)):
+            # Final check just in case something was added but not 'close'
+            has_close_now = any(
+                getattr(btn, 'callback_data', '') == 'close'
+                for row in reply_markup
+                if isinstance(row, list)
+                for btn in row
+            )
+            if not has_close_now:
                 reply_markup.append([create_close_button()])
+
         return InlineKeyboard(*reply_markup)
     return reply_markup
 
