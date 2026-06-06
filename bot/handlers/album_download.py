@@ -45,9 +45,23 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
                 break
 
             try:
-                # Each track download gets its own status message that gets deleted upon completion
+                # Update parent message to show which track is being processed
+                track_name = track.get('trackName', 'Unknown')
+                progress_text = (
+                    f"📀 *آلبوم:* {coll_name}\n"
+                    f"🎵 *تعداد کل قطعات:* {len(tracks)}\n"
+                    f"✅ *موفق:* {success_count}\n"
+                    f"❌ *ناموفق:* {failed_count}\n"
+                    f"⏳ *در حال پردازش ({idx}/{len(tracks)}):* {track_name}\n"
+                    f"⬇️ *در حال دانلود...*"
+                )
+                prog_markup = [[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{user_id}:{collection_id}")]]
+                await edit_message(parent_msg, progress_text, reply_markup=InlineKeyboard(*prog_markup))
+
+                # Pass parent_msg to download_service to avoid new message creation
                 await download_service.download_and_send_track(
                     chat_id, track['trackId'], user_id,
+                    status_msg=parent_msg,
                     is_batch=True, album_cover_bytes=album_cover_bytes,
                     collection_id=collection_id, selected_quality=quality_value,
                     track_name_hint=track.get('trackName'), track_index=idx
@@ -84,6 +98,10 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
                 markup_rows.append([InlineKeyboardButton(text="🔄 تلاش مجدد قطعات ناموفق", callback_data=f"retry_failed:{failed_ids}")])
 
         markup_rows.append([InlineKeyboardButton(text="🔄 تلاش مجدد کل آلبوم", callback_data=f"download_album:{collection_id}")])
+
+        try: await parent_msg.delete()
+        except: pass
+
         await send_message(bot, chat_id, final_text, reply_markup=InlineKeyboard(*markup_rows))
 
     finally:

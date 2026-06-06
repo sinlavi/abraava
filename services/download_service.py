@@ -33,12 +33,14 @@ class DownloadService:
                                      selected_quality=None, track_name_hint=None, track_index=None):
 
         # In batch mode, if no status_msg provided, create a track-specific one
+        created_status = False
         if status_msg is None:
             prefix = f"({track_index}) " if track_index else ""
             hint = f" {track_name_hint}" if track_name_hint else ""
             status_msg = await send_message(self.bot, chat_id, f"⏳ *{prefix}در حال آماده‌سازی دانلود{hint}...*", show_cancel=True)
+            created_status = True
 
-        track_data = await get_track(track_id, status_msg)
+        track_data = await get_track(track_id, status_msg if created_status else None)
         if not track_data or not track_data.get("results"):
             await edit_message(status_msg, "خطا در دریافت اطلاعات آهنگ.")
             return
@@ -56,10 +58,10 @@ class DownloadService:
         if audio_cache:
             logger.info(f"Using cached audio for track {track_id} (quality: {quality_value}) -> {audio_cache}")
             try:
-                await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
-                markup = self._build_audio_markup(track_id)
+                if created_status: await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
+                markup = self._build_audio_markup(track_id, track.get("trackViewUrl"))
                 await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=InlineKeyboard(*markup))
-                await status_msg.delete()
+                if created_status: await status_msg.delete()
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
                                                  track.get('artistName', ''), track.get('collectionName', ''),
                                                  0, 'cache', quality_value)
@@ -80,36 +82,43 @@ class DownloadService:
         if settings.show_artwork and cover_bytes is None:
             cover_bytes = await self.artwork_service.get_artwork_bytes(track.get('collectionId'), track.get('artworkUrl100'))
 
-        await edit_message(status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*")
-        logger.info(f"Searching YouTube for track {track_id}: {track.get('trackName')} - {track.get('artistName')}")
-        video_id = await search_youtube_track(track.get("trackName", ""), track.get("artistName", ""),
-                                            track.get("collectionName", ""), track.get("releaseDate", "")[:4])
+        video_url = None
+        if isinstance(track_id, str) and track_id.startswith(("yt_", "sc_")):
+            video_url = track.get("trackViewUrl")
+            logger.info(f"Using direct URL for external track {track_id}: {video_url}")
 
-        if not video_id:
-            await edit_message(status_msg, "لینک مناسبی یافت نشد.")
-            return
+        if not video_url:
+            if created_status: await edit_message(status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*")
+            logger.info(f"Searching YouTube for track {track_id}: {track.get('trackName')} - {track.get('artistName')}")
+            video_id = await search_youtube_track(track.get("trackName", ""), track.get("artistName", ""),
+                                                track.get("collectionName", ""), track.get("releaseDate", "")[:4])
 
-        video_url = f"https://music.youtube.com/watch?v={video_id}"
+            if not video_id:
+                await edit_message(status_msg, "لینک مناسبی یافت نشد.")
+                return
+
+            video_url = f"https://music.youtube.com/watch?v={video_id}"
         temp_dir = None
         try:
             async with self.download_semaphore:
                 if collection_id:
                     self.album_tracker.start_track(user_id, collection_id, track.get("trackName", ""))
 
-                await edit_message(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*", show_cancel=True)
+                if created_status: await edit_message(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*", show_cancel=True)
                 logger.info(f"Downloading from YouTube: {video_url} with quality {quality_value}")
                 mp3_path = await download_audio(video_url, quality=quality_value)
                 if not mp3_path: raise Exception("Download failed")
 
                 temp_dir = os.path.dirname(mp3_path)
+                if created_status: await edit_message(status_msg, "🏷️ *در حال تگ‌گذاری فایل...*")
                 self.tagging_service.tag_mp3(Path(mp3_path), track, cover_bytes)
 
-                await edit_message(status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*")
+                if created_status: await edit_message(status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*")
 
-                markup = self._build_audio_markup(track_id)
+                markup = self._build_audio_markup(track_id, track.get("trackViewUrl"))
                 with open(mp3_path, 'rb') as f:
                     msg = await self.bot.send_audio(chat_id, audio=f, caption=caption, reply_markup=InlineKeyboard(*markup))
-                    if msg and track_id and not str(track_id).startswith(("yt_", "sc_", "sp_")):
+                    if msg and track_id and not str(track_id).startswith(("yt_", "sc_", "sp_", "it_")):
                         await set_mirror('track', str(track_id), 'audioUrl',
                                          f'https://tapi.bale.ai/file/bot<token>/{msg.audio.id}',
                                          quality=quality_value)
@@ -120,7 +129,7 @@ class DownloadService:
                                                  file_size, 'youtube', quality_value)
                 self.download_rate_limiter.record_download(user_id, quality_value)
                 await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
-                await status_msg.delete()
+                if created_status: await status_msg.delete()
         except Exception as e:
             logger.error(f"Download error: {e}")
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}")]]
@@ -134,12 +143,19 @@ class DownloadService:
             if temp_dir: shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _build_caption(self, track, quality_value):
+        track_id = track.get('trackId', '')
+        is_sc = str(track_id).startswith("sc_")
+
         artist_id = track.get('artistId')
         artist_name = track.get('artistName')
-        if artist_name:
-            artist_link = f"[{artist_name}]({generate_deep_link('artist', artist_id)})" if artist_id else artist_name
+
+        if is_sc:
+            artist_link = artist_name
         else:
-            artist_link = None
+            if artist_name:
+                artist_link = f"[{artist_name}]({generate_deep_link('artist', artist_id)})" if artist_id else artist_name
+            else:
+                artist_link = None
 
         coll_id = track.get('collectionId')
         coll_name = track.get('collectionName')
@@ -163,11 +179,11 @@ class DownloadService:
 
         fields = {
             "🎵 نام آهنگ": track_name_link,
-            "🎤 نام هنرمند": artist_link,
-            "💿 نام آلبوم": coll_link,
+            "🎤 نام آپلودر" if is_sc else "🎤 نام هنرمند": artist_link,
+            "💿 نام آلبوم": coll_link if not is_sc else None,
             "📅 سال انتشار": str(track.get('releaseDate', ''))[:4] if track.get('releaseDate') else None,
             "🎸 سبک": track.get('primaryGenreName'),
-            "⏱️ مدت زمان": duration_text,
+            "⏱️ مدت زمان": duration_text if not is_sc else None,
             "📀 کیفیت دانلود": f"{quality_value} kbps"
         }
 
@@ -178,10 +194,16 @@ class DownloadService:
 
         return "\n".join(caption_lines) + f"\n\n{FOOTER}"
 
-    def _build_audio_markup(self, track_id):
-        return [
-            [InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://player.abraava.ir?id={track_id}")],
-            [InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"https://player.abraava.ir?id={track_id}")],
-            [InlineKeyboardButton(text="🌐 اطلاعات بیشتر", web_app=f"https://player.abraava.ir?id={track_id}")],
-            [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
-        ]
+    def _build_audio_markup(self, track_id, source_url=None):
+        source_url = source_url or f"https://player.abraava.ir?id={track_id}"
+        is_external = str(track_id).startswith(("yt_", "sc_", "sp_"))
+
+        markup = []
+        if not is_external:
+            markup.append([InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://player.abraava.ir?id={track_id}")])
+
+        markup.append([InlineKeyboardButton(text="📋 کپی پیوند", copy_text=generate_deep_link("track", track_id))])
+        markup.append([InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=source_url)])
+        markup.append([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
+
+        return markup

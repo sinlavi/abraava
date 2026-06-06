@@ -101,34 +101,23 @@ class DirectDownloadService:
         return None
 
     async def ask_confirmation(self, chat_id, url):
+        # This method is now mostly a fallback for non-YouTube/non-SoundCloud direct links
+        # that couldn't be parsed into IDs.
         status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*")
         meta = await self.get_metadata(url)
         if not meta:
             await edit_message(status_msg, "❌ خطا در دریافت اطلاعات پیوند.")
             return
 
-        # Prepare dummy track data for build_caption
-        dummy_track = {
-            "trackName": meta.get('title'),
-            "artistName": meta.get('uploader'),
-            "collectionName": meta.get('album'),
-            "trackTimeMillis": (meta.get('duration') or 0) * 1000,
-            "trackViewUrl": url,
-            "releaseDate": meta.get('upload_date', '')[:4]
-        }
-
-        from services.download_service import DownloadService
-        # We need a dummy DownloadService or just the static method if it was static.
-        # It's not static, but we can call it if we have an instance or use the logic.
-        # Let's use the logic to be safe or create a local helper.
-
         from utils.helpers import format_duration
+        duration_ms = (meta.get('duration') or 0) * 1000
+
         fields = {
-            "🎵 نام آهنگ": f"[{dummy_track['trackName']}]({url})" if dummy_track['trackName'] else None,
-            "🎤 نام هنرمند": dummy_track['artistName'],
-            "💿 نام آلبوم": dummy_track['collectionName'],
-            "📅 سال انتشار": dummy_track['releaseDate'],
-            "⏱️ مدت زمان": format_duration(dummy_track['trackTimeMillis']) if dummy_track['trackTimeMillis'] > 0 else None
+            "🎵 نام آهنگ": f"[{meta.get('title')}]({url})" if meta.get('title') else None,
+            "🎤 نام هنرمند": meta.get('uploader'),
+            "💿 نام آلبوم": meta.get('album'),
+            "📅 سال انتشار": meta.get('upload_date', '')[:4],
+            "⏱️ مدت زمان": format_duration(duration_ms) if duration_ms > 0 else None
         }
 
         caption_lines = ["🎵 *اطلاعات یافت شده:*\n"]
@@ -215,7 +204,13 @@ class DirectDownloadService:
                 caption = "\n".join(caption_lines)
 
                 with open(mp3_path, 'rb') as f:
-                    await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard([[create_close_button()]]))
+                    from utils.helpers import generate_deep_link
+                    # For direct download, we might not have a reliable ID yet, but let's try to get one if meta had it
+                    # or just use close button as fallback if ID is not available.
+                    markup = [[InlineKeyboardButton(text="📋 کپی پیوند", copy_text=url)],
+                              [InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=url)],
+                              [create_close_button()]]
+                    await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard(*markup))
                 await status_msg.delete()
             else:
                 await edit_message(status_msg, "❌ دانلود با خطا مواجه شد.", show_cancel=True)
