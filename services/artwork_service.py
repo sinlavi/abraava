@@ -2,7 +2,7 @@ import time
 import io
 import logging
 import asyncio
-from typing import Optional, Union, Dict, Any, List
+from typing import Optional, Union, Dict, Any, List, Tuple
 from balethon import Client
 from balethon.objects import Message, InlineKeyboard, InlineKeyboardButton
 from core.logger import logger
