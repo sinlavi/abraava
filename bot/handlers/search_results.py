@@ -51,3 +51,41 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
         await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
     else:
         await send_message(bot, chat_id, header, reply_markup=markup_rows)
+
+async def send_external_search_results(bot, chat_id, type_, term, results, page, search_cache_service, owner_id, message_to_edit=None):
+    total_items = len(results)
+    total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(1, min(page, total_pages))
+
+    start_idx = (page - 1) * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    page_items = results[start_idx:end_idx]
+
+    source_name = "یوتیوب موزیک" if type_ == "ytm" else "ساندکلاد"
+    header = f"📋 *نتایج جستجو در {source_name}: {term}*\nتعداد کل: {total_items} مورد"
+
+    markup_rows = []
+    from bot.handlers.callbacks import store_direct_link
+    for i, item in enumerate(page_items, start_idx + 1):
+        title = item.get("title", "Unknown")[:40]
+        artist = item.get("artist", "Unknown")[:30]
+        btn_text = f"\u200e{i}. {title} - {artist} ⬇️"
+
+        url = item.get("url")
+        link_id = await store_direct_link(url)
+
+        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"ext_dl:{link_id}")])
+
+    if total_pages > 1:
+        search_id = generate_search_hash(type_, term)
+        # We can reuse search_cache_service if we wrap external results
+        wrapped_results = {"results": results, "resultCount": total_items}
+        await search_cache_service.store(search_id, type_, term, wrapped_results, owner_id)
+        pagination = create_pagination_row(f"page:ext_search:{search_id}:{type_}", page, total_pages)
+        if pagination:
+            markup_rows.append(pagination)
+
+    if message_to_edit:
+        await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
+    else:
+        await send_message(bot, chat_id, header, reply_markup=markup_rows)

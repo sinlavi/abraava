@@ -16,6 +16,7 @@ from services.download_service import DownloadService
 from services.membership_service import verify_all_memberships
 from services.registration_service import UserRegistrationService
 from services.direct_download_service import DirectDownloadService
+from services.odesli_service import OdesliService
 
 from bot.handlers.commands import start_command, help_command, about_command
 from bot.handlers.settings import settings_command, stats_command
@@ -24,7 +25,7 @@ from bot.handlers.callbacks import handle_callback
 from bot.handlers.broadcast import process_broadcast_message
 from bot.handlers.details import show_track_page, show_collection_page, show_artist_page
 from utils.parser import parse_search_query
-from utils.messages import send_message
+from utils.messages import send_message, edit_message
 from utils.validation import is_valid_message
 
 import asyncio
@@ -130,7 +131,9 @@ async def on_message(message: Message):
                     "track": "🔍 *راهنمای جستجوی آهنگ:*\n\nکافیست نام آهنگ را مقابل دستور بنویسید.\nمثال: `/track محسن چاوشی`",
                     "album": "📀 *راهنمای جستجوی آلبوم:*\n\nکافیست نام آلبوم را مقابل دستور بنویسید.\nمثال: `/album ابراهیم`",
                     "artist": "🎤 *راهنمای جستجوی هنرمند:*\n\nکافیست نام هنرمند را مقابل دستور بنویسید.\nمثال: `/artist شادمهر عقیلی`",
-                    "quick": "⚡ *راهنمای دانلود سریع:*\n\nکافیست نام آهنگ را مقابل دستور بنویسید تا اولین نتیجه مستقیما دانلود شود.\nمثال: `/quick آهنگ جدید`"
+                    "quick": "⚡ *راهنمای دانلود سریع:*\n\nکافیست نام آهنگ را مقابل دستور بنویسید تا اولین نتیجه مستقیما دانلود شود.\nمثال: `/quick آهنگ جدید`",
+                    "ytm": "🎧 *راهنمای جستجو در یوتیوب موزیک:*\n\nکافیست نام آهنگ را مقابل دستور بنویسید.\nمثال: `/ytm shape of you`",
+                    "sc": "☁️ *راهنمای جستجو در ساندکلاد:*\n\nکافیست نام آهنگ را مقابل دستور بنویسید.\nمثال: `/sc shadow of the day`"
                 }
                 await send_message(bot, chat_id, usage_map.get(type_, "⚠️ لطفا عبارت مورد نظر خود را وارد کنید."))
                 return
@@ -142,6 +145,45 @@ async def on_message(message: Message):
                 await show_track_page(bot, chat_id, int(term), artwork_service, user_id)
             elif type_ == "itunes_album":
                 await show_collection_page(bot, chat_id, int(term), 1, artwork_service, user_id)
+            elif type_ == "itunes_artist":
+                await show_artist_page(bot, chat_id, int(term), 1, artwork_service, user_id)
+            elif type_ == "music_link":
+                status_msg = await send_message(bot, chat_id, "🔍 *در حال بررسی پیوند...*")
+                resolved = await OdesliService.resolve_link(term)
+                if not resolved:
+                    await edit_message(status_msg, "❌ متأسفانه اطلاعاتی برای این پیوند یافت نشد.")
+                    return
+
+                res_type = resolved.get("type")
+                itunes_id = resolved.get("itunes_id")
+
+                if itunes_id:
+                    if res_type == "track":
+                        await show_track_page(bot, chat_id, itunes_id, artwork_service, user_id, message_to_edit=status_msg)
+                    elif res_type == "collection":
+                        await show_collection_page(bot, chat_id, itunes_id, 1, artwork_service, user_id, message_to_edit=status_msg)
+                    elif res_type == "artist":
+                        await show_artist_page(bot, chat_id, itunes_id, 1, artwork_service, user_id, message_to_edit=status_msg)
+                else:
+                    # No iTunes ID found, try fallback to YouTube/YouTube Music
+                    yt_url = resolved.get("youtube_url")
+                    if yt_url:
+                        await status_msg.delete()
+                        await direct_download_service.ask_confirmation(chat_id, yt_url)
+                    else:
+                        # No link at all, try searching
+                        title, artist = resolved.get("title"), resolved.get("artist")
+                        if title and artist:
+                            await edit_message(status_msg, f"🔍 *در حال جستجوی آهنگ در یوتیوب...*\n\n🎵 {title} - {artist}")
+                            from crawlers.youtube import search_youtube_track
+                            vid_id = await search_youtube_track(title, artist, resolved.get("album", ""), "")
+                            if vid_id:
+                                await status_msg.delete()
+                                await direct_download_service.ask_confirmation(chat_id, f"https://www.youtube.com/watch?v={vid_id}")
+                            else:
+                                await edit_message(status_msg, "❌ متأسفانه نسخه قابل دانلودی یافت نشد.")
+                        else:
+                            await edit_message(status_msg, "❌ متأسفانه اطلاعات کافی برای این پیوند یافت نشد.")
             elif type_ == "direct_link":
                 await direct_download_service.ask_confirmation(chat_id, term)
             else:
