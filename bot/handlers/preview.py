@@ -7,6 +7,7 @@ from core.logger import logger
 from crawlers.utils import get_track
 from crawlers.itunes import get_cached_preview, set_mirror
 from utils.messages import send_message
+from core.http_client import HttpClient
 
 async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None):
     status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*")
@@ -22,6 +23,7 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
             await status_msg.edit("پیش‌نمایشی موجود نیست.")
             return
 
+        # Attempt 1: From Cache (mirror)
         preview_cache = await get_cached_preview(track_id)
         if preview_cache:
             try:
@@ -31,11 +33,8 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
             except Exception as e:
                 logger.error(f"Cache preview send failed: {e}")
 
-        session = await HttpClient.get_session() if 'HttpClient' in globals() else None
-        if not session:
-             from core.http_client import HttpClient
-             session = await HttpClient.get_session()
-
+        # Attempt 2: Direct URL or Manual Download/Upload
+        session = await HttpClient.get_session()
         async with session.get(preview_url) as resp:
             if resp.status == 200:
                 preview_data = io.BytesIO(await resp.read())

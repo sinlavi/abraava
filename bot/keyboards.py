@@ -1,14 +1,18 @@
-from balethon.objects import InlineKeyboardButton, InlineKeyboard
+from balethon.objects import InlineKeyboard, InlineKeyboardButton
 from core.config import FOOTER, INFO_CHANNEL_USERNAME
 
 def create_close_button() -> InlineKeyboardButton:
     return InlineKeyboardButton(text="❌ بستن", callback_data="close")
 
+def create_cancel_button(task_id: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text="⏹️ توقف", callback_data=f"cancel_task:{task_id}")
+
 def create_info_channel_button() -> InlineKeyboardButton:
     return InlineKeyboardButton(text="📢 کانال اطلاع‌رسانی", url=f"https://ble.ir/{INFO_CHANNEL_USERNAME.lstrip('@')}")
 
 def create_retry_button(callback_data: str, button_text: str = "🔄 تلاش مجدد") -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=button_text, callback_data=f"retry:{callback_data}")
+    cb = callback_data if callback_data.startswith("retry:") else f"retry:{callback_data}"
+    return InlineKeyboardButton(text=button_text, callback_data=cb)
 
 def create_pagination_row(callback_prefix: str, current_page: int, total_pages: int):
     if total_pages <= 1: return []

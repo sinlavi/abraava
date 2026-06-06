@@ -41,6 +41,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
                     year = coll.get('releaseDate', '')[:4]
                     year_str = f" ({year})" if year else ""
 
+                    # Requirement: show all albums, but single-track ones get a track emoji and direct link
                     if coll.get('trackCount') == 1:
                         btn_text = f"🎵 {coll.get('collectionName', 'نامشخص')[:35]}{year_str}"
                         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"single_album:{coll['collectionId']}")])
@@ -59,7 +60,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         else:
             artwork_data = await artwork_service.get_artwork_for_display("artist", artist_id, artist_image, owner_id, entity_name=artist_name)
             if artwork_data:
-                await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "artist", artist_id)
+                await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "artist", artist_id, user_id=owner_id)
                 await status_msg.delete()
             else:
                 await edit_message(status_msg, text, reply_markup=markup_rows)
@@ -85,10 +86,8 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         artist_id = coll.get('artistId')
 
         text = f"📀 *نام آلبوم:* {coll.get('collectionName', 'نامشخص')}\n"
-        if artist_id:
-            text += f"🎤 *نام هنرمند:* [{artist_name}]({generate_deep_link('artist', artist_id)})\n"
-        else:
-            text += f"🎤 *نام هنرمند:* {artist_name}\n"
+        if artist_id: text += f"🎤 *نام هنرمند:* [{artist_name}]({generate_deep_link('artist', artist_id)})\n"
+        else: text += f"🎤 *نام هنرمند:* {artist_name}\n"
 
         text += f"📅 *سال انتشار:* {release_date}\n"
         if coll.get('primaryGenreName'): text += f"🎸 *سبک:* {coll.get('primaryGenreName')}\n"
@@ -104,7 +103,6 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
             text += f"\n🎵 *لیست قطعات:*\n"
 
             for i, track in enumerate(page_items, (page-1)*ITEMS_PER_PAGE + 1):
-                # Track number from API if available, else positional
                 track_num = track.get('trackNumber', i)
                 duration = format_duration(track.get('trackTimeMillis', 0))
                 text += f"{track_num}. {track.get('trackName', 'نامشخص')} ({duration})\n"
@@ -132,7 +130,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
             artwork_url = get_high_res_artwork(coll.get("artworkUrl100"))
             artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id, artwork_url, owner_id)
             if artwork_data:
-                await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id)
+                await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id, user_id=owner_id)
                 await status_msg.delete()
             else:
                 await edit_message(status_msg, text, reply_markup=markup_rows)
@@ -158,15 +156,11 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         collection_name = track.get('collectionName', 'نامشخص')
 
         text = f"🎵 *نام آهنگ:* {track.get('trackName', 'نامشخص')}\n"
-        if artist_id:
-            text += f"🎤 *نام هنرمند:* [{artist_name}]({generate_deep_link('artist', artist_id)})\n"
-        else:
-            text += f"🎤 *نام هنرمند:* {artist_name}\n"
+        if artist_id: text += f"🎤 *نام هنرمند:* [{artist_name}]({generate_deep_link('artist', artist_id)})\n"
+        else: text += f"🎤 *نام هنرمند:* {artist_name}\n"
 
-        if collection_id:
-            text += f"💿 *نام آلبوم:* [{collection_name}]({generate_deep_link('collection', collection_id)})\n"
-        else:
-            text += f"💿 *نام آلبوم:* {collection_name}\n"
+        if collection_id: text += f"💿 *نام آلبوم:* [{collection_name}]({generate_deep_link('collection', collection_id)})\n"
+        else: text += f"💿 *نام آلبوم:* {collection_name}\n"
 
         text += f"⏱️ *مدت زمان:* {duration}\n"
         if release_year: text += f"📅 *سال انتشار:* {release_year}\n"
@@ -180,17 +174,15 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         markup_rows.append(dl_btns)
 
         links = []
-        if collection_id:
-            links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{collection_id}:1"))
-        if artist_id:
-            links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}:1"))
+        if collection_id: links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{collection_id}:1"))
+        if artist_id: links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}:1"))
         if links: markup_rows.append(links)
 
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
 
         artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id or track_id, artwork_url, owner_id)
         if artwork_data:
-            await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id or track_id)
+            await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id or track_id, user_id=owner_id)
             await status_msg.delete()
         else:
             await edit_message(status_msg, text, reply_markup=markup_rows)

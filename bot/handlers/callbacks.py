@@ -11,10 +11,18 @@ from utils.messages import send_message, edit_message
 from core.config import OFFLINE_MODE
 from core.logger import logger
 import asyncio
+import time
+
+DIRECT_LINKS = {} # id -> url
+
+async def store_direct_link(url: str) -> str:
+    link_id = str(int(time.time()))[-8:]
+    DIRECT_LINKS[link_id] = url
+    return link_id
 
 async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_settings_service,
                           artwork_service, search_cache_service, download_service,
-                          rate_limiter, download_rate_limiter):
+                          rate_limiter, download_rate_limiter, direct_download_service):
     data = callback_query.data
     chat_id = callback_query.message.chat.id
     user_id = callback_query.author.id
@@ -143,6 +151,27 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         if user_id == owner_id_from_cb:
             download_service.album_tracker.cancel_download(user_id, coll_id)
             await bot.answer_callback_query(callback_query.id, "⏹️ توقف دانلود...")
+
+    elif data.startswith("confirm_dl:"):
+        link_id = parts[1]
+        url = DIRECT_LINKS.get(link_id)
+        if url:
+            settings = await user_settings_service.get_settings(user_id)
+            await bot.answer_callback_query(callback_query.id, "⬇️ در حال دانلود...")
+            asyncio.create_task(direct_download_service.download_direct(chat_id, url, user_id, settings.download_quality.value if settings.download_quality.value != "ask" else "192"))
+            try: await callback_query.message.delete()
+            except: pass
+        else:
+            await bot.answer_callback_query(callback_query.id, "❌ پیوند منقضی شده است", show_alert=True)
+
+    elif data.startswith("force_artwork:"):
+        # Logic to force download/upload artwork
+        await bot.answer_callback_query(callback_query.id, "⏳ تلاش مجدد با دانلود مستقیم...")
+        etype, eid, cap = parts[1], int(parts[2]), ":".join(parts[3:])
+        # Use artworkService logic to force it
+        await artwork_service.force_manual_artwork(bot, chat_id, etype, eid, cap, user_id)
+        try: await callback_query.message.delete()
+        except: pass
 
     # Retry logic
     elif data.startswith("retry:"):

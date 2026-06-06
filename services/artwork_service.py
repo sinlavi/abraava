@@ -1,6 +1,7 @@
 import time
 import io
 import logging
+import asyncio
 from typing import Optional, Union, Dict, Any, List
 from balethon import Client
 from balethon.objects import Message, InlineKeyboard, InlineKeyboardButton
@@ -16,6 +17,11 @@ class ArtworkService:
     def __init__(self, api_client: APIClient, user_settings_service):
         self.api_client = api_client
         self.user_settings_service = user_settings_service
+        self.auto_download_mode = {} # user_id -> end_timestamp
+
+    def _in_auto_download(self, user_id: int) -> bool:
+        ts = self.auto_download_mode.get(user_id, 0)
+        return time.time() < ts
 
     async def get_cached_artwork_url(self, entity_type: str, entity_id: int) -> Optional[str]:
         try:
@@ -54,7 +60,8 @@ class ArtworkService:
         if not settings.show_artwork: return None
 
         cached_file_id = await self.get_cached_artwork_url(entity_type, entity_id)
-        if cached_file_id: return cached_file_id
+        if cached_file_id and not self._in_auto_download(user_id):
+            return cached_file_id
 
         # Fallback for artist artwork from YouTube Music
         final_url = artwork_url
@@ -72,24 +79,38 @@ class ArtworkService:
 
     async def send_artwork_photo(self, bot: Client, chat_id: int, artwork_data: Union[str, bytes],
                                   caption: str, reply_markup=None,
-                                  entity_type: str = None, entity_id: int = None):
+                                  entity_type: str = None, entity_id: int = None,
+                                  user_id: int = None):
         try:
-            from utils.messages import _prepare_markup, FOOTER
-            reply_markup = _prepare_markup(reply_markup, False)
+            from utils.messages import _prepare_markup, FOOTER, send_message
+            markup = _prepare_markup(reply_markup, False)
 
-            if isinstance(artwork_data, str):
-                msg = await bot.send_photo(chat_id, photo=artwork_data, caption=f"{caption}{FOOTER}", reply_markup=reply_markup)
-            else:
-                photo_io = io.BytesIO(artwork_data)
-                photo_io.name = "artwork.jpg"
-                msg = await bot.send_photo(chat_id, photo=photo_io, caption=f"{caption}{FOOTER}", reply_markup=reply_markup)
+            try:
+                if isinstance(artwork_data, str):
+                    msg = await bot.send_photo(chat_id, photo=artwork_data, caption=f"{caption}{FOOTER}", reply_markup=markup)
+                else:
+                    photo_io = io.BytesIO(artwork_data)
+                    photo_io.name = "artwork.jpg"
+                    msg = await bot.send_photo(chat_id, photo=photo_io, caption=f"{caption}{FOOTER}", reply_markup=markup)
 
-                if msg and msg.photo and entity_type and entity_id:
-                    file_id = str(msg.photo[0].id)
-                    await self.set_artwork_mirror(entity_type, entity_id, file_id)
-            return msg
+                    if msg and msg.photo and entity_type and entity_id:
+                        file_id = str(msg.photo[0].id)
+                        await self.set_artwork_mirror(entity_type, entity_id, file_id)
+                return msg
+            except Exception as e:
+                logger.warning(f"Failed to send artwork: {e}")
+                # Ask user if they want to force download/upload or skip
+                if user_id:
+                    self.auto_download_mode[user_id] = time.time() + 900 # 15 mins
+                    text = f"⚠️ *خطا در نمایش کاور*\nآیا مایلید مجدداً تلاش شود؟ (در صورت تایید کاور مستقیماً دانلود و آپلود می‌شود)"
+                    retry_markup = [
+                        [InlineKeyboardButton(text="✅ بله، تلاش مجدد", callback_data=f"force_artwork:{entity_type}:{entity_id}:{caption[:30]}")],
+                        [InlineKeyboardButton(text="❌ خیر، بدون کاور بفرست", callback_data="close")]
+                    ]
+                    await send_message(bot, chat_id, text, reply_markup=retry_markup)
+                return None
         except Exception as e:
-            logger.error(f"Failed to send artwork photo: {e}")
+            logger.error(f"Failed in send_artwork_photo helper: {e}")
             raise
 
     async def get_artwork_bytes(self, entity_id: int, artwork_url100: str):

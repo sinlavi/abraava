@@ -1,12 +1,12 @@
 from balethon.objects import InlineKeyboard, Message
 from core.config import FOOTER
-from bot.keyboards import create_close_button, create_info_channel_button
+from bot.keyboards import create_close_button, create_info_channel_button, create_cancel_button
 from services.last_message_tracker import last_message_tracker
 import logging
 
 logger = logging.getLogger("ABRAAVA:MESSAGES")
 
-def _prepare_markup(reply_markup, no_close, show_info=False):
+def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None):
     if reply_markup is None: reply_markup = []
     if isinstance(reply_markup, list):
         has_close = False
@@ -17,27 +17,30 @@ def _prepare_markup(reply_markup, no_close, show_info=False):
                         has_close = True
                         break
         if not no_close and not has_close:
-            if show_info:
+            if task_id:
+                reply_markup.append([create_cancel_button(task_id)])
+            elif show_info:
                 reply_markup.append([create_info_channel_button()])
-            reply_markup.append([create_close_button()])
+
+            if not any(any(getattr(btn, 'callback_data', '') == 'close' for btn in row) for row in reply_markup if isinstance(row, list)):
+                reply_markup.append([create_close_button()])
         return InlineKeyboard(*reply_markup)
     return reply_markup
 
-async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False):
-    markup = _prepare_markup(reply_markup, no_close, show_info)
+async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None):
+    markup = _prepare_markup(reply_markup, no_close, show_info, task_id)
     msg = await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
     if msg: last_message_tracker.set_last(chat_id, msg.id)
     return msg
 
-async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False):
+async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None):
     chat_id = message.chat.id
-    markup = _prepare_markup(reply_markup, no_close, show_info)
+    markup = _prepare_markup(reply_markup, no_close, show_info, task_id)
 
-    # If not the last message, delete and send new
     if not last_message_tracker.is_last(chat_id, message.id):
         try: await message.delete()
         except: pass
-        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info)
+        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
     try:
         if hasattr(message, 'photo') and message.photo:
@@ -48,7 +51,7 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
         return msg
     except Exception as e:
         logger.warning(f"Failed to edit, sending new: {e}")
-        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info)
+        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
 async def reply_message(message: Message, text: str, reply_markup=None, show_info=False):
     markup = _prepare_markup(reply_markup, False, show_info)

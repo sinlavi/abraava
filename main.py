@@ -100,6 +100,15 @@ async def on_message(message: Message):
             return
 
     if text.startswith("/start"):
+        # Deep link handling
+        if len(text.split()) > 1:
+            start_param = text.split()[1]
+            if "_" in start_param:
+                type_, item_id = start_param.split("_", 1)
+                if type_ == "artist": await show_track_page(bot, chat_id, int(item_id), artwork_service, user_id) # Redirection handled in show
+                elif type_ == "collection": await show_collection_page(bot, chat_id, int(item_id), 1, artwork_service, user_id)
+                elif type_ == "track": await show_track_page(bot, chat_id, int(item_id), artwork_service, user_id)
+                return
         await start_command(bot, message)
     elif text.startswith("/help"):
         await help_command(bot, message)
@@ -123,15 +132,21 @@ async def on_message(message: Message):
             elif type_ == "itunes_album":
                 await show_collection_page(bot, chat_id, int(term), 1, artwork_service, user_id)
             elif type_ == "direct_link":
-                await direct_download_service.download_direct(chat_id, term, user_id, settings.download_quality.value if settings.download_quality.value != "ask" else "192")
+                await direct_download_service.ask_confirmation(chat_id, term)
             else:
                 await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE)
 
 @bot.on_callback_query()
 async def on_callback(callback_query: CallbackQuery):
-    await handle_callback(bot, callback_query, api_client, user_settings_service,
-                         artwork_service, search_cache_service, download_service,
-                         rate_limiter, download_rate_limiter)
+    try:
+        await handle_callback(bot, callback_query, api_client, user_settings_service,
+                             artwork_service, search_cache_service, download_service,
+                             rate_limiter, download_rate_limiter, direct_download_service)
+    except Exception as e:
+        if "query is too old" in str(e).lower():
+            await bot.answer_callback_query(callback_query.id, "⚠️ این جستجو منقضی شده است. لطفاً مجدداً جستجو کنید.", show_alert=True)
+        else:
+            logger.error(f"Callback error: {e}")
 
 def signal_handler(sig, frame):
     sys.exit(0)
