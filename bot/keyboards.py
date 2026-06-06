@@ -17,21 +17,20 @@ def create_retry_button(callback_data: str, button_text: str = "🔄 تلاش م
 def create_pagination_row(callback_prefix: str, current_page: int, total_pages: int):
     if total_pages <= 1: return []
     buttons = []
-    if current_page > 2: buttons.append(InlineKeyboardButton(text="« ۱", callback_data=f"{callback_prefix}:1"))
+    if current_page > 2: buttons.append(InlineKeyboardButton(text="⏭️", callback_data=f"{callback_prefix}:1"))
     if current_page > 1: buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"{callback_prefix}:{current_page - 1}"))
     buttons.append(InlineKeyboardButton(text=f"{current_page}/{total_pages}", callback_data="ignore"))
     if current_page < total_pages: buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"{callback_prefix}:{current_page + 1}"))
-    if current_page < total_pages - 1: buttons.append(InlineKeyboardButton(text=f"{total_pages} »", callback_data=f"{callback_prefix}:{total_pages}"))
+    if current_page < total_pages - 1: buttons.append(InlineKeyboardButton(text=f"⏮️", callback_data=f"{callback_prefix}:{total_pages}"))
     return buttons
 
 def get_settings_keyboard(quick_mode, quality_text, show_artwork, auto_download, notifications):
     return [
         [InlineKeyboardButton(text=f"{'✅' if quick_mode else '❌'} حالت سریع", callback_data="menu_quick_mode")],
         [InlineKeyboardButton(text=f"🎵 کیفیت دانلود ({quality_text})", callback_data="show_quality_menu")],
-        [InlineKeyboardButton(text=f"{'🖼️' if show_artwork else '🚫'} نمایش کاور", callback_data="menu_artwork")],
-        [InlineKeyboardButton(text=f"{'⚡' if auto_download else '⏸️'} دانلود خودکار", callback_data="menu_auto_download")],
-        [InlineKeyboardButton(text=f"{'🔔' if notifications else '🔕'} دریافت اعلان", callback_data="menu_notifications")],
-        [InlineKeyboardButton(text="📊 آمار من", callback_data="show_stats")]
+        [InlineKeyboardButton(text=f"{'✅' if show_artwork else '❌'} نمایش کاور", callback_data="menu_artwork")],
+        [InlineKeyboardButton(text=f"{'✅' if auto_download else '❌'} دانلود خودکار", callback_data="menu_auto_download")],
+        [InlineKeyboardButton(text=f"{'✅' if notifications else '❌'} دریافت اعلان", callback_data="menu_notifications")]
     ]
 
 def get_quality_keyboard(current_quality):
