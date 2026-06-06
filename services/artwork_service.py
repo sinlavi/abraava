@@ -123,3 +123,40 @@ class ArtworkService:
                         if resp.status == 200: return await resp.read()
                 except: pass
         return None
+
+    async def force_manual_artwork(self, bot: Client, chat_id: int, entity_type: str, entity_id: int, caption: str, user_id: int):
+        """Attempts to recovery artwork by direct download and upload when mirrors fail."""
+        try:
+            # 1. Get metadata to find the official URL if not provided
+            # For simplicity, we assume we need to find it again or it was passed
+            # Let's try to get it from itunes lookup
+            from crawlers.itunes import lookup_itunes
+            data = await lookup_itunes(entity_id, entity_type if entity_type != 'collection' else None)
+            if not data or not data.get('results'):
+                await bot.send_message(chat_id, "❌ خطا در یافتن اطلاعات برای بازیابی کاور.")
+                return
+
+            item = data['results'][0]
+            artwork_url = get_high_res_artwork(item.get('artworkUrl100') or item.get('artworkUrl'))
+
+            if not artwork_url and entity_type == "artist":
+                artwork_url = get_artist_image(item.get('artistName'))
+
+            if not artwork_url:
+                await bot.send_message(chat_id, "❌ کاوری یافت نشد.")
+                return
+
+            # 2. Download bytes
+            session = await HttpClient.get_session()
+            async with session.get(artwork_url, timeout=60) as resp:
+                if resp.status != 200:
+                    await bot.send_message(chat_id, "❌ خطا در دانلود مستقیم کاور.")
+                    return
+                artwork_bytes = await resp.read()
+
+            # 3. Send and Mirror
+            await self.send_artwork_photo(bot, chat_id, artwork_bytes, caption, entity_type=entity_type, entity_id=entity_id, user_id=user_id)
+
+        except Exception as e:
+            logger.error(f"Error in force_manual_artwork: {e}")
+            await bot.send_message(chat_id, f"❌ خطای غیرمنتظره در بازیابی کاور: {e}")

@@ -49,16 +49,21 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
                     name = coll.get('collectionName') or coll.get('trackName') or 'نامشخص'
 
-                    track_count = coll.get('trackCount')
-                    # Improved album detection: check if trackCount is > 1
-                    is_single = (track_count == 1) or (coll.get('wrapperType') == 'track')
+                    try: track_count = int(coll.get('trackCount', 0))
+                    except: track_count = 0
+
+                    wrapper = coll.get('wrapperType')
+                    # Improved album detection: If it's a collection and has more than 1 track, it's an album.
+                    # Otherwise, if it's a track or a single-track collection, treat it as a single.
+                    is_album = (wrapper == 'collection') and (track_count > 1)
+                    is_single = not is_album
 
                     if is_single:
-                        btn_text = f"🎵 \u200e{i}. {name[:35]}{year_str}"
+                        btn_text = f"\u200e{i}. {name[:35]}{year_str} 🎵"
                         item_id = coll.get('collectionId') or coll.get('trackId')
                         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"single_album:{item_id}")])
                     else:
-                        btn_text = f"📀 \u200e{i}. {name[:35]}{year_str}"
+                        btn_text = f"\u200e{i}. {name[:35]}{year_str} 📀"
                         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"collection:{coll['collectionId']}:1")])
 
             pagination = create_pagination_row(f"artist:{artist_id}", page, total_pages)
@@ -134,10 +139,10 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
                 track_num = track.get('trackNumber', i)
                 duration = format_duration(track.get('trackTimeMillis', 0))
                 track_name = track.get('trackName', 'نامشخص')
-                text += f"🎵 \u200e{track_num}. {track_name} ({duration})\n"
+                text += f"\u200e{track_num}. {track_name} ({duration}) 🎵\n"
 
                 if track.get('wrapperType') == 'track':
-                    btn_text = f"🎵 \u200e{track_num}. {track_name[:35]}"
+                    btn_text = f"\u200e{track_num}. {track_name[:35]} 🎵"
                     markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"track:{track['trackId']}")])
 
             pagination = create_pagination_row(f"collection:{collection_id}", page, total_pages)

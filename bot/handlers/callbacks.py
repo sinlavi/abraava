@@ -24,6 +24,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
                           artwork_service, search_cache_service, download_service,
                           rate_limiter, download_rate_limiter, direct_download_service):
     data = callback_query.data
+    parts = data.split(":")
     chat_id = callback_query.message.chat.id
     user_id = callback_query.author.id
 
@@ -62,7 +63,6 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         return
 
     if data.startswith("confirm_dl:"):
-        parts = data.split(":")
         link_id = parts[1]
         url = DIRECT_LINKS.get(link_id)
         if url:
@@ -76,7 +76,6 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         return
 
     if data.startswith("confirm_") and ":" in data:
-        parts = data.split(":")
         setting_type = parts[0].replace("confirm_", "")
         if setting_type in ["quick_mode", "show_artwork", "auto_download", "notifications"]:
             new_value = bool(int(parts[1]))
@@ -110,7 +109,6 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         return
 
     # Details and Navigation
-    parts = data.split(":")
     if data.startswith("artist:"):
         artist_id, page = int(parts[1]), int(parts[2]) if len(parts) > 2 else 1
         is_pag = (len(parts) > 2 and parts[2].isdigit()) # Only True if it's explicitly a page click

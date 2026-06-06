@@ -22,13 +22,13 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
     for i, item in enumerate(page_items, start_idx + 1):
         wrapper = item.get("wrapperType")
         if wrapper == "artist":
-            btn_text = f"🎤 \u200e{i}. {item.get('artistName', 'نامشخص')}"
+            btn_text = f"\u200e{i}. {item.get('artistName', 'نامشخص')} 🎤"
             callback = f"artist:{item['artistId']}"
         elif wrapper == "collection":
-            btn_text = f"📀 \u200e{i}. {item.get('collectionName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]}"
+            btn_text = f"\u200e{i}. {item.get('collectionName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]} 📀"
             callback = f"collection:{item['collectionId']}"
         elif wrapper == "track":
-            btn_text = f"🎵 \u200e{i}. {item.get('trackName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]}"
+            btn_text = f"\u200e{i}. {item.get('trackName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]} 🎵"
             callback = f"track:{item['trackId']}"
         else:
             continue
