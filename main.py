@@ -152,15 +152,36 @@ async def on_message(message: Message):
                     await edit_message(status_msg, "❌ متأسفانه اطلاعاتی برای این پیوند یافت نشد.")
                     return
 
-                res_type, res_id = resolved
-                if res_type == "track":
-                    await show_track_page(bot, chat_id, res_id, artwork_service, user_id, message_to_edit=status_msg)
-                elif res_type == "collection":
-                    await show_collection_page(bot, chat_id, res_id, 1, artwork_service, user_id, message_to_edit=status_msg)
-                elif res_type == "artist":
-                    await show_artist_page(bot, chat_id, res_id, 1, artwork_service, user_id, message_to_edit=status_msg)
+                res_type = resolved.get("type")
+                itunes_id = resolved.get("itunes_id")
+
+                if itunes_id:
+                    if res_type == "track":
+                        await show_track_page(bot, chat_id, itunes_id, artwork_service, user_id, message_to_edit=status_msg)
+                    elif res_type == "collection":
+                        await show_collection_page(bot, chat_id, itunes_id, 1, artwork_service, user_id, message_to_edit=status_msg)
+                    elif res_type == "artist":
+                        await show_artist_page(bot, chat_id, itunes_id, 1, artwork_service, user_id, message_to_edit=status_msg)
                 else:
-                    await edit_message(status_msg, "❌ نوع محتوا شناسایی نشد.")
+                    # No iTunes ID found, try fallback to YouTube/YouTube Music
+                    yt_url = resolved.get("youtube_url")
+                    if yt_url:
+                        await status_msg.delete()
+                        await direct_download_service.ask_confirmation(chat_id, yt_url)
+                    else:
+                        # No link at all, try searching
+                        title, artist = resolved.get("title"), resolved.get("artist")
+                        if title and artist:
+                            await edit_message(status_msg, f"🔍 *در حال جستجوی آهنگ در یوتیوب...*\n\n🎵 {title} - {artist}")
+                            from crawlers.youtube import search_youtube_track
+                            vid_id = await search_youtube_track(title, artist, resolved.get("album", ""), "")
+                            if vid_id:
+                                await status_msg.delete()
+                                await direct_download_service.ask_confirmation(chat_id, f"https://www.youtube.com/watch?v={vid_id}")
+                            else:
+                                await edit_message(status_msg, "❌ متأسفانه نسخه قابل دانلودی یافت نشد.")
+                        else:
+                            await edit_message(status_msg, "❌ متأسفانه اطلاعات کافی برای این پیوند یافت نشد.")
             elif type_ == "direct_link":
                 await direct_download_service.ask_confirmation(chat_id, term)
             else:

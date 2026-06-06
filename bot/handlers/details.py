@@ -12,7 +12,11 @@ logger = logging.getLogger("ABRAAVA:DETAILS")
 
 async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False):
     if not is_pagination:
-        status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*", show_cancel=True)
+        if message_to_edit:
+            status_msg = message_to_edit
+            await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات هنرمند...*")
+        else:
+            status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*", show_cancel=True)
     else:
         status_msg = None
     try:
@@ -103,7 +107,11 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
 async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False):
     if not is_pagination:
-        status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*", show_cancel=True)
+        if message_to_edit:
+            status_msg = message_to_edit
+            await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات آلبوم...*")
+        else:
+            status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*", show_cancel=True)
     else:
         status_msg = None
     try:
@@ -199,7 +207,11 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         else: await send_message(bot, chat_id, f"خطا در نمایش صفحه آلبوم: {e}", reply_markup=retry_markup)
 
 async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, message_to_edit=None):
-    status_msg = await send_message(bot, chat_id, "🔄 *در حال بارگذاری اطلاعات آهنگ...*", show_cancel=True)
+    if not message_to_edit:
+        status_msg = await send_message(bot, chat_id, "🔄 *در حال بارگذاری اطلاعات آهنگ...*", show_cancel=True)
+    else:
+        status_msg = message_to_edit
+        await edit_message(status_msg, "🔄 *در حال بارگذاری اطلاعات آهنگ...*")
     try:
         data = await get_track(track_id, status_msg)
         if not data or not data.get("results"):
