@@ -1,6 +1,6 @@
 from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
 from balethon import Client
-from balethon.objects import Message, CallbackQuery, InlineKeyboardButton
+from balethon.objects import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboard
 from core.logger import logger
 from core.http_client import HttpClient
 
@@ -61,7 +61,7 @@ async def on_shutdown():
 
 @bot.on_message()
 async def on_message(message: Message):
-    if message.author.is_bot: return
+    if not message.author or message.author.is_bot: return
 
     # Broadcast forward handling
     if message.chat.type == "channel" and str(message.chat.id) == str(INFO_CHANNEL_ID):
@@ -99,6 +99,7 @@ async def on_message(message: Message):
         if not is_member:
             markup_rows = []
             channels_text = "⚠️ *برای استفاده از ربات باید در کانال‌های زیر عضو شوید:*"
+            from bot.keyboards import create_close_button
             for ch in missing:
                 name = ch.get('channel_name', ch.get('channel_username', ch.get('channel_id')))
                 link = ch.get('invite_link', '')
@@ -106,7 +107,8 @@ async def on_message(message: Message):
                     markup_rows.append([InlineKeyboardButton(text=f"📢 عضویت در {name}", url=link)])
                 else:
                     channels_text += f"\n\n🔸 {name}"
-            await send_message(bot, chat_id, channels_text, reply_markup=InlineKeyboard(*markup_rows) if markup_rows else None)
+            markup_rows.append([create_close_button(user_id)])
+            await send_message(bot, chat_id, channels_text, reply_markup=InlineKeyboard(*markup_rows))
             return
 
     if text.startswith("/start"):
@@ -183,7 +185,7 @@ async def on_message(message: Message):
                             await show_track_page(bot, chat_id, f"yt_{m.group(1)}", artwork_service, user_id, message_to_edit=status_msg)
                         else:
                             await status_msg.delete()
-                            await direct_download_service.ask_confirmation(chat_id, yt_url)
+                            await direct_download_service.ask_confirmation(chat_id, yt_url, user_id=user_id)
                     else:
                         # No link at all, try searching
                         title, artist = resolved.get("title"), resolved.get("artist")
@@ -206,7 +208,7 @@ async def on_message(message: Message):
                 elif sc_m:
                     await show_track_page(bot, chat_id, f"sc_{sc_m.group(1)}", artwork_service, user_id)
                 else:
-                    await direct_download_service.ask_confirmation(chat_id, term)
+                    await direct_download_service.ask_confirmation(chat_id, term, user_id=user_id)
             else:
                 await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE)
 

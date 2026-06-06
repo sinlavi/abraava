@@ -23,13 +23,13 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
         wrapper = item.get("wrapperType")
         if wrapper == "artist":
             btn_text = f"\u200e{i}. {item.get('artistName', 'نامشخص')} 🎤"
-            callback = f"artist:{item['artistId']}"
+            callback = f"artist:{item['artistId']}:u{owner_id}"
         elif wrapper == "collection":
             btn_text = f"\u200e{i}. {item.get('collectionName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]} 📀"
-            callback = f"collection:{item['collectionId']}"
+            callback = f"collection:{item['collectionId']}:u{owner_id}"
         elif wrapper == "track":
             btn_text = f"\u200e{i}. {item.get('trackName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]} 🎵"
-            callback = f"track:{item['trackId']}"
+            callback = f"track:{item['trackId']}:u{owner_id}"
         else:
             continue
         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=callback)])
@@ -37,14 +37,14 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
     if total_pages > 1:
         search_id = generate_search_hash(type_, term)
         await search_cache_service.store(search_id, type_, term, results, owner_id)
-        pagination = create_pagination_row(f"page:search:{search_id}:{type_}", page, total_pages)
+        pagination = create_pagination_row(f"page:search:{search_id}:{type_}", page, total_pages, user_id=owner_id)
         if pagination:
             markup_rows.append(pagination)
 
     markup_rows.append([
-        InlineKeyboardButton(text="🔍 آلبوم‌ها", callback_data=f"refine:album:{term}"),
-        InlineKeyboardButton(text="🔍 هنرمندان", callback_data=f"refine:artist:{term}"),
-        InlineKeyboardButton(text="🔍 آهنگ‌ها", callback_data=f"refine:track:{term}")
+        InlineKeyboardButton(text="🔍 آلبوم‌ها", callback_data=f"refine:album:{term}:u{owner_id}"),
+        InlineKeyboardButton(text="🔍 هنرمندان", callback_data=f"refine:artist:{term}:u{owner_id}"),
+        InlineKeyboardButton(text="🔍 آهنگ‌ها", callback_data=f"refine:track:{term}:u{owner_id}")
     ])
 
     if message_to_edit:
@@ -70,13 +70,13 @@ async def send_external_search_results(bot, chat_id, type_, term, results, page,
         wrapper = item.get("wrapperType")
         if wrapper == "artist":
             btn_text = f"\u200e{i}. {item.get('artistName', 'نامشخص')} 🎤"
-            callback = f"artist:{item['artistId']}"
+            callback = f"artist:{item['artistId']}:u{owner_id}"
         elif wrapper == "collection":
             btn_text = f"\u200e{i}. {item.get('collectionName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]} 📀"
-            callback = f"collection:{item['collectionId']}"
+            callback = f"collection:{item['collectionId']}:u{owner_id}"
         elif wrapper == "track":
             btn_text = f"\u200e{i}. {item.get('trackName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]} 🎵"
-            callback = f"track:{item['trackId']}"
+            callback = f"track:{item['trackId']}:u{owner_id}"
         else:
             continue
         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=callback)])
@@ -86,7 +86,7 @@ async def send_external_search_results(bot, chat_id, type_, term, results, page,
         # We can reuse search_cache_service if we wrap external results
         wrapped_results = {"results": results, "resultCount": total_items}
         await search_cache_service.store(search_id, type_, term, wrapped_results, owner_id)
-        pagination = create_pagination_row(f"page:ext_search:{search_id}:{type_}", page, total_pages)
+        pagination = create_pagination_row(f"page:ext_search:{search_id}:{type_}", page, total_pages, user_id=owner_id)
         if pagination:
             markup_rows.append(pagination)
 

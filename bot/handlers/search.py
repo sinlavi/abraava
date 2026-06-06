@@ -34,11 +34,11 @@ async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, ter
             await status_msg.delete()
             await api_client.log_search(user_id, type_, term, int(results.get("resultCount") or 0))
         else:
-            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}")]]
+            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}:u{user_id}")]]
             await edit_message(status_msg, f"هیچ نتیجه‌ای برای '{term}' یافت نشد.", reply_markup=retry_markup)
     except Exception as e:
         logger.error(f"Search error: {e}")
-        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}")]]
+        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}:u{user_id}")]]
         await edit_message(status_msg, "خطا در جستجو.", reply_markup=retry_markup)
 
 async def handle_external_search(bot: Client, chat_id: int, user_id: int, type_: str, term: str, search_cache_service):
@@ -78,9 +78,9 @@ async def quick_search(bot: Client, chat_id: int, user_id: int, term: str,
             await api_client.log_search(user_id, 'quick', term, 1)
             await status_msg.delete()
         else:
-            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}")]]
+            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}:u{user_id}")]]
             await edit_message(status_msg, "نتیجه‌ای یافت نشد.", reply_markup=retry_markup)
     except Exception as e:
         logger.error(f"Quick search error: {e}")
-        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}")]]
+        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}:u{user_id}")]]
         await edit_message(status_msg, f"خطا در جستجوی سریع: {e}", reply_markup=retry_markup)

@@ -100,7 +100,7 @@ class DirectDownloadService:
                 continue
         return None
 
-    async def ask_confirmation(self, chat_id, url):
+    async def ask_confirmation(self, chat_id, url, user_id=None):
         # This method is now mostly a fallback for non-YouTube/non-SoundCloud direct links
         # that couldn't be parsed into IDs.
         status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*")
@@ -132,8 +132,8 @@ class DirectDownloadService:
         link_id = await store_direct_link(url)
 
         markup = [
-            [InlineKeyboardButton(text="✅ بله، دانلود کن", callback_data=f"confirm_dl:{link_id}")],
-            [InlineKeyboardButton(text="❌ خیر، انصراف", callback_data="close")]
+            [InlineKeyboardButton(text="✅ بله، دانلود کن", callback_data=f"confirm_dl:{link_id}:u{user_id}")],
+            [create_close_button(user_id)]
         ]
 
         if meta.get("thumbnail"):
@@ -209,7 +209,7 @@ class DirectDownloadService:
                     # or just use close button as fallback if ID is not available.
                     markup = [[InlineKeyboardButton(text="📋 کپی پیوند", copy_text=url)],
                               [InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=url)],
-                              [create_close_button()]]
+                              [create_close_button(user_id)]]
                     await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard(*markup))
                 await status_msg.delete()
             else:
