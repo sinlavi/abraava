@@ -100,13 +100,13 @@ class DirectDownloadService:
                 continue
         return None
 
-    async def ask_confirmation(self, chat_id, url, user_id=None):
+    async def ask_confirmation(self, chat_id, url):
         # This method is now mostly a fallback for non-YouTube/non-SoundCloud direct links
         # that couldn't be parsed into IDs.
-        status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*", user_id=user_id)
+        status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*")
         meta = await self.get_metadata(url)
         if not meta:
-            await edit_message(status_msg, "❌ خطا در دریافت اطلاعات پیوند.", user_id=user_id)
+            await edit_message(status_msg, "❌ خطا در دریافت اطلاعات پیوند.")
             return
 
         from utils.helpers import format_duration
@@ -131,26 +131,23 @@ class DirectDownloadService:
         from bot.handlers.callbacks import store_direct_link
         link_id = await store_direct_link(url)
 
-        suffix = f":u{user_id}" if user_id else ""
         markup = [
-            [InlineKeyboardButton(text="✅ بله، دانلود کن", callback_data=f"confirm_dl:{link_id}{suffix}")],
-            [InlineKeyboardButton(text="❌ خیر، انصراف", callback_data=f"close{suffix}")]
+            [InlineKeyboardButton(text="✅ بله، دانلود کن", callback_data=f"confirm_dl:{link_id}")],
+            [InlineKeyboardButton(text="❌ خیر، انصراف", callback_data="close")]
         ]
 
         if meta.get("thumbnail"):
             try:
-                from utils.messages import _prepare_markup
-                reply_markup = _prepare_markup(markup, False, user_id=user_id)
-                await self.bot.send_photo(chat_id, photo=meta["thumbnail"], caption=f"{text}{FOOTER}", reply_markup=reply_markup)
+                await self.bot.send_photo(chat_id, photo=meta["thumbnail"], caption=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*markup))
                 await status_msg.delete()
             except Exception as e:
                 logger.warning(f"Failed to send thumbnail: {e}")
-                await edit_message(status_msg, text, reply_markup=markup, user_id=user_id)
+                await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
         else:
-            await edit_message(status_msg, text, reply_markup=markup, user_id=user_id)
+            await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
 
     async def download_direct(self, chat_id, url, user_id, quality="192"):
-        status_msg = await send_message(self.bot, chat_id, f"⏳ *در حال شروع دانلود...*", user_id=user_id)
+        status_msg = await send_message(self.bot, chat_id, f"⏳ *در حال شروع دانلود...*")
 
         unique_id = uuid.uuid4().hex
         temp_dir = os.path.join(os.getcwd(), "downloads", unique_id)
@@ -185,7 +182,7 @@ class DirectDownloadService:
                     continue
 
             if success and mp3_path:
-                await edit_message(status_msg, "☁️ *در حال آماده‌سازی فایل...*", show_cancel=True, user_id=user_id)
+                await edit_message(status_msg, "☁️ *در حال آماده‌سازی فایل...*", show_cancel=True)
                 self.tagging_service.tag_mp3(mp3_path, track_data)
 
                 track_name = track_data['trackName']
@@ -212,16 +209,14 @@ class DirectDownloadService:
                     # or just use close button as fallback if ID is not available.
                     markup = [[InlineKeyboardButton(text="📋 کپی پیوند", copy_text=url)],
                               [InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=url)],
-                              [create_close_button(user_id=user_id)]]
-                    from utils.messages import _prepare_markup
-                    reply_markup = _prepare_markup(markup, False, user_id=user_id)
-                    await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=reply_markup)
+                              [create_close_button()]]
+                    await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard(*markup))
                 await status_msg.delete()
             else:
-                await edit_message(status_msg, "❌ دانلود با خطا مواجه شد.", show_cancel=True, user_id=user_id)
+                await edit_message(status_msg, "❌ دانلود با خطا مواجه شد.", show_cancel=True)
 
         except Exception as e:
             logger.error(f"Direct download service error: {e}")
-            await edit_message(status_msg, f"❌ خطا: {str(e)[:50]}", show_cancel=True, user_id=user_id)
+            await edit_message(status_msg, f"❌ خطا: {str(e)[:50]}", show_cancel=True)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
