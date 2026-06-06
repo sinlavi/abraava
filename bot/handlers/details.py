@@ -3,7 +3,7 @@ from core.config import ITEMS_PER_PAGE, DEEP_LINK_BASE
 from bot.keyboards import create_pagination_row, create_close_button
 from utils.messages import send_message, edit_message
 from utils.helpers import get_high_res_artwork, format_duration, generate_deep_link
-from crawlers.utils import get_or_crawl_artist, get_or_crawl_artist_collections, get_or_crawl_collection, get_or_crawl_collection_tracks, get_track
+from crawlers.utils import get_or_crawl_artist, get_or_crawl_artist_collections, get_or_crawl_collection, get_or_crawl_collection_tracks, get_track, format_artist_hashtag
 from crawlers.youtube import get_artist_image
 import logging
 import asyncio
@@ -41,7 +41,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
         hashtags = []
         if genre: hashtags.append(f"#{genre.replace(' ', '_')}")
-        hashtags.append(f"#{artist_name.replace(' ', '_')}")
+        hashtags.append(format_artist_hashtag(artist_name))
         text += f"{' '.join(hashtags)}\n"
 
         collections = collections_data["results"] if collections_data else []
@@ -147,7 +147,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         hashtags = []
         if release_date[:4].isdigit(): hashtags.append(f"#{release_date[:4]}")
         if coll.get('primaryGenreName'): hashtags.append(f"#{coll.get('primaryGenreName').replace(' ', '_')}")
-        hashtags.append(f"#{artist_name.replace(' ', '_')}")
+        hashtags.append(format_artist_hashtag(artist_name))
         if hashtags: text += f"\n{' '.join(hashtags)}\n"
 
         markup_rows = []
@@ -247,7 +247,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         hashtags = []
         if release_year: hashtags.append(f"#{release_year}")
         if track.get('primaryGenreName'): hashtags.append(f"#{track.get('primaryGenreName').replace(' ', '_')}")
-        hashtags.append(f"#{artist_name.replace(' ', '_')}")
+        hashtags.append(format_artist_hashtag(artist_name))
         if hashtags: text += f"\n{' '.join(hashtags)}\n"
 
         markup_rows = []

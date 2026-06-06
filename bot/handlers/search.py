@@ -4,15 +4,14 @@ from core.logger import logger
 from utils.messages import send_message, edit_message
 from crawlers.itunes import search_itunes
 from bot.handlers.search_results import send_search_results, send_external_search_results
-import yt_dlp
+from services.music_adapter import MusicAdapter
 import asyncio
-from ytmusicapi import YTMusic
 
-YT = None
+music_adapter = MusicAdapter()
 
 async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, term: str,
                         api_client, search_cache_service, offline_mode=False):
-    if type_ in ["ytm", "sc"]:
+    if type_ in ["ytm", "sc", "sp", "itunes_official"]:
         await handle_external_search(bot, chat_id, user_id, type_, term, search_cache_service)
         return
 
@@ -43,38 +42,20 @@ async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, ter
         await edit_message(status_msg, "خطا در جستجو.", reply_markup=retry_markup)
 
 async def handle_external_search(bot: Client, chat_id: int, user_id: int, type_: str, term: str, search_cache_service):
-    source_name = "یوتیوب موزیک" if type_ == "ytm" else "ساندکلاد"
+    source_map = {"ytm": "یوتیوب موزیک", "sc": "ساندکلاد", "sp": "اسپاتیفای", "itunes_official": "آیتیونز"}
+    source_name = source_map.get(type_, "منابع خارجی")
     status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجو در {source_name}: {term}...*", show_cancel=True)
 
     try:
         results = []
         if type_ == "ytm":
-            global YT
-            if YT is None: YT = YTMusic()
-            loop = asyncio.get_event_loop()
-            yt_results = await loop.run_in_executor(None, lambda: YT.search(term, filter="songs", limit=20))
-            for res in yt_results:
-                results.append({
-                    "title": res.get("title"),
-                    "artist": ", ".join([a.get("name") for a in res.get("artists", [])]),
-                    "id": res.get("videoId"),
-                    "url": f"https://www.youtube.com/watch?v={res.get('videoId')}",
-                    "source": "ytm"
-                })
-        else: # sc
-            ydl_opts = {'quiet': True, 'extract_flat': True, 'force_generic_extractor': False}
-            loop = asyncio.get_event_loop()
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = await loop.run_in_executor(None, lambda: ydl.extract_info(f"scsearch20:{term}", download=False))
-                if info and 'entries' in info:
-                    for entry in info['entries']:
-                        results.append({
-                            "title": entry.get("title"),
-                            "artist": entry.get("uploader", "Unknown"),
-                            "id": entry.get("id"),
-                            "url": entry.get("url"),
-                            "source": "sc"
-                        })
+            results = await music_adapter.search_ytm(term)
+        elif type_ == "sc":
+            results = await music_adapter.search_sc(term)
+        elif type_ == "sp":
+            results = await music_adapter.search_spotify(term)
+        elif type_ == "itunes_official":
+            results = await music_adapter.search_itunes_official(term)
 
         if results:
             await send_external_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id)

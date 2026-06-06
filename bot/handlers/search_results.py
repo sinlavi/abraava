@@ -61,20 +61,25 @@ async def send_external_search_results(bot, chat_id, type_, term, results, page,
     end_idx = start_idx + ITEMS_PER_PAGE
     page_items = results[start_idx:end_idx]
 
-    source_name = "یوتیوب موزیک" if type_ == "ytm" else "ساندکلاد"
+    source_map = {"ytm": "یوتیوب موزیک", "sc": "ساندکلاد", "sp": "اسپاتیفای", "itunes_official": "آیتیونز"}
+    source_name = source_map.get(type_, "منابع خارجی")
     header = f"📋 *نتایج جستجو در {source_name}: {term}*\nتعداد کل: {total_items} مورد"
 
     markup_rows = []
-    from bot.handlers.callbacks import store_direct_link
     for i, item in enumerate(page_items, start_idx + 1):
-        title = item.get("title", "Unknown")[:40]
-        artist = item.get("artist", "Unknown")[:30]
-        btn_text = f"\u200e{i}. {title} - {artist} ⬇️"
-
-        url = item.get("url")
-        link_id = await store_direct_link(url)
-
-        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"ext_dl:{link_id}")])
+        wrapper = item.get("wrapperType")
+        if wrapper == "artist":
+            btn_text = f"\u200e{i}. {item.get('artistName', 'نامشخص')} 🎤"
+            callback = f"artist:{item['artistId']}"
+        elif wrapper == "collection":
+            btn_text = f"\u200e{i}. {item.get('collectionName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]} 📀"
+            callback = f"collection:{item['collectionId']}"
+        elif wrapper == "track":
+            btn_text = f"\u200e{i}. {item.get('trackName', 'نامشخص')[:40]} - {item.get('artistName', 'نامشخص')[:30]} 🎵"
+            callback = f"track:{item['trackId']}"
+        else:
+            continue
+        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=callback)])
 
     if total_pages > 1:
         search_id = generate_search_hash(type_, term)

@@ -173,7 +173,11 @@ class DirectDownloadService:
                 await edit_message(status_msg, "☁️ *در حال آماده‌سازی فایل...*")
                 self.tagging_service.tag_mp3(mp3_path, track_data)
 
-                caption = f"🎵 *نام آهنگ:* {track_data['trackName']}\n"
+                track_name = track_data['trackName']
+                if url:
+                    track_name = f"[{track_name}]({url})"
+
+                caption = f"🎵 *نام آهنگ:* {track_name}\n"
                 caption += f"🎤 *نام هنرمند:* {track_data['artistName']}\n"
                 if track_data['collectionName']: caption += f"💿 *نام آلبوم:* {track_data['collectionName']}\n"
                 caption += f"📀 *کیفیت دانلود:* {quality} kbps"

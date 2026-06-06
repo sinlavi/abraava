@@ -3,7 +3,7 @@ import json
 import hashlib
 import time
 import random
-from typing import Optional, Dict, Any, Literal, List
+from typing import Optional, Dict, Any, Literal, List, Union
 from pathlib import Path
 import aiosqlite
 
@@ -99,7 +99,8 @@ class iTunesEndpointManager:
 endpoint_manager = iTunesEndpointManager(ALTERNATIVE_ENDPOINTS)
 
 async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = False,
-                       method: Literal["GET", "POST", "PUT", "DELETE"] = "GET", payload: dict = None) -> Optional[Dict[str, Any]]:
+                       method: Literal["GET", "POST", "PUT", "DELETE"] = "GET", payload: dict = None,
+                       official: bool = False) -> Optional[Dict[str, Any]]:
     params = params or {}
     if method == "GET" and not bypass_cache and not OFFLINE_MODE:
         cached = await _itunes_cache.get(endpoint, params)
@@ -113,7 +114,10 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
     max_attempts = 1 if is_mirror else 3
 
     for attempt in range(max_attempts):
-        base_url = endpoint_manager.get_endpoint() if not is_mirror else ITUNES_BASE_URL
+        if official:
+            base_url = "https://itunes.apple.com"
+        else:
+            base_url = endpoint_manager.get_endpoint() if not is_mirror else ITUNES_BASE_URL
         api_path = f"/{endpoint}" if not endpoint.startswith("/") else endpoint
         url = f"{base_url}{api_path}"
 
@@ -141,14 +145,14 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
 
     return None
 
-async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50) -> Optional[Dict[str, Any]]:
-    return await fetch_itunes("search", {"term": term, "media": "music", "limit": limit, "entity": entity} if entity else {"term": term, "media": "music", "limit": limit})
+async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50, official: bool = False) -> Optional[Dict[str, Any]]:
+    return await fetch_itunes("search", {"term": term, "media": "music", "limit": limit, "entity": entity} if entity else {"term": term, "media": "music", "limit": limit}, official=official)
 
-async def lookup_itunes(id: int, entity: Optional[str] = None, bypass_cache: bool = False, status_msg: Message = None, status_text: str = None) -> Optional[Dict[str, Any]]:
+async def lookup_itunes(id: Union[int, str], entity: Optional[str] = None, bypass_cache: bool = False, status_msg: Message = None, status_text: str = None, official: bool = False) -> Optional[Dict[str, Any]]:
     if status_msg and status_text:
         try: await edit_message(status_msg, status_text, show_cancel=True)
         except: pass
-    return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache)
+    return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache, official=official)
 
 async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url: str, quality: str = None) -> Optional[Dict[str, Any]]:
     payload = {"entityType": entity_type, "entityId": entity_id, "urlType": url_type, "mirrorUrl": mirror_url}

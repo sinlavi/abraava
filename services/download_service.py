@@ -141,8 +141,15 @@ class DownloadService:
         coll_name = track.get('collectionName', 'Unknown')
         coll_link = f"[{coll_name}]({generate_deep_link('collection', coll_id)})" if coll_id else coll_name
 
+        track_name = track.get('trackName')
+        track_url = track.get('trackViewUrl')
+        if track_url:
+            track_name_link = f"[{track_name}]({track_url})"
+        else:
+            track_name_link = track_name
+
         fields = {
-            "🎵 نام آهنگ": track.get('trackName'),
+            "🎵 نام آهنگ": track_name_link,
             "🎤 نام هنرمند": artist_link,
             "💿 نام آلبوم": coll_link,
             "📅 سال انتشار": track.get('releaseDate', '')[:4],
