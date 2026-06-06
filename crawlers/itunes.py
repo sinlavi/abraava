@@ -1,982 +1,154 @@
 import asyncio
 import json
 import hashlib
-import aiohttp
 import time
 import random
-import socket
-from typing import Optional, Dict, Any, Literal, List, Tuple
+from typing import Optional, Dict, Any, Literal, List
 from pathlib import Path
-from datetime import datetime, timedelta
 
-from config import ITUNES_BASE_URL, HttpClient, OFFLINE_MODE, logger, PROXY
+from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY, FOOTER
+from core.logger import logger
+from core.http_client import HttpClient
+from balethon.objects import Message
 
 
 class iTunesCache:
-    """Cache manager for iTunes API responses"""
-
     def __init__(self, cache_dir: str = "cache/itunes", ttl_seconds: int = 4 * 3600):
         self.cache_dir = Path(cache_dir)
         self.ttl_seconds = ttl_seconds
-        self._init_cache_dir()
-
-    def _init_cache_dir(self):
-        """Create cache directory if it doesn't exist"""
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_cache_key(self, endpoint: str, params: dict) -> str:
-        """Generate a unique cache key from endpoint and parameters"""
         key_data = f"{endpoint}:{json.dumps(params, sort_keys=True)}"
         return hashlib.md5(key_data.encode()).hexdigest()
 
-    def _get_cache_path(self, cache_key: str) -> Path:
-        """Get file path for a cache key"""
-        return self.cache_dir / f"{cache_key}.json"
-
     def get(self, endpoint: str, params: dict) -> Optional[Dict[str, Any]]:
-        """Retrieve cached response if valid"""
         cache_key = self._get_cache_key(endpoint, params)
-        cache_path = self._get_cache_path(cache_key)
-
-        if not cache_path.exists():
-            return None
-
+        cache_path = self.cache_dir / f"{cache_key}.json"
+        if not cache_path.exists(): return None
         try:
             with open(cache_path, "r", encoding="utf-8") as f:
                 cached_data = json.load(f)
-
-            cache_time = cached_data.get("_cache_timestamp", 0)
-            current_time = time.time()
-
-            if current_time - cache_time > self.ttl_seconds:
+            if time.time() - cached_data.get("_cache_timestamp", 0) > self.ttl_seconds:
                 cache_path.unlink(missing_ok=True)
                 return None
-
-            logger.info(
-                f"Cache hit for {endpoint} (age: {int((current_time - cache_time) / 60)} minutes)"
-            )
             return cached_data.get("response")
-
-        except (json.JSONDecodeError, KeyError, OSError) as e:
-            logger.warning(f"Failed to read cache for {cache_key}: {e}")
-            return None
+        except Exception: return None
 
     def set(self, endpoint: str, params: dict, response: Dict[str, Any]):
-        """Store response in cache"""
         cache_key = self._get_cache_key(endpoint, params)
-        cache_path = self._get_cache_path(cache_key)
-
-        cache_data = {
-            "_cache_timestamp": time.time(),
-            "endpoint": endpoint,
-            "params": params,
-            "response": response,
-        }
-
+        cache_path = self.cache_dir / f"{cache_key}.json"
         try:
             with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump(cache_data, f, ensure_ascii=False, indent=2)
-            logger.info(f"Cached response for {endpoint} (key: {cache_key[:8]}...)")
-        except OSError as e:
-            logger.error(f"Failed to write cache for {cache_key}: {e}")
-
-    def clear_expired(self):
-        """Clear all expired cache entries"""
-        current_time = time.time()
-        expired_count = 0
-
-        for cache_file in self.cache_dir.glob("*.json"):
-            try:
-                with open(cache_file, "r", encoding="utf-8") as f:
-                    cached_data = json.load(f)
-
-                cache_time = cached_data.get("_cache_timestamp", 0)
-                if current_time - cache_time > self.ttl_seconds:
-                    cache_file.unlink()
-                    expired_count += 1
-            except (json.JSONDecodeError, KeyError, OSError):
-                cache_file.unlink()
-                expired_count += 1
-
-        if expired_count > 0:
-            logger.info(f"Cleared {expired_count} expired cache entries")
-
-    def clear_all(self):
-        """Clear all cache entries"""
-        for cache_file in self.cache_dir.glob("*.json"):
-            cache_file.unlink()
-        logger.info("Cleared all iTunes cache")
-
+                json.dump({"_cache_timestamp": time.time(), "response": response}, f, ensure_ascii=False, indent=2)
+        except Exception: pass
 
 _itunes_cache = iTunesCache()
 
-# لیست endpointهای جایگزین برای iTunes API
-ALTERNATIVE_ENDPOINTS = [
-    "https://itunes.apple.com",  # اصلی
-    "https://ax.itunes.apple.com",  # endpoint جایگزین
-    "https://buy.itunes.apple.com",  # endpoint جایگزین دیگر
-]
-
-# استفاده از متدهای مشابه کد دانلودر
-# متدها بر اساس عملکردشان در طول زمان جابجا می‌شوند
-ITUNES_METHOD_ORDER = [1, 2, 3]  # روش‌های مختلف برای iTunes API
-
-# کیفیت‌های پشتیبانی شده صوتی
-SUPPORTED_AUDIO_QUALITIES = ["320", "192", "128"]
-DEFAULT_AUDIO_QUALITY = "192"
-
-# User-Agent list (مشابه کد دانلودر)
+ALTERNATIVE_ENDPOINTS = [ITUNES_BASE_URL, "https://itunes.apple.com", "https://ax.itunes.apple.com", "https://buy.itunes.apple.com"]
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.4; rv:125.0) Gecko/20100101 Firefox/125.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
 ]
 
-
-def _check_proxy() -> Optional[str]:
-    """Return SOCKS5 proxy URL if WARP/Dante/etc. is listening on 1080 (مشابه کد دانلودر)"""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(1)
-    try:
-        if s.connect_ex(("127.0.0.1", 1080)) == 0:
-            s.close()
-            return "socks5://127.0.0.1:1080"
-    except Exception:
-        pass
-    finally:
-        s.close()
-    return None
-
-
-def _get_random_headers() -> dict:
-    """Generate random browser headers (مشابه کد دانلودر)"""
-    return {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1"
-    }
-
-
 class iTunesEndpointManager:
-    """مدیریت آندپوینت‌های iTunes با قابلیت تعویض خودکار و استفاده از متدهای مختلف"""
+    def __init__(self, endpoints: List[str]):
+        self.endpoints = endpoints
+        self.current_index = 0
+        self.failures = {e: 0 for e in endpoints}
 
-    def __init__(self, default_endpoints: List[str]):
-        self.default_endpoints = default_endpoints.copy()
-        self.active_endpoint = default_endpoints[0]
-        self.active_method = 1  # روش فعال (1, 2, 3)
-        self.method_order = [1, 2, 3]  # ترتیب روش‌ها
-        self.endpoint_stats = {}
+    def get_endpoint(self) -> str:
+        return self.endpoints[self.current_index]
 
-        for endpoint in default_endpoints:
-            self.endpoint_stats[endpoint] = {
-                "success_count": 0,
-                "fail_count": 0,
-                "last_success": None,
-                "last_fail": None,
-                "consecutive_successes": 0,
-                "consecutive_fails": 0,
-                "is_blocked": False,
-                "blocked_until": None,
-                "avg_response_time": 0,
-                "total_response_time": 0
-            }
+    def report_failure(self, endpoint: str):
+        self.failures[endpoint] += 1
+        if self.failures[endpoint] >= 2:
+            self.current_index = (self.current_index + 1) % len(self.endpoints)
+            logger.warning(f"iTunes endpoint switched to {self.get_endpoint()}")
 
-        self.last_endpoint_switch = time.time()
-        self.switch_history = []
+    def report_success(self, endpoint: str):
+        self.failures[endpoint] = 0
 
-    def get_proxy_for_method(self, method: int) -> Optional[str]:
-        """دریافت پروکسی مناسب برای متد مورد نظر (مشابه کد دانلودر)"""
-        proxy = _check_proxy()
-
-        # روش‌های 1, 2, 3 با پروکسی
-        if method in [1, 2, 3] and proxy:
-            return proxy
-        # روش‌های دیگه بدون پروکسی
-        return None
-
-    def get_headers_for_method(self, method: int) -> dict:
-        """دریافت هدرهای مناسب برای متد مورد نظر"""
-        headers = _get_random_headers()
-
-        # برای متدهای مختلف می‌توان هدرهای متفاوت داد
-        if method == 2:
-            # هدر شبیه موبایل
-            headers["User-Agent"] = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"
-        elif method == 3:
-            # هدر شبیه تبلت
-            headers["User-Agent"] = "Mozilla/5.0 (iPad; CPU OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1"
-
-        return headers
-
-    def record_success(self, endpoint: str, method: int, response_time: float):
-        """ثبت موفقیت برای یک آندپوینت و روش"""
-        if endpoint not in self.endpoint_stats:
-            return
-
-        stats = self.endpoint_stats[endpoint]
-        stats["success_count"] += 1
-        stats["last_success"] = time.time()
-        stats["consecutive_successes"] += 1
-        stats["consecutive_fails"] = 0
-        stats["total_response_time"] += response_time
-        stats["avg_response_time"] = stats["total_response_time"] / stats["success_count"]
-
-        # اگر آندپوینت blocked بوده، آزادش کن
-        if stats["is_blocked"]:
-            stats["is_blocked"] = False
-            stats["blocked_until"] = None
-            logger.info(f"🔓 Endpoint {endpoint} is no longer blocked")
-
-        # به روز رسانی ترتیب روش‌ها (روش موفق به اول لیست می‌ره)
-        if method in self.method_order:
-            self.method_order.remove(method)
-            self.method_order.insert(0, method)
-            logger.debug(f"Method {method} moved to front of order")
-
-        # بررسی تعویض آندپوینت
-        if endpoint != self.active_endpoint:
-            if stats["consecutive_successes"] >= 2:
-                self.switch_active_endpoint(endpoint, reason="better_performance")
-
-    def record_failure(self, endpoint: str, method: int, error_type: str = "unknown"):
-        """ثبت شکست برای یک آندپوینت و روش"""
-        if endpoint not in self.endpoint_stats:
-            return
-
-        stats = self.endpoint_stats[endpoint]
-        stats["fail_count"] += 1
-        stats["last_fail"] = time.time()
-        stats["consecutive_fails"] += 1
-        stats["consecutive_successes"] = 0
-
-        # به روز رسانی ترتیب روش‌ها (روش ناموفق به آخر لیست می‌ره)
-        if method in self.method_order:
-            self.method_order.remove(method)
-            self.method_order.append(method)
-            logger.debug(f"Method {method} moved to end of order")
-
-        # اگر ۲ بار پشت سر هم شکست خورد، آندپوینت رو مسدود کن
-        if stats["consecutive_fails"] >= 2:
-            block_duration = min(30, 5 * stats["consecutive_fails"])
-            stats["is_blocked"] = True
-            stats["blocked_until"] = time.time() + block_duration
-            logger.warning(f"🚫 Endpoint {endpoint} blocked for {block_duration}s")
-
-            # اگر آندپوینت فعلی مسدود شد، یه آندپوینت دیگه انتخاب کن
-            if endpoint == self.active_endpoint:
-                self.find_best_endpoint()
-
-    def find_best_endpoint(self) -> str:
-        """پیدا کردن بهترین آندپوینت موجود"""
-        available_endpoints = []
-
-        for endpoint, stats in self.endpoint_stats.items():
-            # آندپوینت‌های مسدود شده رو رد کن
-            if stats["is_blocked"] and stats["blocked_until"] > time.time():
-                continue
-
-            # امتیازدهی به آندپوینت‌ها
-            score = 0
-            if stats["success_count"] > 0:
-                success_rate = stats["success_count"] / (stats["success_count"] + stats["fail_count"] + 1)
-                score += success_rate * 10
-
-                if stats["avg_response_time"] > 0:
-                    speed_score = max(0, 5 - (stats["avg_response_time"] / 0.5))
-                    score += speed_score
-
-                score += min(3, stats["consecutive_successes"])
-
-            available_endpoints.append((score, endpoint))
-
-        if not available_endpoints:
-            logger.warning("All endpoints are blocked, resetting to default")
-            self.reset_all_blocks()
-            return self.default_endpoints[0]
-
-        available_endpoints.sort(reverse=True, key=lambda x: x[0])
-        best_endpoint = available_endpoints[0][1]
-
-        if best_endpoint != self.active_endpoint:
-            self.switch_active_endpoint(best_endpoint, reason="best_available")
-
-        return self.active_endpoint
-
-    def switch_active_endpoint(self, new_endpoint: str, reason: str = "manual"):
-        """تغییر آندپوینت فعال"""
-        old_endpoint = self.active_endpoint
-        self.active_endpoint = new_endpoint
-        self.last_endpoint_switch = time.time()
-
-        self.switch_history.append({
-            "timestamp": time.time(),
-            "from": old_endpoint,
-            "to": new_endpoint,
-            "reason": reason
-        })
-
-        if len(self.switch_history) > 50:
-            self.switch_history = self.switch_history[-50:]
-
-        logger.info(f"🔄 iTunes endpoint switched: {old_endpoint} → {new_endpoint} (reason: {reason})")
-
-    def reset_all_blocks(self):
-        """رفع مسدودیت همه آندپوینت‌ها"""
-        for stats in self.endpoint_stats.values():
-            stats["is_blocked"] = False
-            stats["blocked_until"] = None
-            stats["consecutive_fails"] = 0
-        logger.info("🔓 All iTunes endpoints unblocked")
-
-    def get_next_method(self) -> int:
-        """دریافت روش بعدی برای امتحان"""
-        return self.method_order[0] if self.method_order else 1
-
-    def should_reset_to_default(self) -> bool:
-        """بررسی بازگشت به آندپوینت اصلی"""
-        if self.active_endpoint not in self.default_endpoints:
-            return True
-
-        if time.time() - self.last_endpoint_switch > 900:  # 15 دقیقه
-            default_stats = self.endpoint_stats[self.default_endpoints[0]]
-            if default_stats["consecutive_fails"] == 0:
-                return True
-        return False
-
-    def reset_to_default_if_needed(self):
-        """بازگشت به آندپوینت اصلی در صورت لزوم"""
-        if self.should_reset_to_default():
-            self.switch_active_endpoint(self.default_endpoints[0], reason="periodic_reset")
-
-
-# نمونه از EndpointManager
 endpoint_manager = iTunesEndpointManager(ALTERNATIVE_ENDPOINTS)
 
-# تنظیمات timeout
-REQUEST_TIMEOUT = 3.5
-
-
-def _has_results(data: Dict[str, Any]) -> bool:
-    """Check if iTunes response contains items"""
-    if not data:
-        return False
-    if data.get("resultCount", 0) <= 0:
-        return False
-    results = data.get("results")
-    return isinstance(results, list) and len(results) > 0
-
-
-def _has_collection_tracks(data: Dict[str, Any]) -> bool:
-    """Check if response contains collection tracks (for caching)"""
-    if not data:
-        return False
-    results = data.get("results", [])
-    if not isinstance(results, list) or len(results) == 0:
-        return False
-
-    track_count = 0
-    for item in results:
-        if item.get("wrapperType") == "track" and item.get("collectionId"):
-            track_count += 1
-
-    return track_count > 0
-
-
-def _has_artist_collections(data: Dict[str, Any]) -> bool:
-    """Check if response contains artist collections (for caching)"""
-    if not data:
-        return False
-    results = data.get("results", [])
-    if not isinstance(results, list) or len(results) == 0:
-        return False
-
-    collection_count = 0
-    for item in results:
-        if item.get("wrapperType") == "collection" and item.get("artistId"):
-            collection_count += 1
-
-    return collection_count > 0
-
-
-def _is_mirror_request(endpoint: str) -> bool:
-    """Check if the request is related to mirror operations"""
-    return endpoint.startswith("mirror/")
-
-
-def _should_cache_response(endpoint: str, params: dict, data: Dict[str, Any]) -> bool:
-    """Determine if response should be cached based on content"""
-    if OFFLINE_MODE:
-        return False
-
-    if _is_mirror_request(endpoint):
-        return False
-
-    if not data or data.get("resultCount", 0) <= 0:
-        return False
-
-    if "entity" in params and params["entity"] == "song":
-        if _has_collection_tracks(data):
-            logger.info(f"Caching collection tracks response for endpoint {endpoint}")
-            return True
-
-    if "entity" in params and params["entity"] == "album":
-        if _has_artist_collections(data):
-            logger.info(f"Caching artist collections response for endpoint {endpoint}")
-            return True
-
-    if endpoint == "search" and _has_results(data):
-        return True
-
-    if endpoint == "lookup" and _has_results(data):
-        return True
-
-    return False
-
-
-async def fetch_with_smart_endpoint(
-        endpoint: str,
-        params: dict = None,
-        method: Literal["GET", "POST", "PUT", "DELETE"] = "GET",
-        payload: dict = None,
-        max_attempts: int = 3,
-) -> Optional[Dict[str, Any]]:
-    """
-    Fetch using smart endpoint management with methods similar to downloader
-    """
+async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = False,
+                       method: Literal["GET", "POST", "PUT", "DELETE"] = "GET", payload: dict = None) -> Optional[Dict[str, Any]]:
     params = params or {}
+    if method == "GET" and not bypass_cache and not OFFLINE_MODE:
+        cached = _itunes_cache.get(endpoint, params)
+        if cached: return cached
 
-    # تعیین نوع endpoint اصلی
-    if endpoint == "search":
-        api_path = "/search"
-    elif endpoint == "lookup":
-        api_path = "/lookup"
-    else:
-        api_path = f"/{endpoint}"
-
-    # بررسی بازگشت به آندپوینت اصلی
-    endpoint_manager.reset_to_default_if_needed()
-
-    # بهترین آندپوینت موجود
-    best_endpoint = endpoint_manager.find_best_endpoint()
+    if OFFLINE_MODE: return None
 
     session = await HttpClient.get_session()
+
+    is_mirror = endpoint.startswith("mirror")
+    max_attempts = 1 if is_mirror else 3
 
     for attempt in range(max_attempts):
-        # دریافت روش مناسب برای این تلاش
-        current_method = endpoint_manager.get_next_method()
-        current_endpoint = best_endpoint if attempt == 0 else random.choice(ALTERNATIVE_ENDPOINTS)
+        base_url = endpoint_manager.get_endpoint() if not is_mirror else ITUNES_BASE_URL
+        api_path = f"/{endpoint}" if not endpoint.startswith("/") else endpoint
+        url = f"{base_url}{api_path}"
 
-        # بررسی مسدودیت آندپوینت
-        if endpoint_manager.endpoint_stats[current_endpoint]["is_blocked"]:
-            continue
-
-        url = f"{current_endpoint}{api_path}"
-
-        # دریافت پروکسی و هدرهای مناسب برای این روش
-        proxy = endpoint_manager.get_proxy_for_method(current_method)
-        headers = endpoint_manager.get_headers_for_method(current_method)
-
-        timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT, connect=3)
-
+        headers = {"User-Agent": random.choice(USER_AGENTS)}
         try:
-            start_time = time.time()
-            logger.info(f"Attempt {attempt + 1}: Trying {current_endpoint} with method {current_method}")
-
             if method == "GET":
-                async with session.get(
-                        url,
-                        params=params,
-                        headers=headers,
-                        ssl=False,
-                        proxy=proxy,
-                        timeout=timeout
-                ) as resp:
-                    elapsed = time.time() - start_time
-
+                async with session.get(url, params=params, headers=headers, ssl=False, proxy=PROXY, timeout=10) as resp:
                     if resp.status == 200:
-                        logger.info(f"✅ Success from {current_endpoint} (method {current_method}) in {elapsed:.2f}s")
-                        endpoint_manager.record_success(current_endpoint, current_method, elapsed)
-
-                        text = await resp.text()
-                        try:
-                            response_data = json.loads(text)
-
-                            if _should_cache_response(endpoint, params, response_data):
-                                _itunes_cache.set(endpoint, params, response_data)
-
-                            return response_data
-                        except json.JSONDecodeError:
-                            logger.error(f"Failed to parse JSON from {url}")
-                            endpoint_manager.record_failure(current_endpoint, current_method, "json_error")
-                            continue
-
-                    elif resp.status == 429:
-                        logger.warning(f"⚠️ Rate limit (429) from {current_endpoint}")
-                        endpoint_manager.record_failure(current_endpoint, current_method, "rate_limit")
-                        continue
+                        data = await resp.json()
+                        if not is_mirror:
+                            _itunes_cache.set(endpoint, params, data)
+                            endpoint_manager.report_success(base_url)
+                        return data
                     else:
-                        logger.warning(f"Status {resp.status} from {current_endpoint}")
-                        endpoint_manager.record_failure(current_endpoint, current_method, f"http_{resp.status}")
-                        continue
-
-            elif method in ["POST", "PUT", "DELETE"]:
-                async with getattr(session, method.lower())(
-                        url,
-                        params=params,
-                        headers=headers,
-                        json=payload,
-                        ssl=False,
-                        proxy=proxy,
-                        timeout=timeout
-                ) as resp:
-                    elapsed = time.time() - start_time
-
-                    if resp.status == 200:
-                        logger.info(f"✅ Success from {current_endpoint} (method {current_method}) in {elapsed:.2f}s")
-                        endpoint_manager.record_success(current_endpoint, current_method, elapsed)
-                        response_data = await resp.json()
-                        return response_data
-                    elif resp.status == 429:
-                        logger.warning(f"⚠️ Rate limit (429) from {current_endpoint}")
-                        endpoint_manager.record_failure(current_endpoint, current_method, "rate_limit")
-                        continue
-                    else:
-                        logger.warning(f"Status {resp.status} from {current_endpoint}")
-                        endpoint_manager.record_failure(current_endpoint, current_method, f"http_{resp.status}")
-                        continue
-
-        except asyncio.TimeoutError:
-            elapsed = time.time() - start_time
-            logger.warning(f"⏱️ Timeout after {elapsed:.2f}s from {current_endpoint}")
-            endpoint_manager.record_failure(current_endpoint, current_method, "timeout")
-            continue
-
-        except Exception as e:
-            logger.warning(f"❌ Error from {current_endpoint}: {e}")
-            endpoint_manager.record_failure(current_endpoint, current_method, "exception")
-            continue
-
-        # تاخیر بین تلاش‌ها (مشابه کد دانلودر)
-        await asyncio.sleep(random.uniform(1.0, 3.0))
-
-    logger.error(f"❌ All {max_attempts} attempts failed for {endpoint}")
-    return None
-
-
-async def fetch_itunes(
-        endpoint: str,
-        params: dict = None,
-        bypass_cache: bool = False,
-        method: Literal["GET", "POST", "PUT", "DELETE"] = "GET",
-        payload: dict = None,
-) -> Optional[Dict[str, Any]]:
-    """
-    Fetch from iTunes API with smart endpoint management
-    """
-    params = params or {}
-
-    is_mirror = _is_mirror_request(endpoint)
-    if is_mirror:
-        bypass_cache = True
-
-    # Check cache for GET requests
-    if method == "GET" and not bypass_cache and not OFFLINE_MODE and not is_mirror:
-        cached_response = _itunes_cache.get(endpoint, params)
-        if cached_response is not None:
-            return cached_response
-
-    if OFFLINE_MODE:
-        logger.info(f"Offline mode: skipping iTunes API call to {endpoint}")
-        return None
-
-    # برای mirror endpoints از روش ساده استفاده کن
-    if is_mirror:
-        return await fetch_simple_mirror(endpoint, params, method, payload)
-
-    # برای iTunes search/lookup از روش هوشمند استفاده کن
-    return await fetch_with_smart_endpoint(endpoint, params, method, payload)
-
-
-async def fetch_simple_mirror(
-        endpoint: str,
-        params: dict,
-        method: Literal["GET", "POST", "PUT", "DELETE"],
-        payload: dict = None,
-) -> Optional[Dict[str, Any]]:
-    """
-    درخواست ساده برای mirror endpoints
-    """
-    from config import ITUNES_BASE_URL
-
-    session = await HttpClient.get_session()
-    url = f"{ITUNES_BASE_URL}/{endpoint}"
-
-    try:
-        if method == "GET":
-            async with session.get(url, params=params, ssl=False, proxy=PROXY) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-        else:
-            async with getattr(session, method.lower())(
-                    url, params=params, json=payload, ssl=False, proxy=PROXY
-            ) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-    except Exception as e:
-        logger.error(f"Mirror request failed: {e}")
-
-    return None
-
-
-async def get_endpoint_stats() -> Dict[str, Any]:
-    """دریافت آمار آندپوینت‌های فعلی"""
-    return {
-        "active_endpoint": endpoint_manager.active_endpoint,
-        "active_method": endpoint_manager.get_next_method(),
-        "method_order": endpoint_manager.method_order,
-        "endpoints": endpoint_manager.endpoint_stats,
-        "switch_history": endpoint_manager.switch_history[-5:]
-    }
-
-
-async def search_itunes(
-        term: str,
-        entity: Optional[str] = None,
-        limit: int = 50,
-        bypass_cache: bool = False,
-) -> Optional[Dict[str, Any]]:
-    """Search iTunes with smart endpoint management"""
-    logger.info(f"Searching iTunes: term='{term}', entity='{entity}'")
-    params = {"term": term, "media": "music", "limit": limit}
-    if entity:
-        params["entity"] = entity
-    return await fetch_itunes("search", params, bypass_cache=bypass_cache)
-
-
-async def lookup_itunes(
-        id: int,
-        entity: Optional[str] = None,
-        bypass_cache: bool = False,
-) -> Optional[Dict[str, Any]]:
-    """Lookup iTunes item with smart endpoint management"""
-    logger.info(f"Looking up iTunes: id={id}, entity={entity}")
-    params = {"id": id}
-    if entity:
-        params["entity"] = entity
-
-    data = await fetch_itunes("lookup", params, bypass_cache=bypass_cache)
-
-    if data and entity and "results" in data:
-        if entity == "song":
-            entity = "track"
-        elif entity == "album":
-            entity = "collection"
-
-        filtered_results = [
-            item for item in data["results"] if item.get("wrapperType") == entity
-        ]
-        data["results"] = filtered_results
-        data["resultCount"] = len(filtered_results)
-
-    return data
-
-
-async def lookup_collection_tracks(
-        collection_id: int,
-        bypass_cache: bool = False,
-) -> Optional[Dict[str, Any]]:
-    """Lookup all tracks in a collection/album"""
-    logger.info(f"Looking up collection tracks: collection_id={collection_id}")
-    params = {
-        "id": collection_id,
-        "entity": "song"
-    }
-
-    data = await fetch_itunes("lookup", params, bypass_cache=bypass_cache)
-
-    if data and "results" in data:
-        tracks = [
-            item for item in data["results"]
-            if item.get("wrapperType") == "track" and item.get("collectionId") == collection_id
-        ]
-        data["results"] = tracks
-        data["resultCount"] = len(tracks)
-
-    return data
-
-
-async def lookup_artist_collections(
-        artist_id: int,
-        bypass_cache: bool = False,
-) -> Optional[Dict[str, Any]]:
-    """Lookup all collections/albums by an artist"""
-    logger.info(f"Looking up artist collections: artist_id={artist_id}")
-    params = {
-        "id": artist_id,
-        "entity": "album"
-    }
-
-    data = await fetch_itunes("lookup", params, bypass_cache=bypass_cache)
-
-    if data and "results" in data:
-        collections = [
-            item for item in data["results"]
-            if item.get("wrapperType") == "collection" and item.get("artistId") == artist_id
-        ]
-        data["results"] = collections
-        data["resultCount"] = len(collections)
-
-    return data
-
-
-async def clear_itunes_cache(expired_only: bool = False):
-    """Clear iTunes cache (all or only expired entries)"""
-    if expired_only:
-        _itunes_cache.clear_expired()
-    else:
-        _itunes_cache.clear_all()
-
-
-def get_cache_stats() -> Dict[str, Any]:
-    """Get cache statistics"""
-    cache_files = list(_itunes_cache.cache_dir.glob("*.json"))
-    current_time = time.time()
-
-    valid_count = 0
-    expired_count = 0
-
-    for cache_file in cache_files:
-        try:
-            with open(cache_file, "r", encoding="utf-8") as f:
-                cached_data = json.load(f)
-
-            cache_time = cached_data.get("_cache_timestamp", 0)
-
-            if current_time - cache_time <= _itunes_cache.ttl_seconds:
-                valid_count += 1
+                        if not is_mirror: endpoint_manager.report_failure(base_url)
             else:
-                expired_count += 1
-        except Exception:
-            expired_count += 1
+                async with getattr(session, method.lower())(url, params=params, json=payload, headers=headers, ssl=False, proxy=PROXY, timeout=10) as resp:
+                    if resp.status == 200: return await resp.json()
+        except Exception as e:
+            logger.error(f"iTunes fetch failed (attempt {attempt+1}): {e}")
+            if not is_mirror: endpoint_manager.report_failure(base_url)
 
-    return {
-        "total_files": len(cache_files),
-        "valid_entries": valid_count,
-        "expired_entries": expired_count,
-        "cache_directory": str(_itunes_cache.cache_dir),
-        "ttl_hours": _itunes_cache.ttl_seconds / 3600,
-    }
+        if not is_mirror: await asyncio.sleep(1)
 
+    return None
 
-# ============================================================================
-# Mirror endpoints با پشتیبانی از کیفیت
-# ============================================================================
+async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50) -> Optional[Dict[str, Any]]:
+    return await fetch_itunes("search", {"term": term, "media": "music", "limit": limit, "entity": entity} if entity else {"term": term, "media": "music", "limit": limit})
+
+async def lookup_itunes(id: int, entity: Optional[str] = None, bypass_cache: bool = False, status_msg: Message = None, status_text: str = None) -> Optional[Dict[str, Any]]:
+    if status_msg and status_text:
+        try: await status_msg.edit(f"{status_text}{FOOTER}")
+        except: pass
+    return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache)
 
 async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url: str, quality: str = None) -> Optional[Dict[str, Any]]:
-    """
-    POST /mirror/set
-    با پشتیبانی از کیفیت برای audioUrl
-    """
-    payload = {
-        "entityType": entity_type,
-        "entityId": entity_id,
-        "url_type": url_type,
-        "urlType": url_type,
-        "mirrorUrl": mirror_url
-    }
-
-    # اگر کیفیت مشخص شده و نوع آدرس audio است، کیفیت را اضافه کن
-    if quality and url_type == "audioUrl":
-        # اعتبارسنجی کیفیت
-        if quality in SUPPORTED_AUDIO_QUALITIES:
-            payload["quality"] = quality
-            logger.info(f"Setting mirror for {entity_type}:{entity_id} with quality {quality}")
-        else:
-            logger.warning(f"Invalid quality '{quality}', using default")
-            payload["quality"] = DEFAULT_AUDIO_QUALITY
-    else:
-        # برای سازگاری با عقب، کیفیت پیش‌فرض را بفرست
-        if url_type == "audioUrl":
-            payload["quality"] = DEFAULT_AUDIO_QUALITY
-
+    payload = {"entityType": entity_type, "entityId": entity_id, "urlType": url_type, "mirrorUrl": mirror_url}
+    if quality: payload["quality"] = quality
     return await fetch_itunes("mirror/set", method="POST", payload=payload)
 
-
 async def get_mirror(entity_type: str, entity_id: str, url_type: str, quality: str = None) -> Optional[Dict[str, Any]]:
-    """
-    GET /mirror/get
-    با پشتیبانی از کیفیت برای audioUrl
-    """
-    params = {
-        "entityType": entity_type,
-        "entityId": entity_id,
-        "url_type": url_type,
-        "urlType": url_type
-    }
-
-    # اگر کیفیت مشخص شده و نوع آدرس audio است، کیفیت را اضافه کن
-    if quality and url_type == "audioUrl":
-        if quality in SUPPORTED_AUDIO_QUALITIES:
-            params["quality"] = quality
-            logger.info(f"Getting mirror for {entity_type}:{entity_id} with quality {quality}")
-        else:
-            logger.warning(f"Invalid quality '{quality}', using default")
-            params["quality"] = DEFAULT_AUDIO_QUALITY
-
-    return await fetch_itunes("mirror/get", params=params, method="GET")
-
-
-async def delete_mirror(
-        entity_type: str,
-        entity_id: str,
-        url_type: str,
-        quality: str = None,
-        method: Literal["POST", "DELETE"] = "POST"
-) -> Optional[Dict[str, Any]]:
-    """
-    DELETE or POST /mirror/delete
-    با پشتیبانی از کیفیت برای audioUrl
-    """
-    payload = {
-        "entityType": entity_type,
-        "entityId": entity_id,
-        "urlType": url_type
-    }
-
-    # اگر کیفیت مشخص شده و نوع آدرس audio است، کیفیت را اضافه کن
-    if quality and url_type == "audioUrl":
-        if quality in SUPPORTED_AUDIO_QUALITIES:
-            payload["quality"] = quality
-        else:
-            payload["quality"] = DEFAULT_AUDIO_QUALITY
-
-    return await fetch_itunes("mirror/delete", method=method, payload=payload)
-
-
-async def get_best_available_audio(
-        track_id: int,
-        requested_quality: str,
-        entity_type: str = "track"
-) -> Optional[str]:
-    """
-    دریافت بهترین کیفیت موجود
-    اگر کیفیت درخواستی موجود نباشد، کیفیت پایین‌تر را امتحان می‌کند
-
-    Args:
-        track_id: آیدی آهنگ
-        requested_quality: کیفیت درخواستی (320, 192, 128)
-        entity_type: نوع موجودیت (پیش‌فرض track)
-
-    Returns:
-        آدرس فایل صوتی یا None
-    """
-    qualities = SUPPORTED_AUDIO_QUALITIES  # ['320', '192', '128']
-
-    # پیدا کردن ایندکس کیفیت درخواستی
-    try:
-        requested_index = qualities.index(requested_quality)
-    except ValueError:
-        requested_index = 1  # پیش‌فرض 192
-
-    # امتحان کیفیت درخواستی و کیفیت‌های پایین‌تر
-    for quality in qualities[requested_index:]:
-        try:
-            data = await get_mirror(entity_type, str(track_id), "audioUrl", quality=quality)
-            if data and data.get("mirrors", {}).get("audioUrl", False):
-                cached_url = data["mirrors"]["audioUrl"]["url"]
-                if cached_url:
-                    # استخراج file_id از آدرس (اگر در قالب Bale باشد)
-                    if '<token>' in cached_url:
-                        file_id = cached_url.split('<token>/')[1]
-                        return file_id
-                    return cached_url
-                logger.info(f"Found cached audio for track {track_id} with quality {quality}")
-                return cached_url
-        except Exception as e:
-            logger.debug(f"Quality {quality} not available for track {track_id}: {e}")
-            continue
-
-    return None
-
+    params = {"entityType": entity_type, "entityId": entity_id, "urlType": url_type}
+    if quality: params["quality"] = quality
+    return await fetch_itunes("mirror/get", params=params)
 
 async def get_cached_audio(track_id: int, quality: str = None) -> Optional[str]:
-    """
-    دریافت آدرس کش شده آهنگ با کیفیت مشخص
-
-    Args:
-        track_id: آیدی آهنگ
-        quality: کیفیت مورد نظر (320, 192, 128) - اگر None باشد، کیفیت پیش‌فرض استفاده می‌شود
-
-    Returns:
-        آدرس فایل صوتی یا None
-    """
-    try:
-        if track_id:
-            # اگر کیفیت مشخص نشده، از کیفیت پیش‌فرض استفاده کن
-            target_quality = quality or DEFAULT_AUDIO_QUALITY
-
-            # اگر کیفیت معتبر نیست، تصحیح کن
-            if target_quality not in SUPPORTED_AUDIO_QUALITIES:
-                target_quality = DEFAULT_AUDIO_QUALITY
-
-            data = await get_mirror('track', str(track_id), 'audioUrl', quality=target_quality)
-            if data and data.get("mirrors", {}).get("audioUrl", False):
-                cached_url = data["mirrors"]["audioUrl"]["url"]
-                if cached_url:
-                    if '<token>' in cached_url:
-                        file_id = cached_url.split('<token>/')[1]
-                        return file_id
-                    return cached_url
-    except Exception as e:
-        logger.error(f"Error getting cached audio: {e}")
+    data = await get_mirror('track', str(track_id), 'audioUrl', quality=quality or "192")
+    if data and data.get("mirrors", {}).get('audioUrl'):
+        url = data["mirrors"]['audioUrl']['url']
+        return url.split('<token>/')[1] if '<token>' in url else url
     return None
-
 
 async def get_cached_artwork(entity_type: str, entity_id: int) -> Optional[str]:
-    """دریافت آدرس کش شده کاور"""
-    try:
-        if entity_id:
-            data = await get_mirror(entity_type, str(entity_id), 'artworkUrl')
-            if data.get("mirrors", {}).get('artworkUrl', False):
-                cached_url = data["mirrors"]['artworkUrl']['url']
-                if cached_url and '<token>' in cached_url:
-                    file_id = cached_url.split('<token>/')[1]
-                    return file_id
-                return cached_url
-    except Exception as e:
-        logger.error(f"Error getting cached artwork: {e}")
+    data = await get_mirror(entity_type, str(entity_id), 'artworkUrl')
+    if data and data.get("mirrors", {}).get('artworkUrl'):
+        url = data["mirrors"]['artworkUrl']['url']
+        return url.split('<token>/')[1] if '<token>' in url else url
     return None
-
 
 async def get_cached_preview(track_id: int) -> Optional[str]:
-    """دریافت آدرس کش شده پیش‌نمایش"""
-    try:
-        if track_id:
-            data = await get_mirror('track', str(track_id), 'previewUrl')
-            if data.get("mirrors", {}).get('previewUrl', False):
-                cached_url = data["mirrors"]['previewUrl']['url']
-                if cached_url and '<token>' in cached_url:
-                    file_id = cached_url.split('<token>/')[1]
-                    return file_id
-                return cached_url
-    except Exception as e:
-        logger.error(f"Error getting cached preview: {e}")
+    data = await get_mirror('track', str(track_id), 'previewUrl')
+    if data and data.get("mirrors", {}).get('previewUrl'):
+        url = data["mirrors"]['previewUrl']['url']
+        return url.split('<token>/')[1] if '<token>' in url else url
     return None
-
-
-async def get_cached_collection_tracks(collection_id: int) -> Optional[Dict[str, Any]]:
-    params = {"id": collection_id, "entity": "song"}
-    return _itunes_cache.get("lookup", params)
-
-
-async def get_cached_artist_collections(artist_id: int) -> Optional[Dict[str, Any]]:
-    params = {"id": artist_id, "entity": "album"}
-    return _itunes_cache.get("lookup", params)
