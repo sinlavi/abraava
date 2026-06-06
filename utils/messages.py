@@ -33,7 +33,7 @@ async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, sh
     if msg: last_message_tracker.set_last(chat_id, msg.id)
     return msg
 
-async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None):
+async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False):
     chat_id = message.chat.id
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id)
 
@@ -41,7 +41,7 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
     # or if we try to edit text into a photo message without edit_caption.
     # The current logic handles edit_caption correctly if hasattr(message, 'photo').
 
-    if not last_message_tracker.is_recent(chat_id, message.id):
+    if not force_edit and not last_message_tracker.is_recent(chat_id, message.id):
         # Only delete and send new if it's NOT among the recent messages.
         # This prevents the bot from "flickering" if it's still near the end of the chat.
         try: await message.delete()

@@ -10,7 +10,10 @@ import logging
 logger = logging.getLogger("ABRAAVA:DETAILS")
 
 async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False):
-    status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*")
+    if not is_pagination:
+        status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*")
+    else:
+        status_msg = None
     try:
         artist_data = await get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force)
         if not artist_data or not artist_data.get('results'):
@@ -64,16 +67,16 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         itunes_url = artist.get('artistLinkUrl') or f"https://music.apple.com/artist/{artist_id}"
         markup_rows.append([
             InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:artist:{artist_id}"),
-            InlineKeyboardButton(text="🔗 اشتراک‌گذاری", url=f"https://ble.ir/share/url?url={DEEP_LINK_BASE}artist_{artist_id}")
+            InlineKeyboardButton(text="🔗 اشتراک‌گذاری", url=f"ble://share/url?url={DEEP_LINK_BASE}artist_{artist_id}")
         ])
         markup_rows.append([
             InlineKeyboardButton(text="🍎 مشاهده در اپل موزیک", url=itunes_url),
             InlineKeyboardButton(text="🔍 جستجوی آهنگ‌ها", callback_data=f"refine:track:{artist_name}")
         ])
 
-        if is_pagination and message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
-            await edit_message(message_to_edit, text, reply_markup=markup_rows)
-            await status_msg.delete()
+        if is_pagination and message_to_edit:
+            await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
+            if status_msg: await status_msg.delete()
         else:
             artwork_data = await artwork_service.get_artwork_for_display("artist", artist_id, artist_image, owner_id, entity_name=artist_name)
             if artwork_data:
@@ -87,7 +90,10 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         await edit_message(status_msg, f"خطا در نمایش صفحه هنرمند: {e}")
 
 async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False):
-    status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*")
+    if not is_pagination:
+        status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*")
+    else:
+        status_msg = None
     try:
         collection_data = await get_or_crawl_collection(collection_id, status_msg, force)
         tracks_data = await get_or_crawl_collection_tracks(collection_id)
@@ -147,16 +153,16 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         itunes_url = coll.get('collectionViewUrl') or f"https://music.apple.com/album/{collection_id}"
         markup_rows.append([
             InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:collection:{collection_id}"),
-            InlineKeyboardButton(text="🔗 اشتراک‌گذاری", url=f"https://ble.ir/share/url?url={DEEP_LINK_BASE}collection_{collection_id}")
+            InlineKeyboardButton(text="🔗 اشتراک‌گذاری", url=f"ble://share/url?url={DEEP_LINK_BASE}collection_{collection_id}")
         ])
         markup_rows.append([
             InlineKeyboardButton(text="🍎 مشاهده در اپل موزیک", url=itunes_url),
             InlineKeyboardButton(text="🎤 آثار دیگر هنرمند", callback_data=f"artist:{artist_id}")
         ])
 
-        if is_pagination and message_to_edit and hasattr(message_to_edit, 'photo') and message_to_edit.photo:
-            await edit_message(message_to_edit, text, reply_markup=markup_rows)
-            await status_msg.delete()
+        if is_pagination and message_to_edit:
+            await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
+            if status_msg: await status_msg.delete()
         else:
             artwork_url = get_high_res_artwork(coll.get("artworkUrl100"))
             artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id, artwork_url, owner_id)
@@ -216,7 +222,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
 
         itunes_url = track.get('trackViewUrl') or f"https://music.apple.com/song/{track_id}"
         markup_rows.append([
-            InlineKeyboardButton(text="🔗 اشتراک‌گذاری", url=f"https://ble.ir/share/url?url={DEEP_LINK_BASE}track_{track_id}"),
+            InlineKeyboardButton(text="🔗 اشتراک‌گذاری", url=f"ble://share/url?url={DEEP_LINK_BASE}track_{track_id}"),
             InlineKeyboardButton(text="🍎 اپل موزیک", url=itunes_url)
         ])
 
