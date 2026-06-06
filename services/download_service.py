@@ -14,6 +14,7 @@ from crawlers.youtube import search_youtube_track, download_audio
 from crawlers.itunes import get_cached_audio, set_mirror, get_cached_artwork, get_mirror
 from utils.helpers import get_high_res_artwork, format_duration, generate_deep_link
 from utils.messages import send_message, edit_message
+from bot.keyboards import create_close_button
 
 class DownloadService:
     def __init__(self, bot, api_client, user_settings_service, artwork_service,
