@@ -42,7 +42,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
                     year_str = f" ({year})" if year else ""
 
                     # Requirement: show all albums, but single-track ones get a track emoji and direct link
-                    if coll.get('trackCount') == 1:
+                    if coll.get('trackCount') == "1":
                         btn_text = f"🎵 {coll.get('collectionName', 'نامشخص')[:35]}{year_str}"
                         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"single_album:{coll['collectionId']}")])
                     else:
@@ -108,7 +108,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
                 text += f"{track_num}. {track.get('trackName', 'نامشخص')} ({duration})\n"
 
                 if track['wrapperType'] == 'track':
-                    btn_text = f"🎵 {track_num}. {track.get('trackName', 'نامشخص')[:35]}"
+                    btn_text = f"🎵 {track.get('trackName', 'نامشخص')[:35]}"
                     markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"track:{track['trackId']}")])
 
             pagination = create_pagination_row(f"collection:{collection_id}", page, total_pages)
