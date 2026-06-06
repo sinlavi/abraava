@@ -100,7 +100,7 @@ class ArtworkService:
                                   user_id: int = None):
         try:
             from utils.messages import _prepare_markup, FOOTER, send_message
-            markup = _prepare_markup(reply_markup, False)
+            markup = _prepare_markup(reply_markup, False, user_id=user_id)
 
             try:
                 if isinstance(artwork_data, str):
@@ -108,6 +108,8 @@ class ArtworkService:
                 else:
                     photo_io = io.BytesIO(artwork_data)
                     photo_io.name = "artwork.jpg"
+                    # Pass user_id to _prepare_markup if needed
+                    markup = _prepare_markup(reply_markup, False, user_id=user_id)
                     msg = await bot.send_photo(chat_id, photo=photo_io, caption=f"{caption}{FOOTER}", reply_markup=markup)
 
                     if msg and msg.photo and entity_type and entity_id:
@@ -121,10 +123,10 @@ class ArtworkService:
                     self.auto_download_mode[user_id] = time.time() + 900 # 15 mins
                     text = f"⚠️ *خطا در نمایش کاور*\nآیا مایلید مجدداً تلاش شود؟ (در صورت تایید کاور مستقیماً دانلود و آپلود می‌شود)"
                     retry_markup = [
-                        [InlineKeyboardButton(text="✅ بله، تلاش مجدد", callback_data=f"force_artwork:{entity_type}:{entity_id}:{caption[:30]}")],
-                        [InlineKeyboardButton(text="❌ خیر، بدون کاور بفرست", callback_data="close")]
+                        [InlineKeyboardButton(text="✅ بله، تلاش مجدد", callback_data=f"force_artwork:{entity_type}:{entity_id}:{caption[:30]}:u{user_id}")],
+                        [InlineKeyboardButton(text="❌ خیر، بدون کاور بفرست", callback_data=f"close:u{user_id}")]
                     ]
-                    await send_message(bot, chat_id, text, reply_markup=retry_markup)
+                    await send_message(bot, chat_id, text, reply_markup=retry_markup, user_id=user_id)
                 return None
         except Exception as e:
             logger.error(f"Failed in send_artwork_photo helper: {e}")
