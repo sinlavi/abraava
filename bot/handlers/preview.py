@@ -27,7 +27,17 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
             return
 
         caption = f"🎧 *پیش‌نمایش آهنگ {track.get('trackName')}*\n\n{FOOTER}"
-        reply_markup = InlineKeyboard([[create_close_button()]])
+
+        from utils.helpers import generate_deep_link
+        markup = []
+        source_url = track.get("trackViewUrl") or track.get("previewUrl")
+        if track_id:
+            markup.append([InlineKeyboardButton(text="📋 کپی پیوند", copy_text=generate_deep_link("track", track_id))])
+        if source_url:
+            markup.append([InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=source_url)])
+        markup.append([create_close_button()])
+
+        reply_markup = InlineKeyboard(*markup)
 
         # Attempt 1: From Cache (mirror)
         preview_cache = await get_cached_preview(track_id)

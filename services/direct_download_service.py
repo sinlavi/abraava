@@ -204,7 +204,13 @@ class DirectDownloadService:
                 caption = "\n".join(caption_lines)
 
                 with open(mp3_path, 'rb') as f:
-                    await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard([[create_close_button()]]))
+                    from utils.helpers import generate_deep_link
+                    # For direct download, we might not have a reliable ID yet, but let's try to get one if meta had it
+                    # or just use close button as fallback if ID is not available.
+                    markup = [[InlineKeyboardButton(text="📋 کپی پیوند", copy_text=url)],
+                              [InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=url)],
+                              [create_close_button()]]
+                    await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard(*markup))
                 await status_msg.delete()
             else:
                 await edit_message(status_msg, "❌ دانلود با خطا مواجه شد.", show_cancel=True)

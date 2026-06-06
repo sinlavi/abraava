@@ -232,14 +232,20 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         collection_name = track.get('collectionName', 'نامشخص')
         track_name = track.get('trackName', 'نامشخص')
 
+        is_sc = str(track_id).startswith("sc_")
+
         text = f"🎵 *نام آهنگ:* [{track_name}]({generate_deep_link('track', track_id)})\n"
-        if artist_id: text += f"🎤 *نام هنرمند:* [{artist_name}]({generate_deep_link('artist', artist_id)})\n"
-        else: text += f"🎤 *نام هنرمند:* {artist_name}\n"
 
-        if collection_id: text += f"💿 *نام آلبوم:* [{collection_name}]({generate_deep_link('collection', collection_id)})\n"
-        else: text += f"💿 *نام آلبوم:* {collection_name}\n"
+        if is_sc:
+            text += f"🎤 *نام آپلودر:* {artist_name}\n"
+        else:
+            if artist_id: text += f"🎤 *نام هنرمند:* [{artist_name}]({generate_deep_link('artist', artist_id)})\n"
+            else: text += f"🎤 *نام هنرمند:* {artist_name}\n"
 
-        text += f"⏱️ *مدت زمان:* {duration}\n"
+        if not is_sc:
+            if collection_id: text += f"💿 *نام آلبوم:* [{collection_name}]({generate_deep_link('collection', collection_id)})\n"
+            else: text += f"💿 *نام آلبوم:* {collection_name}\n"
+            text += f"⏱️ *مدت زمان:* {duration}\n"
         if release_year: text += f"📅 *سال انتشار:* {release_year}\n"
         if track.get('primaryGenreName'): text += f"🎸 *سبک:* {track.get('primaryGenreName')}\n"
         if track.get('trackExplicitness') == 'explicit': text += f"🔞 *Explicit:* بله\n"
@@ -252,7 +258,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
 
         markup_rows = []
         dl_btns = [InlineKeyboardButton(text="⬇️ دانلود", callback_data=f"download:{track_id}")]
-        if track.get("previewUrl"):
+        if not is_sc and track.get("previewUrl"):
             dl_btns.append(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}"))
         markup_rows.append(dl_btns)
 
@@ -265,18 +271,13 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
 
         is_external = str(track_id).startswith(("yt_", "sc_", "sp_"))
 
-        if not is_external:
-            markup_rows.append([
-                InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}track_{track_id}"),
-                InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=itunes_url)
-            ])
-        else:
-            source_map = {"yt": "یوتیوب موزیک", "sc": "ساندکلاد", "sp": "اسپاتیفای"}
-            source_name = source_map.get(str(track_id)[:2], "منابع خارجی")
-            markup_rows.append([
-                InlineKeyboardButton(text=f"🌐 مشاهده در {source_name}", url=itunes_url),
-                InlineKeyboardButton(text="❌ بستن", callback_data="close")
-            ])
+        markup_rows.append([
+            InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}track_{track_id}"),
+            InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=itunes_url)
+        ])
+
+        if is_external:
+            markup_rows.append([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
 
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
 
@@ -287,7 +288,9 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
                 try:
                     from core.config import FOOTER
                     await bot.send_photo(chat_id, photo=artwork_url, caption=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*markup_rows))
-                    await status_msg.delete()
+                    if status_msg:
+                        try: await status_msg.delete()
+                        except: pass
                 except Exception as e:
                     logger.warning(f"Failed to send external artwork: {e}")
                     await edit_message(status_msg, text, reply_markup=markup_rows)
@@ -297,7 +300,9 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
             artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id or track_id, artwork_url, owner_id)
             if artwork_data:
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id or track_id, user_id=owner_id)
-                await status_msg.delete()
+                if status_msg:
+                    try: await status_msg.delete()
+                    except: pass
             else:
                 await edit_message(status_msg, text, reply_markup=markup_rows)
 

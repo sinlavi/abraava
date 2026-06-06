@@ -57,7 +57,7 @@ class DownloadService:
             logger.info(f"Using cached audio for track {track_id} (quality: {quality_value}) -> {audio_cache}")
             try:
                 await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
-                markup = self._build_audio_markup(track_id)
+                markup = self._build_audio_markup(track_id, track.get("trackViewUrl"))
                 await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=InlineKeyboard(*markup))
                 await status_msg.delete()
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
@@ -112,7 +112,7 @@ class DownloadService:
 
                 await edit_message(status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*")
 
-                markup = self._build_audio_markup(track_id)
+                markup = self._build_audio_markup(track_id, track.get("trackViewUrl"))
                 with open(mp3_path, 'rb') as f:
                     msg = await self.bot.send_audio(chat_id, audio=f, caption=caption, reply_markup=InlineKeyboard(*markup))
                     if msg and track_id and not str(track_id).startswith(("yt_", "sc_", "sp_", "it_")):
@@ -140,12 +140,19 @@ class DownloadService:
             if temp_dir: shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _build_caption(self, track, quality_value):
+        track_id = track.get('trackId', '')
+        is_sc = str(track_id).startswith("sc_")
+
         artist_id = track.get('artistId')
         artist_name = track.get('artistName')
-        if artist_name:
-            artist_link = f"[{artist_name}]({generate_deep_link('artist', artist_id)})" if artist_id else artist_name
+
+        if is_sc:
+            artist_link = artist_name
         else:
-            artist_link = None
+            if artist_name:
+                artist_link = f"[{artist_name}]({generate_deep_link('artist', artist_id)})" if artist_id else artist_name
+            else:
+                artist_link = None
 
         coll_id = track.get('collectionId')
         coll_name = track.get('collectionName')
@@ -169,11 +176,11 @@ class DownloadService:
 
         fields = {
             "🎵 نام آهنگ": track_name_link,
-            "🎤 نام هنرمند": artist_link,
-            "💿 نام آلبوم": coll_link,
+            "🎤 نام آپلودر" if is_sc else "🎤 نام هنرمند": artist_link,
+            "💿 نام آلبوم": coll_link if not is_sc else None,
             "📅 سال انتشار": str(track.get('releaseDate', ''))[:4] if track.get('releaseDate') else None,
             "🎸 سبک": track.get('primaryGenreName'),
-            "⏱️ مدت زمان": duration_text,
+            "⏱️ مدت زمان": duration_text if not is_sc else None,
             "📀 کیفیت دانلود": f"{quality_value} kbps"
         }
 
@@ -184,10 +191,16 @@ class DownloadService:
 
         return "\n".join(caption_lines) + f"\n\n{FOOTER}"
 
-    def _build_audio_markup(self, track_id):
-        return [
-            [InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://player.abraava.ir?id={track_id}")],
-            [InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"https://player.abraava.ir?id={track_id}")],
-            [InlineKeyboardButton(text="🌐 اطلاعات بیشتر", web_app=f"https://player.abraava.ir?id={track_id}")],
-            [InlineKeyboardButton(text="❌ بستن", callback_data="close")]
-        ]
+    def _build_audio_markup(self, track_id, source_url=None):
+        source_url = source_url or f"https://player.abraava.ir?id={track_id}"
+        is_external = str(track_id).startswith(("yt_", "sc_", "sp_"))
+
+        markup = []
+        if not is_external:
+            markup.append([InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://player.abraava.ir?id={track_id}")])
+
+        markup.append([InlineKeyboardButton(text="📋 کپی پیوند", copy_text=generate_deep_link("track", track_id))])
+        markup.append([InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=source_url)])
+        markup.append([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
+
+        return markup

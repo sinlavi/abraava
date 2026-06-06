@@ -248,32 +248,44 @@ class MusicAdapter:
             return []
 
     async def get_yt_track(self, video_id: str) -> Optional[Dict[str, Any]]:
+        if video_id.startswith("yt_"): video_id = video_id[3:]
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        ydl_opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': False}
         loop = asyncio.get_event_loop()
         try:
-            if video_id.startswith("yt_"): video_id = video_id[3:]
-            track = await loop.run_in_executor(None, lambda: self.ytm.get_song(video_id))
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
+                if not info: return None
 
-            video_details = track.get("videoDetails", {})
-            if not video_details:
-                return None
-
-            thumbnails = video_details.get("thumbnail", {}).get("thumbnails", [])
-            artwork_url = thumbnails[-1]["url"] if thumbnails else None
-            if artwork_url and "w120-h120" in artwork_url:
-                artwork_url = artwork_url.replace("w120-h120", "w1000-h1000")
-
-            return {
-                "wrapperType": "track",
-                "trackId": f"yt_{video_id}",
-                "trackName": video_details.get("title"),
-                "artistName": video_details.get("author"),
-                "artworkUrl100": artwork_url,
-                "trackTimeMillis": int(video_details.get("lengthSeconds", 0)) * 1000,
-                "trackViewUrl": f"https://music.youtube.com/watch?v={video_id}"
-            }
+                return {
+                    "wrapperType": "track",
+                    "trackId": f"yt_{video_id}",
+                    "trackName": info.get("title", "Unknown"),
+                    "artistName": info.get("uploader", info.get("artist", "Unknown")),
+                    "collectionName": info.get("album"),
+                    "artworkUrl100": info.get("thumbnail"),
+                    "trackTimeMillis": int(info.get("duration", 0)) * 1000,
+                    "releaseDate": info.get("upload_date", "")[:4],
+                    "trackViewUrl": url
+                }
         except Exception as e:
-            logger.error(f"YTM get track error: {e}")
-            return None
+            logger.error(f"YT get track error via yt-dlp: {e}")
+            # Fallback to simple YTM lookup if yt-dlp fails
+            try:
+                track = await loop.run_in_executor(None, lambda: self.ytm.get_song(video_id))
+                details = track.get("videoDetails", {})
+                if details:
+                    return {
+                        "wrapperType": "track",
+                        "trackId": f"yt_{video_id}",
+                        "trackName": details.get("title"),
+                        "artistName": details.get("author"),
+                        "artworkUrl100": details.get("thumbnail", {}).get("thumbnails", [{}])[-1].get("url"),
+                        "trackTimeMillis": int(details.get("lengthSeconds", 0)) * 1000,
+                        "trackViewUrl": url
+                    }
+            except: pass
+        return None
 
     async def get_sc_track(self, sc_id: str) -> Optional[Dict[str, Any]]:
         # For SoundCloud we might have a numeric ID or a URL slug.
