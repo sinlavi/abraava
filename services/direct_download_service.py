@@ -110,7 +110,7 @@ class DirectDownloadService:
             return
 
         from utils.helpers import format_duration
-        duration_ms = (meta.get('duration') or 0) * 1000
+        duration_ms = int(meta.get('duration') or 0) * 1000
 
         fields = {
             "🎵 نام آهنگ": f"[{meta.get('title')}]({url})" if meta.get('title') else None,

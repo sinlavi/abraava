@@ -174,7 +174,7 @@ class DownloadService:
         else:
             track_name_link = None
 
-        duration_ms = track.get('trackTimeMillis', 0)
+        duration_ms = int(track.get('trackTimeMillis') or 0)
         duration_text = format_duration(duration_ms) if duration_ms > 0 else None
 
         fields = {

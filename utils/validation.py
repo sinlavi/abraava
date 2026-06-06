@@ -11,6 +11,4 @@ def is_valid_message(message) -> bool:
         return False
     if hasattr(message, 'voice') and message.voice:
         return False
-    if hasattr(message, 'forward_from') and message.forward_from:
-        return False
     return True
