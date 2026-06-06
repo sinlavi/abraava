@@ -9,12 +9,14 @@ import re
 logger = logging.getLogger("ABRAAVA:UTILS")
 music_adapter = MusicAdapter()
 
-def format_artist_hashtag(artist_name: str) -> str:
+def format_artist_hashtag(artist_name: Optional[str]) -> str:
+    if not artist_name:
+        return ""
     # Remove special characters and split by space/hyphen
-    words = re.split(r'[\s\-_]+', artist_name)
+    words = re.split(r'[\s\-_]+', str(artist_name))
     # Capitalize each word and join (CamelCase)
     camel_case = "".join(word.capitalize() for word in words if word)
-    return f"#{camel_case}"
+    return f"#{camel_case}" if camel_case else ""
 
 async def get_track(track_id: Union[int, str], status_msg: Message = None) -> Optional[Dict[str, Any]]:
     if OFFLINE_MODE: return None
