@@ -6,7 +6,7 @@ from typing import Optional, Union, List
 from balethon import Client
 from balethon.objects import Message, InlineKeyboardButton, InlineKeyboard
 from core.logger import logger
-from core.config import OFFLINE_MODE, DEFAULT_QUALITY
+from core.config import OFFLINE_MODE, DEFAULT_QUALITY, FOOTER
 from core.http_client import HttpClient
 from models.schemas import DownloadQuality
 from crawlers.utils import get_track, get_or_crawl_collection, get_or_crawl_collection_tracks
@@ -147,7 +147,8 @@ class DownloadService:
             "⏱️ مدت زمان": format_duration(track.get('trackTimeMillis', 0)),
             "📀 کیفیت دانلود": f"{quality_value} kbps"
         }
-        return "\n".join([f"{k}: {v}" for k, v in fields.items() if v and str(v).strip()])
+        caption = "\n".join([f"{k}: {v}" for k, v in fields.items() if v and str(v).strip()])
+        return f"{caption}\n\n{FOOTER}"
 
     def _build_audio_markup(self, track_id):
         return [

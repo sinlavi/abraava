@@ -105,7 +105,7 @@ async def on_message(message: Message):
             start_param = text.split()[1]
             if "_" in start_param:
                 type_, item_id = start_param.split("_", 1)
-                if type_ == "artist": await show_track_page(bot, chat_id, int(item_id), artwork_service, user_id) # Redirection handled in show
+                if type_ == "artist": await show_artist_page(bot, chat_id, int(item_id), 1, artwork_service, user_id)
                 elif type_ == "collection": await show_collection_page(bot, chat_id, int(item_id), 1, artwork_service, user_id)
                 elif type_ == "track": await show_track_page(bot, chat_id, int(item_id), artwork_service, user_id)
                 return

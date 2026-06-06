@@ -36,17 +36,21 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
             page_items = collections[(page-1)*ITEMS_PER_PAGE : page*ITEMS_PER_PAGE]
             text += f"\n📀 *آثار (مجموع {total_items} مورد):*\n"
 
-            for coll in page_items:
-                if coll['wrapperType'] == 'collection':
+            for i, coll in enumerate(page_items, (page-1)*ITEMS_PER_PAGE + 1):
+                if coll.get('wrapperType') in ['collection', 'track']:
                     year = coll.get('releaseDate', '')[:4]
                     year_str = f" ({year})" if year else ""
 
+                    name = coll.get('collectionName') or coll.get('trackName') or 'نامشخص'
+
                     # Requirement: show all albums, but single-track ones get a track emoji and direct link
-                    if coll.get('trackCount') == "1":
-                        btn_text = f"🎵 {coll.get('collectionName', 'نامشخص')[:35]}{year_str}"
-                        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"single_album:{coll['collectionId']}")])
+                    if str(coll.get('trackCount')) == "1" or coll.get('wrapperType') == 'track':
+                        # Use LRM (\u200e) for RTL alignment of English names with numbers
+                        btn_text = f"\u200e{i}. 🎵 {name[:35]}{year_str}"
+                        item_id = coll.get('collectionId') or coll.get('trackId')
+                        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"single_album:{item_id}")])
                     else:
-                        btn_text = f"📀 {coll.get('collectionName', 'نامشخص')[:35]}{year_str}"
+                        btn_text = f"\u200e{i}. 📀 {name[:35]}{year_str}"
                         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"collection:{coll['collectionId']}:1")])
 
             pagination = create_pagination_row(f"artist:{artist_id}", page, total_pages)
@@ -105,10 +109,11 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
             for i, track in enumerate(page_items, (page-1)*ITEMS_PER_PAGE + 1):
                 track_num = track.get('trackNumber', i)
                 duration = format_duration(track.get('trackTimeMillis', 0))
-                text += f"{track_num}. {track.get('trackName', 'نامشخص')} ({duration})\n"
+                track_name = track.get('trackName', 'نامشخص')
+                text += f"\u200e{track_num}. {track_name} ({duration})\n"
 
-                if track['wrapperType'] == 'track':
-                    btn_text = f"🎵 {track.get('trackName', 'نامشخص')[:35]}"
+                if track.get('wrapperType') == 'track':
+                    btn_text = f"\u200e{track_num}. 🎵 {track_name[:35]}"
                     markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"track:{track['trackId']}")])
 
             pagination = create_pagination_row(f"collection:{collection_id}", page, total_pages)

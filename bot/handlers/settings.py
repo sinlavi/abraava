@@ -37,15 +37,18 @@ async def stats_command_logic(bot, message, user_id, api_client, rate_limiter, d
     total_downloads = user_data.get('data', {}).get('total_downloads', 0) if user_data.get('success') else 0
 
     text = (
-        f"📊 *آمار شما*\n\n"
-        f"🔍 جستجوی باقی‌مانده: {remaining_search}/{rate_limiter.max_requests}\n"
-        f"⬇️ دانلود باقی‌مانده: {remaining_download}/{download_rate_limiter.max_downloads}\n\n"
-        f"📈 آمار کلی:\n"
-        f"🔹 جستجوها: {total_searches}\n"
-        f"🔹 دانلودها: {total_downloads}"
+        f"📊 *گزارش فعالیت و سهمیه شما*\n\n"
+        f"⏳ *سهمیه باقی‌مانده (امروز):*\n"
+        f"🔍 جستجو: `{remaining_search}` از `{rate_limiter.max_requests}`\n"
+        f"⬇️ دانلود: `{remaining_download}` از `{download_rate_limiter.max_downloads}`\n\n"
+        f"📈 *آمار کلی فعالیت شما:*\n"
+        f"🔹 کل جستجوها: `{total_searches}` مورد\n"
+        f"🔹 کل دانلودها: `{total_downloads}` فایل\n\n"
+        f"✨ ممنون که از ما استفاده می‌کنید!"
     )
 
-    await edit_message(message, text, reply_markup=[])
+    from bot.keyboards import create_close_button
+    await edit_message(message, text, reply_markup=[[create_close_button()]])
 
 async def stats_command(bot: Client, message: Message, api_client, rate_limiter, download_rate_limiter):
     user_id = message.author.id
@@ -56,11 +59,14 @@ async def stats_command(bot: Client, message: Message, api_client, rate_limiter,
     total_searches = user_data.get('data', {}).get('total_searches', 0) if user_data.get('success') else 0
     total_downloads = user_data.get('data', {}).get('total_downloads', 0) if user_data.get('success') else 0
 
-    await send_message(bot, message.chat.id,
-        f"📊 *آمار شما*\n\n"
-        f"🔍 جستجوی باقی‌مانده: {remaining_search}/{rate_limiter.max_requests}\n"
-        f"⬇️ دانلود باقی‌مانده: {remaining_download}/{download_rate_limiter.max_downloads}\n\n"
-        f"📈 آمار کلی:\n"
-        f"🔹 جستجوها: {total_searches}\n"
-        f"🔹 دانلودها: {total_downloads}"
+    text = (
+        f"📊 *گزارش فعالیت و سهمیه شما*\n\n"
+        f"⏳ *سهمیه باقی‌مانده (امروز):*\n"
+        f"🔍 جستجو: `{remaining_search}` از `{rate_limiter.max_requests}`\n"
+        f"⬇️ دانلود: `{remaining_download}` از `{download_rate_limiter.max_downloads}`\n\n"
+        f"📈 *آمار کلی فعالیت شما:*\n"
+        f"🔹 کل جستجوها: `{total_searches}` مورد\n"
+        f"🔹 کل دانلودها: `{total_downloads}` فایل\n\n"
+        f"✨ ممنون که از ما استفاده می‌کنید!"
     )
+    await send_message(bot, message.chat.id, text)

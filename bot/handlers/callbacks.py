@@ -33,7 +33,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         return
 
     if data == "ignore":
-        await bot.answer_callback_query(callback_query.id)
+        await bot.answer_callback_query(callback_query.id, text="")
         return
 
     # Settings menus with Confirmation
@@ -67,7 +67,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         new_value = bool(int(parts[1]))
         update_dict = {setting_type: new_value}
         await user_settings_service.update_settings(user_id, **update_dict)
-        await bot.answer_callback_query(callback_query.id, "✅ تنظیمات ذخیره شد")
+        await bot.answer_callback_query(callback_query.id, text="✅ تنظیمات ذخیره شد")
         await update_settings_msg(bot, callback_query.message, user_id, user_settings_service)
         return
 
@@ -81,7 +81,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         q = data.split(":")[1]
         q_map = {"320": DownloadQuality.HIGH, "192": DownloadQuality.MEDIUM, "128": DownloadQuality.LOW, "ask": DownloadQuality.ASK}
         await user_settings_service.update_settings(user_id, download_quality=q_map[q])
-        await bot.answer_callback_query(callback_query.id, f"✅ کیفیت به {q} تغییر یافت")
+        await bot.answer_callback_query(callback_query.id, text=f"✅ کیفیت به {q} تغییر یافت")
         await update_settings_msg(bot, callback_query.message, user_id, user_settings_service)
         return
 
@@ -99,21 +99,23 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     if data.startswith("artist:"):
         artist_id, page = int(parts[1]), int(parts[2]) if len(parts) > 2 else 1
         is_pag = len(parts) > 2
-        await show_artist_page(bot, chat_id, artist_id, page, artwork_service, user_id, callback_query.message, is_pagination=is_pag)
+        msg_to_edit = callback_query.message if is_pag else None
+        await show_artist_page(bot, chat_id, artist_id, page, artwork_service, user_id, msg_to_edit, is_pagination=is_pag)
     elif data.startswith("collection:"):
         coll_id, page = int(parts[1]), int(parts[2]) if len(parts) > 2 else 1
         is_pag = len(parts) > 2
-        await show_collection_page(bot, chat_id, coll_id, page, artwork_service, user_id, callback_query.message, is_pagination=is_pag)
+        msg_to_edit = callback_query.message if is_pag else None
+        await show_collection_page(bot, chat_id, coll_id, page, artwork_service, user_id, msg_to_edit, is_pagination=is_pag)
     elif data.startswith("track:"):
         track_id = int(parts[1])
-        await show_track_page(bot, chat_id, track_id, artwork_service, user_id, callback_query.message)
+        await show_track_page(bot, chat_id, track_id, artwork_service, user_id)
     elif data.startswith("single_album:"):
         coll_id = int(parts[1])
         tracks_data = await crawlers.utils.get_or_crawl_collection_tracks(coll_id)
         if tracks_data and tracks_data.get("results"):
             track_id = tracks_data["results"][0].get("trackId")
-            if track_id: await show_track_page(bot, chat_id, track_id, artwork_service, user_id, callback_query.message)
-            else: await bot.answer_callback_query(callback_query.id, "❌ خطایی رخ داد", show_alert=True)
+            if track_id: await show_track_page(bot, chat_id, track_id, artwork_service, user_id)
+            else: await bot.answer_callback_query(callback_query.id, text="❌ خطایی رخ داد", show_alert=True)
     elif data.startswith("recrawl:"):
         type_, eid = parts[1], int(parts[2])
         if type_ == "artist": await show_artist_page(bot, chat_id, eid, 1, artwork_service, user_id, callback_query.message, force=True)
@@ -127,7 +129,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             await send_search_results(bot, chat_id, type_, cached["term"], cached["results"], page,
                                      search_cache_service, user_id, callback_query.message)
         else:
-            await bot.answer_callback_query(callback_query.id, "جستجو منقضی شده است", show_alert=True)
+            await bot.answer_callback_query(callback_query.id, text="جستجو منقضی شده است", show_alert=True)
     elif data.startswith("refine:"):
         type_ = parts[1]
         term = ":".join(parts[2:])
@@ -136,37 +138,37 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     # Downloads
     elif data.startswith("download:"):
         track_id = int(parts[1])
-        await bot.answer_callback_query(callback_query.id, "⏳ در حال آماده‌سازی...")
+        await bot.answer_callback_query(callback_query.id, text="⏳ در حال آماده‌سازی...")
         await download_service.download_and_send_track(chat_id, track_id, user_id)
     elif data.startswith("preview:"):
         track_id = int(parts[1])
-        await bot.answer_callback_query(callback_query.id, "⏳ در حال دریافت...")
+        await bot.answer_callback_query(callback_query.id, text="⏳ در حال دریافت...")
         asyncio.create_task(send_voice_preview(bot, chat_id, track_id, user_id))
     elif data.startswith("download_album:"):
         coll_id = int(parts[1])
-        await bot.answer_callback_query(callback_query.id, "📀 شروع دانلود آلبوم...")
+        await bot.answer_callback_query(callback_query.id, text="📀 شروع دانلود آلبوم...")
         asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service))
     elif data.startswith("cancel_album:"):
         owner_id_from_cb, coll_id = int(parts[1]), int(parts[2])
         if user_id == owner_id_from_cb:
             download_service.album_tracker.cancel_download(user_id, coll_id)
-            await bot.answer_callback_query(callback_query.id, "⏹️ توقف دانلود...")
+            await bot.answer_callback_query(callback_query.id, text="⏹️ توقف دانلود...")
 
     elif data.startswith("confirm_dl:"):
         link_id = parts[1]
         url = DIRECT_LINKS.get(link_id)
         if url:
             settings = await user_settings_service.get_settings(user_id)
-            await bot.answer_callback_query(callback_query.id, "⬇️ در حال دانلود...")
+            await bot.answer_callback_query(callback_query.id, text="⬇️ در حال دانلود...")
             asyncio.create_task(direct_download_service.download_direct(chat_id, url, user_id, settings.download_quality.value if settings.download_quality.value != "ask" else "192"))
             try: await callback_query.message.delete()
             except: pass
         else:
-            await bot.answer_callback_query(callback_query.id, "❌ پیوند منقضی شده است", show_alert=True)
+            await bot.answer_callback_query(callback_query.id, text="❌ پیوند منقضی شده است", show_alert=True)
 
     elif data.startswith("force_artwork:"):
         # Logic to force download/upload artwork
-        await bot.answer_callback_query(callback_query.id, "⏳ تلاش مجدد با دانلود مستقیم...")
+        await bot.answer_callback_query(callback_query.id, text="⏳ تلاش مجدد با دانلود مستقیم...")
         etype, eid, cap = parts[1], int(parts[2]), ":".join(parts[3:])
         # Use artworkService logic to force it
         await artwork_service.force_manual_artwork(bot, chat_id, etype, eid, cap, user_id)
