@@ -23,10 +23,10 @@ async def settings_command(bot: Client, message: Message, user_settings_service)
 
     markup = get_settings_keyboard(
         settings.quick_mode, quality_text, settings.show_artwork,
-        settings.auto_download, settings.notifications, user_id=user_id
+        settings.auto_download, settings.notifications
     )
 
-    await send_message(bot, message.chat.id, settings_text, reply_markup=markup, user_id=user_id)
+    await send_message(bot, message.chat.id, settings_text, reply_markup=markup)
 
 async def stats_command_logic(bot, message, user_id, api_client, rate_limiter, download_rate_limiter):
     remaining_search = rate_limiter.get_user_remaining(user_id)
@@ -48,7 +48,7 @@ async def stats_command_logic(bot, message, user_id, api_client, rate_limiter, d
     )
 
     from bot.keyboards import create_close_button
-    await edit_message(message, text, reply_markup=[[create_close_button(user_id=user_id)]], user_id=user_id)
+    await edit_message(message, text, reply_markup=[[create_close_button()]])
 
 async def stats_command(bot: Client, message: Message, api_client, rate_limiter, download_rate_limiter):
     user_id = message.author.id
@@ -69,4 +69,4 @@ async def stats_command(bot: Client, message: Message, api_client, rate_limiter,
         f"🔹 کل دانلودها: ```{total_downloads}``` فایل\n\n"
         f"✨ ممنون که از ما استفاده می‌کنید!"
     )
-    await send_message(bot, message.chat.id, text, user_id=user_id)
+    await send_message(bot, message.chat.id, text)

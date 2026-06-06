@@ -2,7 +2,7 @@ import asyncio
 import io
 from typing import Optional
 from balethon import Client
-from balethon.objects import Message, InlineKeyboard, InlineKeyboardButton
+from balethon.objects import Message
 from core.logger import logger
 from crawlers.utils import get_track
 from crawlers.itunes import get_cached_preview, set_mirror
@@ -10,19 +10,20 @@ from utils.messages import send_message, edit_message
 from core.http_client import HttpClient
 from core.config import FOOTER
 from bot.keyboards import create_close_button
+from balethon.objects import InlineKeyboard
 
 async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None):
-    status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*", user_id=user_id)
+    status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*")
     try:
         track_data = await get_track(track_id, status_msg=status_msg)
         if not track_data or not track_data.get("results"):
-            await edit_message(status_msg, "اطلاعات آهنگ یافت نشد.", show_cancel=True, user_id=user_id)
+            await edit_message(status_msg, "اطلاعات آهنگ یافت نشد.", show_cancel=True)
             return
 
         track = track_data["results"][0]
         preview_url = track.get("previewUrl")
         if not preview_url:
-            await edit_message(status_msg, "پیش‌نمایشی موجود نیست.", show_cancel=True, user_id=user_id)
+            await edit_message(status_msg, "پیش‌نمایشی موجود نیست.", show_cancel=True)
             return
 
         caption = f"🎧 *پیش‌نمایش آهنگ {track.get('trackName')}*\n\n{FOOTER}"
@@ -34,10 +35,9 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
             markup.append([InlineKeyboardButton(text="📋 کپی پیوند", copy_text=generate_deep_link("track", track_id))])
         if source_url:
             markup.append([InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=source_url)])
-        markup.append([create_close_button(user_id=user_id)])
+        markup.append([create_close_button()])
 
-        from utils.messages import _prepare_markup
-        reply_markup = _prepare_markup(markup, False, user_id=user_id)
+        reply_markup = InlineKeyboard(*markup)
 
         # Attempt 1: From Cache (mirror)
         preview_cache = await get_cached_preview(track_id)
@@ -60,7 +60,7 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
                     await set_mirror('track', str(track_id), 'previewUrl', f'https://tapi.bale.ai/file/bot<token>/{msg.voice.id}')
                 await status_msg.delete()
             else:
-                await edit_message(status_msg, "دریافت پیش‌نمایش با خطا مواجه شد.", show_cancel=True, user_id=user_id)
+                await edit_message(status_msg, "دریافت پیش‌نمایش با خطا مواجه شد.", show_cancel=True)
     except Exception as e:
         logger.error(f"Failed to send preview: {e}")
-        await edit_message(status_msg, f"خطا: {str(e)[:50]}", show_cancel=True, user_id=user_id)
+        await edit_message(status_msg, f"خطا: {str(e)[:50]}", show_cancel=True)
