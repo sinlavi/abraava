@@ -57,7 +57,7 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
                     f"⬇️ *در حال دانلود...*"
                 )
                 prog_markup = [[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{user_id}:{collection_id}:u{user_id}")]]
-                await edit_message(parent_msg, progress_text, reply_markup=InlineKeyboard(*prog_markup), user_id=user_id)
+                await edit_message(parent_msg, progress_text, reply_markup=prog_markup, user_id=user_id)
 
                 # Pass parent_msg to download_service to avoid new message creation
                 await download_service.download_and_send_track(
@@ -82,7 +82,7 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
                 f"⬇️ *در حال دانلود...*"
             )
             prog_markup = [[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{user_id}:{collection_id}:u{user_id}")]]
-            await edit_message(parent_msg, progress_text, reply_markup=InlineKeyboard(*prog_markup), user_id=user_id)
+            await edit_message(parent_msg, progress_text, reply_markup=prog_markup, user_id=user_id)
             await asyncio.sleep(0.5)
 
         final_text = f"✅ دانلود آلبوم {coll_name} به پایان رسید.\n🎵 مجموع قطعات: {len(tracks)}\n✅ موفق: {success_count}"
@@ -103,7 +103,7 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
         try: await parent_msg.delete()
         except: pass
 
-        await send_message(bot, chat_id, final_text, reply_markup=InlineKeyboard(*markup_rows), user_id=user_id)
+        await send_message(bot, chat_id, final_text, reply_markup=markup_rows, user_id=user_id)
 
     finally:
         download_service.album_tracker.finish_download(user_id, collection_id, success_count, failed_count)

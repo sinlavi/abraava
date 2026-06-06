@@ -145,9 +145,9 @@ class DirectDownloadService:
                 await status_msg.delete()
             except Exception as e:
                 logger.warning(f"Failed to send thumbnail: {e}")
-                await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup), user_id=user_id)
+                await edit_message(status_msg, text, reply_markup=markup, user_id=user_id)
         else:
-            await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup), user_id=user_id)
+            await edit_message(status_msg, text, reply_markup=markup, user_id=user_id)
 
     async def download_direct(self, chat_id, url, user_id, quality="192"):
         status_msg = await send_message(self.bot, chat_id, f"⏳ *در حال شروع دانلود...*", user_id=user_id)

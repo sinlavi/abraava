@@ -106,7 +106,7 @@ async def on_message(message: Message):
                     markup_rows.append([InlineKeyboardButton(text=f"📢 عضویت در {name}", url=link)])
                 else:
                     channels_text += f"\n\n🔸 {name}"
-            await send_message(bot, chat_id, channels_text, reply_markup=InlineKeyboard(*markup_rows) if markup_rows else None, user_id=user_id)
+            await send_message(bot, chat_id, channels_text, reply_markup=markup_rows if markup_rows else None, user_id=user_id)
             return
 
     if text.startswith("/start"):

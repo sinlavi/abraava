@@ -137,7 +137,7 @@ class DownloadService:
         except Exception as e:
             logger.error(f"Download error: {e}")
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}:u{user_id}")]]
-            await edit_message(status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}", reply_markup=InlineKeyboard(*retry_markup), user_id=user_id)
+            await edit_message(status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}", reply_markup=retry_markup, user_id=user_id)
             cancel_cb = None
             if collection_id:
                 async def cancel_album(): self.album_tracker.cancel_download(user_id, collection_id)

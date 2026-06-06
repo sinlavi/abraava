@@ -36,7 +36,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         try:
             owner_id = int(parts[-1][1:])
             if user_id != owner_id:
-                await bot.answer_callback_query(callback_query.id, "⚠️ این دکمه فقط برای شخصی که آن را ایجاد کرده فعال است.", show_alert=True)
+                await bot.answer_callback_query(callback_query.id, "⚠️ شما دسترسی به این پیام رو ندارید", show_alert=True)
                 return
             # Strip the owner_id from data and parts
             data = ":".join(parts[:-1])
@@ -204,10 +204,9 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             markup = [
                 [InlineKeyboardButton(text="🎵 ۳۲۰ kbps", callback_data=f"dl_q:320:{track_id}:u{user_id}")],
                 [InlineKeyboardButton(text="🎶 ۱۹۲ kbps", callback_data=f"dl_q:192:{track_id}:u{user_id}")],
-                [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_q:128:{track_id}:u{user_id}")],
-                [create_close_button(user_id=user_id)]
+                [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_q:128:{track_id}:u{user_id}")]
             ]
-            await send_message(bot, chat_id, "🎵 *کیفیت دانلود را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup), user_id=user_id)
+            await send_message(bot, chat_id, "🎵 *کیفیت دانلود را انتخاب کنید:*", reply_markup=markup, user_id=user_id)
         else:
             await bot.answer_callback_query(callback_query.id, text="⏳ در حال آماده‌سازی...")
             await download_service.download_and_send_track(chat_id, track_id, user_id)
@@ -233,10 +232,9 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             markup = [
                 [InlineKeyboardButton(text="🎵 ۳۲۰ kbps", callback_data=f"dl_aq:320:{coll_id}:u{user_id}")],
                 [InlineKeyboardButton(text="🎶 ۱۹۲ kbps", callback_data=f"dl_aq:192:{coll_id}:u{user_id}")],
-                [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_aq:128:{coll_id}:u{user_id}")],
-                [create_close_button(user_id=user_id)]
+                [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_aq:128:{coll_id}:u{user_id}")]
             ]
-            await send_message(bot, chat_id, "📀 *کیفیت دانلود آلبوم را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup), user_id=user_id)
+            await send_message(bot, chat_id, "📀 *کیفیت دانلود آلبوم را انتخاب کنید:*", reply_markup=markup, user_id=user_id)
         else:
             await bot.answer_callback_query(callback_query.id, text="📀 شروع دانلود آلبوم...")
             asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service))

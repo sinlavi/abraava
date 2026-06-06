@@ -21,7 +21,7 @@ async def start_command(bot: Client, message: Message):
         for channel in REQUIRED_CHANNELS:
             markup.append([InlineKeyboardButton(text=f"📢 عضویت در {channel['name']}", url=f"https://ble.ir/{channel['username'].lstrip('@')}")])
 
-    await send_message(bot, message.chat.id, welcome_text, reply_markup=InlineKeyboard(*markup) if markup else None, user_id=user_id)
+    await send_message(bot, message.chat.id, welcome_text, reply_markup=markup if markup else None, user_id=user_id)
 
 async def help_command(bot: Client, message: Message, is_callback=False):
     user_id = message.author.id
