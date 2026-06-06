@@ -16,6 +16,7 @@ from services.download_service import DownloadService
 from services.membership_service import verify_all_memberships
 from services.registration_service import UserRegistrationService
 from services.direct_download_service import DirectDownloadService
+from services.odesli_service import OdesliService
 
 from bot.handlers.commands import start_command, help_command, about_command
 from bot.handlers.settings import settings_command, stats_command
@@ -142,6 +143,24 @@ async def on_message(message: Message):
                 await show_track_page(bot, chat_id, int(term), artwork_service, user_id)
             elif type_ == "itunes_album":
                 await show_collection_page(bot, chat_id, int(term), 1, artwork_service, user_id)
+            elif type_ == "itunes_artist":
+                await show_artist_page(bot, chat_id, int(term), 1, artwork_service, user_id)
+            elif type_ == "music_link":
+                status_msg = await send_message(bot, chat_id, "🔍 *در حال بررسی پیوند...*")
+                resolved = await OdesliService.resolve_link(term)
+                if not resolved:
+                    await edit_message(status_msg, "❌ متأسفانه اطلاعاتی برای این پیوند یافت نشد.")
+                    return
+
+                res_type, res_id = resolved
+                if res_type == "track":
+                    await show_track_page(bot, chat_id, res_id, artwork_service, user_id, message_to_edit=status_msg)
+                elif res_type == "collection":
+                    await show_collection_page(bot, chat_id, res_id, 1, artwork_service, user_id, message_to_edit=status_msg)
+                elif res_type == "artist":
+                    await show_artist_page(bot, chat_id, res_id, 1, artwork_service, user_id, message_to_edit=status_msg)
+                else:
+                    await edit_message(status_msg, "❌ نوع محتوا شناسایی نشد.")
             elif type_ == "direct_link":
                 await direct_download_service.ask_confirmation(chat_id, term)
             else:

@@ -3,19 +3,44 @@ import os
 import shutil
 import uuid
 import yt_dlp
+import random
 from pathlib import Path
 from core.logger import logger
 from utils.messages import send_message, edit_message
 from bot.keyboards import create_close_button
 from balethon.objects import InlineKeyboardButton, InlineKeyboard
 
+# ── User‑agent list (Same as youtube crawler) ────────────────────
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.4; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36"
+]
+
 class DirectDownloadService:
     def __init__(self, bot, tagging_service):
         self.bot = bot
         self.tagging_service = tagging_service
 
+    def _get_random_headers(self) -> dict:
+        return {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        }
+
     async def get_metadata(self, url):
-        ydl_opts = {'quiet': True, 'skip_download': True}
+        ydl_opts = {
+            'quiet': True,
+            'skip_download': True,
+            'http_headers': self._get_random_headers(),
+            'no_check_certificate': True
+        }
         try:
             loop = asyncio.get_event_loop()
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -77,6 +102,9 @@ class DirectDownloadService:
                 'preferredquality': quality,
             }],
             'quiet': True,
+            'http_headers': self._get_random_headers(),
+            'no_check_certificate': True,
+            'retries': 10
         }
 
         try:
