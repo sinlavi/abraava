@@ -37,7 +37,13 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
     chat_id = message.chat.id
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id)
 
-    if not last_message_tracker.is_last(chat_id, message.id):
+    # If it's a photo message and we want to edit it, Balethon sometimes has issues if it's not the last message
+    # or if we try to edit text into a photo message without edit_caption.
+    # The current logic handles edit_caption correctly if hasattr(message, 'photo').
+
+    if not last_message_tracker.is_recent(chat_id, message.id):
+        # Only delete and send new if it's NOT among the recent messages.
+        # This prevents the bot from "flickering" if it's still near the end of the chat.
         try: await message.delete()
         except: pass
         return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)

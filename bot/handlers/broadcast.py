@@ -12,9 +12,13 @@ async def process_broadcast_message(bot: Client, message: Message, api_client: A
     if chat_id == str(INFO_CHANNEL_ID):
         text = message.content or message.caption or ""
         # If ID/Tag is missing, edit and add it
-        if "@abraava" not in text:
+        if "@abraava" not in text or "@abraava_bot" not in text:
             try:
-                new_text = f"{text}{FOOTER}"
+                # Ensure it has exactly what's needed
+                new_text = text
+                if "@abraava_bot" not in new_text: new_text += "\n@abraava_bot"
+                if "@abraava" not in new_text: new_text += "\n@abraava"
+
                 if message.content: await message.edit(text=new_text)
                 elif message.caption: await message.edit_caption(caption=new_text)
             except: pass
