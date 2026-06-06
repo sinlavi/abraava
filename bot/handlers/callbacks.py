@@ -6,7 +6,7 @@ from bot.handlers.album_download import download_album
 from bot.handlers.search import handle_search
 from bot.handlers.preview import send_voice_preview
 import crawlers.utils
-from bot.keyboards import get_settings_keyboard, get_quality_keyboard, get_confirmation_keyboard
+from bot.keyboards import get_settings_keyboard, get_quality_keyboard, get_confirmation_keyboard, create_close_button
 from utils.messages import send_message, edit_message
 from core.config import OFFLINE_MODE
 from core.logger import logger
@@ -32,6 +32,11 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     if data == "close":
         try: await callback_query.message.delete()
         except: pass
+        return
+
+    if data == "help_cmd":
+        from bot.handlers.commands import help_command
+        await help_command(bot, callback_query.message, is_callback=True)
         return
 
     if data == "ignore":
@@ -179,8 +184,27 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     elif data.startswith("download:"):
         track_id = parts[1]
         if track_id.isdigit(): track_id = int(track_id)
-        await bot.answer_callback_query(callback_query.id, text="⏳ در حال آماده‌سازی...")
-        await download_service.download_and_send_track(chat_id, track_id, user_id)
+        settings = await user_settings_service.get_settings(user_id)
+        if settings.download_quality == DownloadQuality.ASK:
+            markup = [
+                [InlineKeyboardButton(text="🎵 ۳۲۰ kbps", callback_data=f"dl_q:320:{track_id}")],
+                [InlineKeyboardButton(text="🎶 ۱۹۲ kbps", callback_data=f"dl_q:192:{track_id}")],
+                [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_q:128:{track_id}")],
+                [create_close_button()]
+            ]
+            await send_message(bot, chat_id, "🎵 *کیفیت دانلود را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup))
+        else:
+            await bot.answer_callback_query(callback_query.id, text="⏳ در حال آماده‌سازی...")
+            await download_service.download_and_send_track(chat_id, track_id, user_id)
+
+    elif data.startswith("dl_q:"):
+        quality, track_id = parts[1], parts[2]
+        if track_id.isdigit(): track_id = int(track_id)
+        await bot.answer_callback_query(callback_query.id, text=f"⏳ دانلود با کیفیت {quality}...")
+        try: await callback_query.message.delete()
+        except: pass
+        await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality)
+
     elif data.startswith("preview:"):
         track_id = parts[1]
         if track_id.isdigit(): track_id = int(track_id)
@@ -189,8 +213,40 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     elif data.startswith("download_album:"):
         coll_id = parts[1]
         if coll_id.isdigit(): coll_id = int(coll_id)
-        await bot.answer_callback_query(callback_query.id, text="📀 شروع دانلود آلبوم...")
-        asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service))
+        settings = await user_settings_service.get_settings(user_id)
+        if settings.download_quality == DownloadQuality.ASK:
+            markup = [
+                [InlineKeyboardButton(text="🎵 ۳۲۰ kbps", callback_data=f"dl_aq:320:{coll_id}")],
+                [InlineKeyboardButton(text="🎶 ۱۹۲ kbps", callback_data=f"dl_aq:192:{coll_id}")],
+                [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_aq:128:{coll_id}")],
+                [create_close_button()]
+            ]
+            await send_message(bot, chat_id, "📀 *کیفیت دانلود آلبوم را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup))
+        else:
+            await bot.answer_callback_query(callback_query.id, text="📀 شروع دانلود آلبوم...")
+            asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service))
+
+    elif data.startswith("dl_aq:"):
+        quality, coll_id = parts[1], parts[2]
+        if coll_id.isdigit(): coll_id = int(coll_id)
+        await bot.answer_callback_query(callback_query.id, text=f"📀 شروع دانلود با کیفیت {quality}...")
+        try: await callback_query.message.delete()
+        except: pass
+        asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service, quality=quality))
+
+    elif data.startswith("retry_failed:"):
+        failed_ids = parts[1].split(",")
+        await bot.answer_callback_query(callback_query.id, text="🔄 تلاش مجدد برای قطعات ناموفق...")
+        try: await callback_query.message.delete()
+        except: pass
+        settings = await user_settings_service.get_settings(user_id)
+        quality_value = settings.download_quality.value
+        if quality_value == "ask": quality_value = "192"
+        for tid in failed_ids:
+            if tid:
+                asyncio.create_task(download_service.download_and_send_track(chat_id, tid, user_id, selected_quality=quality_value))
+                await asyncio.sleep(0.5)
+
     elif data.startswith("cancel_album:"):
         owner_id_from_cb, coll_id = int(parts[1]), parts[2]
         if coll_id.isdigit(): coll_id = int(coll_id)
@@ -216,7 +272,10 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         elif retry_data.startswith("download_retry:"):
             _, tid = retry_data.split(":")
             if tid.isdigit(): tid = int(tid)
-            await download_service.download_and_send_track(chat_id, tid, user_id)
+            settings = await user_settings_service.get_settings(user_id)
+            quality_value = settings.download_quality.value
+            if quality_value == "ask": quality_value = "192"
+            await download_service.download_and_send_track(chat_id, tid, user_id, selected_quality=quality_value)
         try: await callback_query.message.delete()
         except: pass
 

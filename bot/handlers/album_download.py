@@ -3,7 +3,7 @@ from balethon.objects import InlineKeyboardButton, InlineKeyboard
 from utils.messages import send_message, edit_message
 from crawlers.utils import get_or_crawl_collection, get_or_crawl_collection_tracks
 
-async def download_album(bot, chat_id, collection_id, user_id, download_service):
+async def download_album(bot, chat_id, collection_id, user_id, download_service, quality=None):
     # This message stays static (no edit) as per request
     parent_msg = await send_message(bot, chat_id, "⏳ *شروع فرایند دانلود آلبوم...*")
 
@@ -33,11 +33,12 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service)
         album_cover_bytes = await download_service.artwork_service.get_artwork_bytes(coll.get('collectionId'), coll.get('artworkUrl100'))
 
         settings = await download_service.user_settings_service.get_settings(user_id)
-        quality_value = settings.download_quality.value
+        quality_value = quality or settings.download_quality.value
         if quality_value == "ask": quality_value = "192"
 
         success_count = 0
         failed_count = 0
+        failed_tracks = []
 
         for idx, track in enumerate(tracks, 1):
             if download_service.album_tracker.is_cancelled(user_id, collection_id):
@@ -55,16 +56,35 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service)
             except Exception as e:
                 logger.error(f"Error downloading track {idx} in album: {e}")
                 failed_count += 1
+                failed_tracks.append((track.get('trackId'), track.get('trackName', 'Unknown')))
 
+            # Update parent message with progress
+            progress_text = (
+                f"📀 *آلبوم:* {coll_name}\n"
+                f"🎵 *تعداد قطعات:* {len(tracks)}\n"
+                f"✅ *موفق:* {success_count}\n"
+                f"❌ *ناموفق:* {failed_count}\n"
+                f"⬇️ *در حال دانلود...*"
+            )
+            prog_markup = [[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{user_id}:{collection_id}")]]
+            await edit_message(parent_msg, progress_text, reply_markup=InlineKeyboard(*prog_markup))
             await asyncio.sleep(0.5)
 
         final_text = f"✅ دانلود آلبوم {coll_name} به پایان رسید.\n🎵 مجموع قطعات: {len(tracks)}\n✅ موفق: {success_count}"
+        markup_rows = []
         if failed_count > 0:
-            final_text += f"\n❌ ناموفق: {failed_count}"
-            final_text += "\n\n💡 میتوانید برای قطعات ناموفق مجدداً تلاش کنید."
+            final_text += f"\n❌ ناموفق: {failed_count}\n\n"
+            final_text += "📑 *قطعات دانلود نشده:*\n"
+            for _, name in failed_tracks:
+                final_text += f"🔸 {name}\n"
 
-        markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد برای آلبوم", callback_data=f"download_album:{collection_id}")]]
-        await send_message(bot, chat_id, final_text, reply_markup=markup)
+            failed_ids = ",".join([str(tid) for tid, _ in failed_tracks])
+            # If too many failed, we might hit callback data limit, but let's assume it's reasonable
+            if len(failed_ids) < 40:
+                markup_rows.append([InlineKeyboardButton(text="🔄 تلاش مجدد قطعات ناموفق", callback_data=f"retry_failed:{failed_ids}")])
+
+        markup_rows.append([InlineKeyboardButton(text="🔄 تلاش مجدد کل آلبوم", callback_data=f"download_album:{collection_id}")])
+        await send_message(bot, chat_id, final_text, reply_markup=InlineKeyboard(*markup_rows))
 
     finally:
         download_service.album_tracker.finish_download(user_id, collection_id, success_count, failed_count)

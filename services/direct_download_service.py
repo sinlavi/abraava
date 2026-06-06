@@ -107,14 +107,37 @@ class DirectDownloadService:
             await edit_message(status_msg, "❌ خطا در دریافت اطلاعات پیوند.")
             return
 
-        text = f"🎵 *اطلاعات یافت شده:*\n\n"
-        text += f"🎵 *نام آهنگ:* {meta['title']}\n"
-        text += f"🎤 *نام هنرمند:* {meta['uploader']}\n"
-        if meta['album']: text += f"💿 *نام آلبوم:* {meta['album']}\n"
-        if meta['duration']:
-            from utils.helpers import format_duration
-            text += f"⏱️ *مدت زمان:* {format_duration(meta['duration'] * 1000)}\n"
-        text += f"\nآیا مایل به دانلود این ترک هستید؟"
+        # Prepare dummy track data for build_caption
+        dummy_track = {
+            "trackName": meta.get('title'),
+            "artistName": meta.get('uploader'),
+            "collectionName": meta.get('album'),
+            "trackTimeMillis": (meta.get('duration') or 0) * 1000,
+            "trackViewUrl": url,
+            "releaseDate": meta.get('upload_date', '')[:4]
+        }
+
+        from services.download_service import DownloadService
+        # We need a dummy DownloadService or just the static method if it was static.
+        # It's not static, but we can call it if we have an instance or use the logic.
+        # Let's use the logic to be safe or create a local helper.
+
+        from utils.helpers import format_duration
+        fields = {
+            "🎵 نام آهنگ": f"[{dummy_track['trackName']}]({url})" if dummy_track['trackName'] else None,
+            "🎤 نام هنرمند": dummy_track['artistName'],
+            "💿 نام آلبوم": dummy_track['collectionName'],
+            "📅 سال انتشار": dummy_track['releaseDate'],
+            "⏱️ مدت زمان": format_duration(dummy_track['trackTimeMillis']) if dummy_track['trackTimeMillis'] > 0 else None
+        }
+
+        caption_lines = ["🎵 *اطلاعات یافت شده:*\n"]
+        for k, v in fields.items():
+            if v and str(v).strip() and "Unknown" not in str(v) and "نامشخص" not in str(v) and "None" not in str(v):
+                caption_lines.append(f"{k}: {v}")
+
+        caption_lines.append(f"\nآیا مایل به دانلود این ترک هستید؟")
+        text = "\n".join(caption_lines)
 
         from bot.handlers.callbacks import store_direct_link
         link_id = await store_direct_link(url)
@@ -170,26 +193,35 @@ class DirectDownloadService:
                     continue
 
             if success and mp3_path:
-                await edit_message(status_msg, "☁️ *در حال آماده‌سازی فایل...*")
+                await edit_message(status_msg, "☁️ *در حال آماده‌سازی فایل...*", show_cancel=True)
                 self.tagging_service.tag_mp3(mp3_path, track_data)
 
                 track_name = track_data['trackName']
                 if url:
                     track_name = f"[{track_name}]({url})"
 
-                caption = f"🎵 *نام آهنگ:* {track_name}\n"
-                caption += f"🎤 *نام هنرمند:* {track_data['artistName']}\n"
-                if track_data['collectionName']: caption += f"💿 *نام آلبوم:* {track_data['collectionName']}\n"
-                caption += f"📀 *کیفیت دانلود:* {quality} kbps"
+                fields = {
+                    "🎵 نام آهنگ": track_name,
+                    "🎤 نام هنرمند": track_data.get('artistName'),
+                    "💿 نام آلبوم": track_data.get('collectionName'),
+                    "📀 کیفیت دانلود": f"{quality} kbps"
+                }
+
+                caption_lines = []
+                for k, v in fields.items():
+                    if v and str(v).strip() and "Unknown" not in str(v):
+                        caption_lines.append(f"{k}: {v}")
+
+                caption = "\n".join(caption_lines)
 
                 with open(mp3_path, 'rb') as f:
                     await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard([[create_close_button()]]))
                 await status_msg.delete()
             else:
-                await edit_message(status_msg, "❌ دانلود با خطا مواجه شد.")
+                await edit_message(status_msg, "❌ دانلود با خطا مواجه شد.", show_cancel=True)
 
         except Exception as e:
             logger.error(f"Direct download service error: {e}")
-            await edit_message(status_msg, f"❌ خطا: {str(e)[:50]}")
+            await edit_message(status_msg, f"❌ خطا: {str(e)[:50]}", show_cancel=True)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
