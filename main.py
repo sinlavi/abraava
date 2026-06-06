@@ -62,7 +62,7 @@ async def on_message(message: Message):
     if message.author.is_bot: return
 
     # Broadcast forward handling
-    if message.chat.type == "channel" and message.chat.id == INFO_CHANNEL_ID:
+    if message.chat.type == "channel" and str(message.chat.id) == str(INFO_CHANNEL_ID):
         await process_broadcast_message(bot, message, api_client)
         return
 

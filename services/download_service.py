@@ -54,6 +54,7 @@ class DownloadService:
         # Check cache
         audio_cache = await get_cached_audio(track_id, quality=quality_value)
         if audio_cache:
+            logger.info(f"Using cached audio for track {track_id} (quality: {quality_value}) -> {audio_cache}")
             try:
                 await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
                 markup = self._build_audio_markup(track_id)

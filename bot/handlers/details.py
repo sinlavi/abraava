@@ -6,6 +6,7 @@ from utils.helpers import get_high_res_artwork, format_duration, generate_deep_l
 from crawlers.utils import get_or_crawl_artist, get_or_crawl_artist_collections, get_or_crawl_collection, get_or_crawl_collection_tracks, get_track
 from crawlers.youtube import get_artist_image
 import logging
+import asyncio
 
 logger = logging.getLogger("ABRAAVA:DETAILS")
 
@@ -16,8 +17,8 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         status_msg = None
     try:
         # Concurrent fetching for performance
-        artist_task = get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force)
-        collections_task = get_or_crawl_artist_collections(artist_id)
+        artist_task = asyncio.create_task(get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force))
+        collections_task = asyncio.create_task(get_or_crawl_artist_collections(artist_id))
 
         artist_data, collections_data = await asyncio.gather(artist_task, collections_task)
 
@@ -107,8 +108,8 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         status_msg = None
     try:
         # Concurrent fetching for performance
-        collection_task = get_or_crawl_collection(collection_id, status_msg, force)
-        tracks_task = get_or_crawl_collection_tracks(collection_id)
+        collection_task = asyncio.create_task(get_or_crawl_collection(collection_id, status_msg, force))
+        tracks_task = asyncio.create_task(get_or_crawl_collection_tracks(collection_id))
 
         collection_data, tracks_data = await asyncio.gather(collection_task, tracks_task)
 

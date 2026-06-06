@@ -61,16 +61,22 @@ async def process_broadcast_message(bot: Client, message: Message, api_client: A
 
     logger.info(f"Starting broadcast from {chat_id} to {len(users)} users. Keywords: {keyword_list}")
 
-    for user in users:
-        try:
-            uid = user.get('user_id') or user.get('id')
-            if uid:
+    semaphore = asyncio.Semaphore(20)
+
+    async def forward_to_user(user):
+        nonlocal successful, failed
+        uid = user.get('user_id') or user.get('id')
+        if not uid: return
+        async with semaphore:
+            try:
                 await bot.forward_message(chat_id=uid, message_id=message.id, from_chat_id=message.chat.id)
                 successful += 1
-                await asyncio.sleep(0.03) # Slightly faster
-        except Exception as e:
-            logger.debug(f"Failed to forward broadcast to {user.get('id')}: {e}")
-            failed += 1
+            except Exception as e:
+                logger.debug(f"Failed to forward broadcast to {uid}: {e}")
+                failed += 1
+
+    tasks = [forward_to_user(user) for user in users]
+    await asyncio.gather(*tasks)
 
     logger.info(f"Broadcast complete: {successful} success, {failed} failed.")
     await api_client.log_broadcast(str(message.id), chat_id, message_text[:500], len(users), successful, failed)

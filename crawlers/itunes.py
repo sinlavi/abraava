@@ -127,11 +127,13 @@ async def lookup_itunes(id: int, entity: Optional[str] = None, bypass_cache: boo
 async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url: str, quality: str = None) -> Optional[Dict[str, Any]]:
     payload = {"entityType": entity_type, "entityId": entity_id, "urlType": url_type, "mirrorUrl": mirror_url}
     if quality: payload["quality"] = quality
+    logger.info(f"Setting mirror: {entity_type} {entity_id} {url_type} -> {mirror_url} ({quality})")
     return await fetch_itunes("mirror/set", method="POST", payload=payload)
 
 async def get_mirror(entity_type: str, entity_id: str, url_type: str, quality: str = None) -> Optional[Dict[str, Any]]:
     params = {"entityType": entity_type, "entityId": entity_id, "urlType": url_type}
     if quality: params["quality"] = quality
+    logger.info(f"Checking mirror for {entity_type} {entity_id} {url_type} ({quality})")
     return await fetch_itunes("mirror/get", params=params)
 
 async def get_cached_audio(track_id: int, quality: str = None) -> Optional[str]:

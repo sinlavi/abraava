@@ -1,42 +1,45 @@
-from balethon.objects import InlineKeyboard, Message
+from balethon.objects import InlineKeyboard, Message, InlineKeyboardButton
 from core.config import FOOTER
 from bot.keyboards import create_close_button, create_info_channel_button, create_cancel_button
 from services.last_message_tracker import last_message_tracker
 import logging
+import copy
 
 logger = logging.getLogger("ABRAAVA:MESSAGES")
 
 def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_cancel=False):
     if reply_markup is None: reply_markup = []
     if isinstance(reply_markup, list):
+        # Create a deep copy to avoid modifying the original list passed by reference
+        markup = copy.deepcopy(reply_markup)
+
         # Flatten and check for close button in all nested lists
         has_close = any(
             getattr(btn, 'callback_data', '') == 'close'
-            for row in reply_markup
+            for row in markup
             if isinstance(row, list)
             for btn in row
         )
 
         if not no_close and not has_close:
             if task_id:
-                reply_markup.append([create_cancel_button(task_id)])
+                markup.append([create_cancel_button(task_id)])
             elif show_cancel:
-                from balethon.objects import InlineKeyboardButton
-                reply_markup.append([InlineKeyboardButton(text="⏹️ لغو عملیات", callback_data="close")])
+                markup.append([InlineKeyboardButton(text="⏹️ لغو عملیات", callback_data="close")])
             elif show_info:
-                reply_markup.append([create_info_channel_button()])
+                markup.append([create_info_channel_button()])
 
             # Final check just in case something was added but not 'close'
             has_close_now = any(
                 getattr(btn, 'callback_data', '') == 'close'
-                for row in reply_markup
+                for row in markup
                 if isinstance(row, list)
                 for btn in row
             )
             if not has_close_now:
-                reply_markup.append([create_close_button()])
+                markup.append([create_close_button()])
 
-        return InlineKeyboard(*reply_markup)
+        return InlineKeyboard(*markup)
     return reply_markup
 
 async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None, show_cancel=False):
