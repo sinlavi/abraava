@@ -7,6 +7,9 @@ import yt_dlp
 from core.config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 from core.logger import logger
 
+YT_METADATA_METHODS = [1, 2, 3]
+SC_METADATA_METHODS = [1, 2]
+
 class MusicAdapter:
     def __init__(self):
         self.sp = None
@@ -247,69 +250,121 @@ class MusicAdapter:
             logger.error(f"Spotify get album tracks error: {e}")
             return []
 
+    def _get_ydl_opts(self, method, proxy=None):
+        opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': False}
+        if method == 2 and proxy:
+            opts['proxy'] = proxy
+        elif method == 3:
+            opts['extractor_args'] = {"youtube": {"player_client": ["web", "mweb", "android_vr"]}}
+            if proxy: opts['proxy'] = proxy
+        return opts
+
     async def get_yt_track(self, video_id: str) -> Optional[Dict[str, Any]]:
+        global YT_METADATA_METHODS
         if video_id.startswith("yt_"): video_id = video_id[3:]
         url = f"https://www.youtube.com/watch?v={video_id}"
-        ydl_opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': False}
-        loop = asyncio.get_event_loop()
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
-                if not info: return None
 
+        from core.config import PROXY
+        proxy = PROXY
+        if not proxy:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            try:
+                if s.connect_ex(("127.0.0.1", 1080)) == 0:
+                    proxy = "socks5://127.0.0.1:1080"
+            except: pass
+            finally: s.close()
+
+        loop = asyncio.get_event_loop()
+
+        for method in list(YT_METADATA_METHODS):
+            try:
+                opts = self._get_ydl_opts(method, proxy)
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
+                    if info:
+                        if method in YT_METADATA_METHODS:
+                            YT_METADATA_METHODS.remove(method)
+                            YT_METADATA_METHODS.insert(0, method)
+
+                        return {
+                            "wrapperType": "track",
+                            "trackId": f"yt_{video_id}",
+                            "trackName": info.get("title", "Unknown"),
+                            "artistName": info.get("uploader", info.get("artist", "Unknown")),
+                            "collectionName": info.get("album"),
+                            "artworkUrl100": info.get("thumbnail"),
+                            "trackTimeMillis": int(info.get("duration", 0)) * 1000,
+                            "releaseDate": info.get("upload_date", "")[:4],
+                            "trackViewUrl": url
+                        }
+            except Exception as e:
+                logger.debug(f"YT Metadata method {method} failed: {e}")
+                if method in YT_METADATA_METHODS:
+                    YT_METADATA_METHODS.remove(method)
+                    YT_METADATA_METHODS.append(method)
+
+        # Final Fallback to YTM API
+        try:
+            track = await loop.run_in_executor(None, lambda: self.ytm.get_song(video_id))
+            details = track.get("videoDetails", {})
+            if details:
                 return {
                     "wrapperType": "track",
                     "trackId": f"yt_{video_id}",
-                    "trackName": info.get("title", "Unknown"),
-                    "artistName": info.get("uploader", info.get("artist", "Unknown")),
-                    "collectionName": info.get("album"),
-                    "artworkUrl100": info.get("thumbnail"),
-                    "trackTimeMillis": int(info.get("duration", 0)) * 1000,
-                    "releaseDate": info.get("upload_date", "")[:4],
+                    "trackName": details.get("title"),
+                    "artistName": details.get("author"),
+                    "artworkUrl100": details.get("thumbnail", {}).get("thumbnails", [{}])[-1].get("url"),
+                    "trackTimeMillis": int(details.get("lengthSeconds", 0)) * 1000,
                     "trackViewUrl": url
                 }
-        except Exception as e:
-            logger.error(f"YT get track error via yt-dlp: {e}")
-            # Fallback to simple YTM lookup if yt-dlp fails
-            try:
-                track = await loop.run_in_executor(None, lambda: self.ytm.get_song(video_id))
-                details = track.get("videoDetails", {})
-                if details:
-                    return {
-                        "wrapperType": "track",
-                        "trackId": f"yt_{video_id}",
-                        "trackName": details.get("title"),
-                        "artistName": details.get("author"),
-                        "artworkUrl100": details.get("thumbnail", {}).get("thumbnails", [{}])[-1].get("url"),
-                        "trackTimeMillis": int(details.get("lengthSeconds", 0)) * 1000,
-                        "trackViewUrl": url
-                    }
-            except: pass
+        except: pass
         return None
 
     async def get_sc_track(self, sc_id: str) -> Optional[Dict[str, Any]]:
-        # For SoundCloud we might have a numeric ID or a URL slug.
-        # yt-dlp needs the full URL or a specific format.
-        ydl_opts = {'quiet': True, 'no_check_certificate': True}
+        global SC_METADATA_METHODS
+        if sc_id.startswith("sc_"): sc_id = sc_id[3:]
+
+        if sc_id.isdigit():
+            url = f"https://api.soundcloud.com/tracks/{sc_id}"
+        elif sc_id.startswith("http"):
+            url = sc_id
+        else:
+            url = f"https://soundcloud.com/{sc_id}"
+
+        from core.config import PROXY
+        proxy = PROXY
+        if not proxy:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            try:
+                if s.connect_ex(("127.0.0.1", 1080)) == 0:
+                    proxy = "socks5://127.0.0.1:1080"
+            except: pass
+            finally: s.close()
+
         loop = asyncio.get_event_loop()
-        try:
-            if sc_id.startswith("sc_"): sc_id = sc_id[3:]
 
-            # If it's a numeric ID, we can use sc_track:<id>
-            # If it's a URL or slug, we use it directly
-            if sc_id.isdigit():
-                url = f"https://api.soundcloud.com/tracks/{sc_id}"
-            elif sc_id.startswith("http"):
-                url = sc_id
-            else:
-                # If it's just a slug (user/title), prepend soundcloud.com
-                url = f"https://soundcloud.com/{sc_id}"
+        for method in list(SC_METADATA_METHODS):
+            try:
+                opts = {'quiet': True, 'no_check_certificate': True}
+                if method == 2 and proxy:
+                    opts['proxy'] = proxy
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
-                return self._sc_to_itunes(info)
-        except Exception as e:
-            logger.error(f"SC get track error: {e}")
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
+                    if info:
+                        if method in SC_METADATA_METHODS:
+                            SC_METADATA_METHODS.remove(method)
+                            SC_METADATA_METHODS.insert(0, method)
+                        return self._sc_to_itunes(info)
+            except Exception as e:
+                logger.debug(f"SC Metadata method {method} failed: {e}")
+                if method in SC_METADATA_METHODS:
+                    SC_METADATA_METHODS.remove(method)
+                    SC_METADATA_METHODS.append(method)
         return None
 
     async def get_yt_album(self, browse_id: str) -> Optional[Dict[str, Any]]:
