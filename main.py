@@ -124,6 +124,17 @@ async def on_message(message: Message):
         query = await parse_search_query(text)
         if query:
             type_, term = query
+
+            if term is None:
+                usage_map = {
+                    "track": "🔍 *راهنمای جستجوی آهنگ:*\n\nکافیست نام آهنگ را مقابل دستور بنویسید.\nمثال: `/track محسن چاوشی`",
+                    "album": "📀 *راهنمای جستجوی آلبوم:*\n\nکافیست نام آلبوم را مقابل دستور بنویسید.\nمثال: `/album ابراهیم`",
+                    "artist": "🎤 *راهنمای جستجوی هنرمند:*\n\nکافیست نام هنرمند را مقابل دستور بنویسید.\nمثال: `/artist شادمهر عقیلی`",
+                    "quick": "⚡ *راهنمای دانلود سریع:*\n\nکافیست نام آهنگ را مقابل دستور بنویسید تا اولین نتیجه مستقیما دانلود شود.\nمثال: `/quick آهنگ جدید`"
+                }
+                await send_message(bot, chat_id, usage_map.get(type_, "⚠️ لطفا عبارت مورد نظر خود را وارد کنید."))
+                return
+
             settings = await user_settings_service.get_settings(user_id)
             if type_ == "quick" or settings.quick_mode:
                 await quick_search(bot, chat_id, user_id, term, api_client, user_settings_service, download_service)

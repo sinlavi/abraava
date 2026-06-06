@@ -6,7 +6,7 @@ from balethon.objects import Message
 from core.logger import logger
 from crawlers.utils import get_track
 from crawlers.itunes import get_cached_preview, set_mirror
-from utils.messages import send_message
+from utils.messages import send_message, edit_message
 from core.http_client import HttpClient
 from core.config import FOOTER
 from bot.keyboards import create_close_button

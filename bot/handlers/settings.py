@@ -39,11 +39,11 @@ async def stats_command_logic(bot, message, user_id, api_client, rate_limiter, d
     text = (
         f"📊 *گزارش فعالیت و سهمیه شما*\n\n"
         f"⏳ *سهمیه باقی‌مانده (امروز):*\n"
-        f"🔍 جستجو: `{remaining_search}` از `{rate_limiter.max_requests}`\n"
-        f"⬇️ دانلود: `{remaining_download}` از `{download_rate_limiter.max_downloads}`\n\n"
+        f"🔍 جستجو: ```{remaining_search}``` از ```{rate_limiter.max_requests}```\n"
+        f"⬇️ دانلود: ```{remaining_download}``` از ```{download_rate_limiter.max_downloads}```\n\n"
         f"📈 *آمار کلی فعالیت شما:*\n"
-        f"🔹 کل جستجوها: `{total_searches}` مورد\n"
-        f"🔹 کل دانلودها: `{total_downloads}` فایل\n\n"
+        f"🔹 کل جستجوها: ```{total_searches}``` مورد\n"
+        f"🔹 کل دانلودها: ```{total_downloads}``` فایل\n\n"
         f"✨ ممنون که از ما استفاده می‌کنید!"
     )
 
@@ -62,11 +62,11 @@ async def stats_command(bot: Client, message: Message, api_client, rate_limiter,
     text = (
         f"📊 *گزارش فعالیت و سهمیه شما*\n\n"
         f"⏳ *سهمیه باقی‌مانده (امروز):*\n"
-        f"🔍 جستجو: `{remaining_search}` از `{rate_limiter.max_requests}`\n"
-        f"⬇️ دانلود: `{remaining_download}` از `{download_rate_limiter.max_downloads}`\n\n"
+        f"🔍 جستجو: ```{remaining_search}``` از ```{rate_limiter.max_requests}```\n"
+        f"⬇️ دانلود: ```{remaining_download}``` از ```{download_rate_limiter.max_downloads}```\n\n"
         f"📈 *آمار کلی فعالیت شما:*\n"
-        f"🔹 کل جستجوها: `{total_searches}` مورد\n"
-        f"🔹 کل دانلودها: `{total_downloads}` فایل\n\n"
+        f"🔹 کل جستجوها: ```{total_searches}``` مورد\n"
+        f"🔹 کل دانلودها: ```{total_downloads}``` فایل\n\n"
         f"✨ ممنون که از ما استفاده می‌کنید!"
     )
     await send_message(bot, message.chat.id, text)
