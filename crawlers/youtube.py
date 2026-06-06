@@ -321,7 +321,7 @@ async def search_youtube_track(t_name: str, a_name: str, collection_name: str, y
                         break
             
             # Random delay between methods to avoid rate limiting
-            await asyncio.sleep(random.uniform(1.0, 3.0))
+            await asyncio.sleep(random.uniform(0.5, 1.5))
             
         except Exception as e:
             logger.debug(f"Search method {method} error: {e}")
@@ -460,7 +460,7 @@ async def download_audio(
                     METHOD_ORDER.remove(method)
                     METHOD_ORDER.append(method)
 
-                await asyncio.sleep(random.uniform(3.0, 6.0))
+                await asyncio.sleep(random.uniform(1.5, 3.0))
                 continue
 
             after = set(Path(unique_dir).glob("*.mp3"))
@@ -477,7 +477,7 @@ async def download_audio(
                 return str(mp3_path)
             else:
                 logger.warning("Method %d completed but no MP3 found – retrying…", method)
-                await asyncio.sleep(random.uniform(2.0, 4.0))
+                await asyncio.sleep(random.uniform(1.0, 2.0))
 
     try:
         shutil.rmtree(unique_dir, ignore_errors=True)

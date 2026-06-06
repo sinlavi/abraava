@@ -1,50 +1,57 @@
-from balethon.objects import InlineKeyboard, Message
+from balethon.objects import InlineKeyboard, Message, InlineKeyboardButton
 from core.config import FOOTER
 from bot.keyboards import create_close_button, create_info_channel_button, create_cancel_button
 from services.last_message_tracker import last_message_tracker
 import logging
+import copy
 
 logger = logging.getLogger("ABRAAVA:MESSAGES")
 
-def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None):
+def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_cancel=False):
     if reply_markup is None: reply_markup = []
     if isinstance(reply_markup, list):
+        # Create a deep copy to avoid modifying the original list passed by reference
+        markup = copy.deepcopy(reply_markup)
+
         # Flatten and check for close button in all nested lists
         has_close = any(
             getattr(btn, 'callback_data', '') == 'close'
-            for row in reply_markup
+            for row in markup
             if isinstance(row, list)
             for btn in row
         )
 
         if not no_close and not has_close:
             if task_id:
-                reply_markup.append([create_cancel_button(task_id)])
+                markup.append([create_cancel_button(task_id)])
+            elif show_cancel:
+                markup.append([InlineKeyboardButton(text="⏹️ لغو عملیات", callback_data="close")])
             elif show_info:
-                reply_markup.append([create_info_channel_button()])
+                markup.append([create_info_channel_button()])
 
             # Final check just in case something was added but not 'close'
             has_close_now = any(
                 getattr(btn, 'callback_data', '') == 'close'
-                for row in reply_markup
+                for row in markup
                 if isinstance(row, list)
                 for btn in row
             )
             if not has_close_now:
-                reply_markup.append([create_close_button()])
+                markup.append([create_close_button()])
 
-        return InlineKeyboard(*reply_markup)
+        return InlineKeyboard(*markup)
     return reply_markup
 
-async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None):
-    markup = _prepare_markup(reply_markup, no_close, show_info, task_id)
+async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None, show_cancel=False):
+    markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
     msg = await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
     if msg: last_message_tracker.set_last(chat_id, msg.id)
     return msg
 
-async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False):
+async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False, show_cancel=False):
+    if not message: return None
     chat_id = message.chat.id
-    markup = _prepare_markup(reply_markup, no_close, show_info, task_id)
+    markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
 
     # If it's a photo message and we want to edit it, Balethon sometimes has issues if it's not the last message
     # or if we try to edit text into a photo message without edit_caption.

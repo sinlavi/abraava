@@ -10,6 +10,7 @@ from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY, FOOTER
 from core.logger import logger
 from core.http_client import HttpClient
 from balethon.objects import Message
+from utils.messages import edit_message
 
 
 class iTunesCache:
@@ -91,6 +92,7 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
         url = f"{base_url}{api_path}"
 
         headers = {"User-Agent": random.choice(USER_AGENTS)}
+        logger.info(f"iTunes Request [{method}]: {url} - Params: {params}")
         try:
             if method == "GET":
                 async with session.get(url, params=params, headers=headers, ssl=False, proxy=PROXY, timeout=10) as resp:
@@ -109,7 +111,7 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
             logger.error(f"iTunes fetch failed (attempt {attempt+1}): {e}")
             if not is_mirror: endpoint_manager.report_failure(base_url)
 
-        if not is_mirror: await asyncio.sleep(1)
+        if not is_mirror: await asyncio.sleep(0.5)
 
     return None
 
@@ -118,25 +120,29 @@ async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50
 
 async def lookup_itunes(id: int, entity: Optional[str] = None, bypass_cache: bool = False, status_msg: Message = None, status_text: str = None) -> Optional[Dict[str, Any]]:
     if status_msg and status_text:
-        try: await status_msg.edit(f"{status_text}{FOOTER}")
+        try: await edit_message(status_msg, status_text, show_cancel=True)
         except: pass
     return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache)
 
 async def set_mirror(entity_type: str, entity_id: str, url_type: str, mirror_url: str, quality: str = None) -> Optional[Dict[str, Any]]:
     payload = {"entityType": entity_type, "entityId": entity_id, "urlType": url_type, "mirrorUrl": mirror_url}
     if quality: payload["quality"] = quality
+    logger.info(f"Setting mirror: {entity_type} {entity_id} {url_type} -> {mirror_url} ({quality})")
     return await fetch_itunes("mirror/set", method="POST", payload=payload)
 
 async def get_mirror(entity_type: str, entity_id: str, url_type: str, quality: str = None) -> Optional[Dict[str, Any]]:
     params = {"entityType": entity_type, "entityId": entity_id, "urlType": url_type}
     if quality: params["quality"] = quality
+    logger.info(f"Checking mirror for {entity_type} {entity_id} {url_type} ({quality})")
     return await fetch_itunes("mirror/get", params=params)
 
 async def get_cached_audio(track_id: int, quality: str = None) -> Optional[str]:
     data = await get_mirror('track', str(track_id), 'audioUrl', quality=quality or "192")
     if data and data.get("mirrors", {}).get('audioUrl'):
         url = data["mirrors"]['audioUrl']['url']
+        logger.info(f"Cached audio found for {track_id}: {url}")
         return url.split('<token>/')[1] if '<token>' in url else url
+    logger.info(f"No cached audio for {track_id} with quality {quality or '192'}")
     return None
 
 async def get_cached_artwork(entity_type: str, entity_id: int) -> Optional[str]:

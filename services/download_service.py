@@ -54,6 +54,7 @@ class DownloadService:
         # Check cache
         audio_cache = await get_cached_audio(track_id, quality=quality_value)
         if audio_cache:
+            logger.info(f"Using cached audio for track {track_id} (quality: {quality_value}) -> {audio_cache}")
             try:
                 await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
                 markup = self._build_audio_markup(track_id)
@@ -80,6 +81,7 @@ class DownloadService:
             cover_bytes = await self.artwork_service.get_artwork_bytes(track.get('collectionId'), track.get('artworkUrl100'))
 
         await edit_message(status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*")
+        logger.info(f"Searching YouTube for track {track_id}: {track.get('trackName')} - {track.get('artistName')}")
         video_id = await search_youtube_track(track.get("trackName", ""), track.get("artistName", ""),
                                             track.get("collectionName", ""), track.get("releaseDate", "")[:4])
 
@@ -95,6 +97,7 @@ class DownloadService:
                     self.album_tracker.start_track(user_id, collection_id, track.get("trackName", ""))
 
                 await edit_message(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*")
+                logger.info(f"Downloading from YouTube: {video_url} with quality {quality_value}")
                 mp3_path = await download_audio(video_url, quality=quality_value)
                 if not mp3_path: raise Exception("Download failed")
 

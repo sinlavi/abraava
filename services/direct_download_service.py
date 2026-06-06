@@ -106,7 +106,7 @@ class DirectDownloadService:
 
                 from core.config import FOOTER
                 with open(mp3_path, 'rb') as f:
-                    await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard([create_close_button()]))
+                    await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard([[create_close_button()]]))
 
                 await status_msg.delete()
 

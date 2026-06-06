@@ -27,7 +27,7 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
             return
 
         caption = f"🎧 *پیش‌نمایش آهنگ {track.get('trackName')}*\n\n{FOOTER}"
-        reply_markup = InlineKeyboard([create_close_button()])
+        reply_markup = InlineKeyboard([[create_close_button()]])
 
         # Attempt 1: From Cache (mirror)
         preview_cache = await get_cached_preview(track_id)

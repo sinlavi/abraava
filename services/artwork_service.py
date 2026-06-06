@@ -56,11 +56,15 @@ class ArtworkService:
                                        artwork_url: Optional[str] = None,
                                        user_id: Optional[int] = None,
                                        entity_name: str = None) -> Optional[Union[str, bytes]]:
+        logger.info(f"Retrieving artwork for {entity_type} {entity_id} ({entity_name}) for user {user_id}")
         settings = await self.user_settings_service.get_settings(user_id)
-        if not settings.show_artwork: return None
+        if not settings.show_artwork:
+            logger.info(f"Artwork display is disabled for user {user_id}")
+            return None
 
         cached_file_id = await self.get_cached_artwork_url(entity_type, entity_id)
         if cached_file_id and not self._in_auto_download(user_id):
+            logger.info(f"Using cached artwork file_id: {cached_file_id}")
             return cached_file_id
 
         # Fallback for artist artwork from YouTube Music
