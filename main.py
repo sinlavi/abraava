@@ -95,9 +95,11 @@ async def on_message(message: Message):
             for ch in missing:
                 name = ch.get('channel_name', ch.get('channel_username', ch.get('channel_id')))
                 link = ch.get('invite_link', '')
-                if link: markup_rows.append([InlineKeyboardButton(text=f"📢 {name}", url=link)])
-                else: channels_text += f"\n\n🔸 {name}"
-            await send_message(bot, chat_id, channels_text, reply_markup=markup_rows)
+                if link:
+                    markup_rows.append([InlineKeyboardButton(text=f"📢 عضویت در {name}", url=link)])
+                else:
+                    channels_text += f"\n\n🔸 {name}"
+            await send_message(bot, chat_id, channels_text, reply_markup=InlineKeyboard(*markup_rows) if markup_rows else None)
             return
 
     if text.startswith("/start"):

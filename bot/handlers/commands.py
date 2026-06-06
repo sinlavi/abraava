@@ -8,11 +8,11 @@ async def start_command(bot: Client, message: Message):
     welcome_text = (
         f"🎵 *به ربات موسیقی {BOT_NAME} خوش آمدید*\n\n"
         f"من اینجام تا آهنگ‌های مورد علاقت رو برات پیدا کنم و بفرستم.\n"
-        f"فقط کافیه اسم آهنگ رو بگی، خودم بلدم چیکار کنم 😉\n\n"
-        f"🆘 راهنما: /help"
+        f"فقط کافیه اسم آهنگ رو بگی، خودم بلدم چیکار کنم 😉"
     )
 
     markup = []
+    markup.append([InlineKeyboardButton(text="🆘 راهنما", callback_data="help_cmd")])
     if INFO_CHANNEL_ID:
         markup.append([create_info_channel_button()])
 
@@ -22,7 +22,7 @@ async def start_command(bot: Client, message: Message):
 
     await send_message(bot, message.chat.id, welcome_text, reply_markup=InlineKeyboard(*markup) if markup else None)
 
-async def help_command(bot: Client, message: Message):
+async def help_command(bot: Client, message: Message, is_callback=False):
     is_group = message.chat.type in ["group", "supergroup"]
     if is_group:
         help_text = (
@@ -41,20 +41,23 @@ async def help_command(bot: Client, message: Message):
             "🔍 *روش‌های جستجو:*\n"
             "۱. *جستجوی مستقیم:* کافیست نام آهنگ را بنویسید و ارسال کنید.\n"
             "۲. *استفاده از دستورات:* برای دقت بیشتر از دستورات زیر استفاده کنید:\n"
-            "   🔹 ```/track [نام آهنگ]```\n"
-            "   🔹 ```/album [نام آلبوم]```\n"
-            "   🔹 ```/artist [نام هنرمند]```\n"
-            "   🔹 ```/ytm [نام آهنگ]``` - جستجو در یوتیوب موزیک\n"
-            "   🔹 ```/sc [نام آهنگ]``` - جستجو در ساندکلاد\n"
-            "   🔹 ```/sp [نام آهنگ]``` - جستجو در اسپاتیفای\n"
-            "   🔹 ```/itunes [نام آهنگ]``` - جستجو در آیتیونز رسمی\n\n"
+            "🔹 ```/track [نام آهنگ]```\n"
+            "🔹 ```/album [نام آلبوم]```\n"
+            "🔹 ```/artist [نام هنرمند]```\n"
+            "🔹 ```/ytm [نام آهنگ]``` - جستجو در یوتیوب موزیک\n"
+            "🔹 ```/sc [نام آهنگ]``` - جستجو در ساندکلاد\n"
+            "🔹 ```/sp [نام آهنگ]``` - جستجو در اسپاتیفای\n"
+            "🔹 ```/itunes [نام آهنگ]``` - جستجو در آیتیونز رسمی\n\n"
             "⚡ *قابلیت‌های کاربردی:*\n"
             "🔹 ```/quick [نام آهنگ]``` - دانلود فوری با بهترین کیفیت\n"
             "🔹 *لینک مستقیم:* ارسال لینک YouTube Music یا Apple Music جهت دانلود مستقیم.\n\n"
             "⚙️ *بخش تنظیمات:* با دستور /settings می‌توانید کیفیت دانلود، نمایش کاور و حالت دانلود خودکار را مدیریت کنید.\n"
             "📊 *آمار من:* با دستور /stats سهمیه باقی‌مانده و گزارش فعالیت خود را مشاهده کنید."
         )
-    await send_message(bot, message.chat.id, help_text)
+    if is_callback:
+        await edit_message(message, help_text)
+    else:
+        await send_message(bot, message.chat.id, help_text)
 
 async def about_command(bot: Client, message: Message):
     about_text = (

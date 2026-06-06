@@ -67,6 +67,18 @@ class TaggingService:
             if track_data.get('recordLabel'):
                 audio.add(TPUB(encoding=3, text=track_data['recordLabel']))
 
+            # Add hashtags to comment
+            hashtags = []
+            if track_data.get('primaryGenreName'):
+                hashtags.append(f"#{track_data['primaryGenreName'].replace(' ', '_')}")
+            if track_data.get('artistName'):
+                from crawlers.utils import format_artist_hashtag
+                hashtags.append(format_artist_hashtag(track_data['artistName']))
+
+            if hashtags:
+                comment_text = " ".join(hashtags)
+                audio.add(COMM(encoding=3, lang='eng', desc='desc', text=comment_text))
+
             # Add cover art
             if cover_bytes:
                 audio.add(APIC(

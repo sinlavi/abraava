@@ -36,7 +36,7 @@ class DownloadService:
         if status_msg is None:
             prefix = f"({track_index}) " if track_index else ""
             hint = f" {track_name_hint}" if track_name_hint else ""
-            status_msg = await send_message(self.bot, chat_id, f"⏳ *{prefix}در حال آماده‌سازی دانلود{hint}...*")
+            status_msg = await send_message(self.bot, chat_id, f"⏳ *{prefix}در حال آماده‌سازی دانلود{hint}...*", show_cancel=True)
 
         track_data = await get_track(track_id, status_msg)
         if not track_data or not track_data.get("results"):
@@ -96,7 +96,7 @@ class DownloadService:
                 if collection_id:
                     self.album_tracker.start_track(user_id, collection_id, track.get("trackName", ""))
 
-                await edit_message(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*")
+                await edit_message(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*", show_cancel=True)
                 logger.info(f"Downloading from YouTube: {video_url} with quality {quality_value}")
                 mp3_path = await download_audio(video_url, quality=quality_value)
                 if not mp3_path: raise Exception("Download failed")
@@ -109,7 +109,7 @@ class DownloadService:
                 markup = self._build_audio_markup(track_id)
                 with open(mp3_path, 'rb') as f:
                     msg = await self.bot.send_audio(chat_id, audio=f, caption=caption, reply_markup=InlineKeyboard(*markup))
-                    if msg and track_id:
+                    if msg and track_id and not str(track_id).startswith(("yt_", "sc_", "sp_")):
                         await set_mirror('track', str(track_id), 'audioUrl',
                                          f'https://tapi.bale.ai/file/bot<token>/{msg.audio.id}',
                                          quality=quality_value)
@@ -123,7 +123,8 @@ class DownloadService:
                 await status_msg.delete()
         except Exception as e:
             logger.error(f"Download error: {e}")
-            await edit_message(status_msg, "خطا در دانلود.")
+            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}")]]
+            await edit_message(status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}", reply_markup=InlineKeyboard(*retry_markup))
             cancel_cb = None
             if collection_id:
                 async def cancel_album(): self.album_tracker.cancel_download(user_id, collection_id)
@@ -134,31 +135,48 @@ class DownloadService:
 
     def _build_caption(self, track, quality_value):
         artist_id = track.get('artistId')
-        artist_name = track.get('artistName', 'Unknown')
-        artist_link = f"[{artist_name}]({generate_deep_link('artist', artist_id)})" if artist_id else artist_name
+        artist_name = track.get('artistName')
+        if artist_name:
+            artist_link = f"[{artist_name}]({generate_deep_link('artist', artist_id)})" if artist_id else artist_name
+        else:
+            artist_link = None
 
         coll_id = track.get('collectionId')
-        coll_name = track.get('collectionName', 'Unknown')
-        coll_link = f"[{coll_name}]({generate_deep_link('collection', coll_id)})" if coll_id else coll_name
+        coll_name = track.get('collectionName')
+        if coll_name:
+            coll_link = f"[{coll_name}]({generate_deep_link('collection', coll_id)})" if coll_id else coll_name
+        else:
+            coll_link = None
 
         track_name = track.get('trackName')
         track_url = track.get('trackViewUrl')
-        if track_url:
-            track_name_link = f"[{track_name}]({track_url})"
+        if track_name:
+            if track_url:
+                track_name_link = f"[{track_name}]({track_url})"
+            else:
+                track_name_link = track_name
         else:
-            track_name_link = track_name
+            track_name_link = None
+
+        duration_ms = track.get('trackTimeMillis', 0)
+        duration_text = format_duration(duration_ms) if duration_ms > 0 else None
 
         fields = {
             "🎵 نام آهنگ": track_name_link,
             "🎤 نام هنرمند": artist_link,
             "💿 نام آلبوم": coll_link,
-            "📅 سال انتشار": track.get('releaseDate', '')[:4],
+            "📅 سال انتشار": str(track.get('releaseDate', ''))[:4] if track.get('releaseDate') else None,
             "🎸 سبک": track.get('primaryGenreName'),
-            "⏱️ مدت زمان": format_duration(track.get('trackTimeMillis', 0)),
+            "⏱️ مدت زمان": duration_text,
             "📀 کیفیت دانلود": f"{quality_value} kbps"
         }
-        caption = "\n".join([f"{k}: {v}" for k, v in fields.items() if v and str(v).strip()])
-        return f"{caption}\n\n{FOOTER}"
+
+        caption_lines = []
+        for k, v in fields.items():
+            if v and str(v).strip() and "Unknown" not in str(v):
+                caption_lines.append(f"{k}: {v}")
+
+        return "\n".join(caption_lines) + f"\n\n{FOOTER}"
 
     def _build_audio_markup(self, track_id):
         return [

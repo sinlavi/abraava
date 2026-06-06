@@ -88,7 +88,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
             InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}artist_{artist_id}")
         ])
         markup_rows.append([
-            InlineKeyboardButton(text="🍎 مشاهده در اپل موزیک", url=itunes_url),
+            InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=itunes_url),
             InlineKeyboardButton(text="🔍 جستجوی آهنگ‌ها", callback_data=f"refine:track:{artist_name}")
         ])
 
@@ -189,7 +189,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
             InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}collection_{collection_id}")
         ])
         markup_rows.append([
-            InlineKeyboardButton(text="🍎 مشاهده در اپل موزیک", url=itunes_url),
+            InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=itunes_url),
             InlineKeyboardButton(text="🎤 آثار دیگر هنرمند", callback_data=f"artist:{artist_id}")
         ])
 
@@ -264,7 +264,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         itunes_url = track.get('trackViewUrl') or track.get('viewUrl') or f"https://music.apple.com/song/{track_id}"
         markup_rows.append([
             InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}track_{track_id}"),
-            InlineKeyboardButton(text="🍎 اپل موزیک", url=itunes_url)
+            InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=itunes_url)
         ])
 
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))

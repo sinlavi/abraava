@@ -15,15 +15,15 @@ from balethon.objects import InlineKeyboard
 async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None):
     status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*")
     try:
-        track_data = await get_track(track_id)
+        track_data = await get_track(track_id, status_msg=status_msg)
         if not track_data or not track_data.get("results"):
-            await edit_message(status_msg, "اطلاعات آهنگ یافت نشد.")
+            await edit_message(status_msg, "اطلاعات آهنگ یافت نشد.", show_cancel=True)
             return
 
         track = track_data["results"][0]
         preview_url = track.get("previewUrl")
         if not preview_url:
-            await edit_message(status_msg, "پیش‌نمایشی موجود نیست.")
+            await edit_message(status_msg, "پیش‌نمایشی موجود نیست.", show_cancel=True)
             return
 
         caption = f"🎧 *پیش‌نمایش آهنگ {track.get('trackName')}*\n\n{FOOTER}"
@@ -50,7 +50,7 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
                     await set_mirror('track', str(track_id), 'previewUrl', f'https://tapi.bale.ai/file/bot<token>/{msg.voice.id}')
                 await status_msg.delete()
             else:
-                await edit_message(status_msg, "دریافت پیش‌نمایش با خطا مواجه شد.")
+                await edit_message(status_msg, "دریافت پیش‌نمایش با خطا مواجه شد.", show_cancel=True)
     except Exception as e:
         logger.error(f"Failed to send preview: {e}")
-        await edit_message(status_msg, f"خطا: {str(e)[:50]}")
+        await edit_message(status_msg, f"خطا: {str(e)[:50]}", show_cancel=True)

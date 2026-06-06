@@ -108,7 +108,7 @@ class DirectDownloadService:
             return
 
         text = f"🎵 *اطلاعات یافت شده:*\n\n"
-        text += f"🎵 *نام آهنگ:* {meta['title']}\n"
+        text += f"🎵 *نام آهنگ:* [{meta['title']}]({url})\n"
         text += f"🎤 *نام هنرمند:* {meta['uploader']}\n"
         if meta['album']: text += f"💿 *نام آلبوم:* {meta['album']}\n"
         if meta['duration']:
@@ -170,26 +170,35 @@ class DirectDownloadService:
                     continue
 
             if success and mp3_path:
-                await edit_message(status_msg, "☁️ *در حال آماده‌سازی فایل...*")
+                await edit_message(status_msg, "☁️ *در حال آماده‌سازی فایل...*", show_cancel=True)
                 self.tagging_service.tag_mp3(mp3_path, track_data)
 
                 track_name = track_data['trackName']
                 if url:
                     track_name = f"[{track_name}]({url})"
 
-                caption = f"🎵 *نام آهنگ:* {track_name}\n"
-                caption += f"🎤 *نام هنرمند:* {track_data['artistName']}\n"
-                if track_data['collectionName']: caption += f"💿 *نام آلبوم:* {track_data['collectionName']}\n"
-                caption += f"📀 *کیفیت دانلود:* {quality} kbps"
+                fields = {
+                    "🎵 نام آهنگ": track_name,
+                    "🎤 نام هنرمند": track_data.get('artistName'),
+                    "💿 نام آلبوم": track_data.get('collectionName'),
+                    "📀 کیفیت دانلود": f"{quality} kbps"
+                }
+
+                caption_lines = []
+                for k, v in fields.items():
+                    if v and str(v).strip() and "Unknown" not in str(v):
+                        caption_lines.append(f"{k}: {v}")
+
+                caption = "\n".join(caption_lines)
 
                 with open(mp3_path, 'rb') as f:
                     await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard([[create_close_button()]]))
                 await status_msg.delete()
             else:
-                await edit_message(status_msg, "❌ دانلود با خطا مواجه شد.")
+                await edit_message(status_msg, "❌ دانلود با خطا مواجه شد.", show_cancel=True)
 
         except Exception as e:
             logger.error(f"Direct download service error: {e}")
-            await edit_message(status_msg, f"❌ خطا: {str(e)[:50]}")
+            await edit_message(status_msg, f"❌ خطا: {str(e)[:50]}", show_cancel=True)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
