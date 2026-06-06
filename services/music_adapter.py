@@ -229,18 +229,21 @@ class MusicAdapter:
 
     async def get_sc_track(self, sc_id: str) -> Optional[Dict[str, Any]]:
         # For SoundCloud we might have a numeric ID or a URL slug.
-        # Since we use yt-dlp for search, we get the full info there.
-        # If we only have the ID, we try to use it with a generic SC URL if it looks like one.
-        # However, yt-dlp usually prefers the full URL.
-        ydl_opts = {'quiet': True}
+        # yt-dlp needs the full URL or a specific format.
+        ydl_opts = {'quiet': True, 'no_check_certificate': True}
         loop = asyncio.get_event_loop()
         try:
-            # If it's already a URL, use it. Otherwise, we might be in trouble without the slug.
-            # In our search, we store the full URL in the direct links cache.
-            # But here we need to return the metadata.
             if sc_id.startswith("sc_"): sc_id = sc_id[3:]
 
-            url = sc_id if sc_id.startswith("http") else f"https://soundcloud.com/{sc_id}"
+            # If it's a numeric ID, we can use sc_track:<id>
+            # If it's a URL or slug, we use it directly
+            if sc_id.isdigit():
+                url = f"https://api.soundcloud.com/tracks/{sc_id}"
+            elif sc_id.startswith("http"):
+                url = sc_id
+            else:
+                # If it's just a slug (user/title), prepend soundcloud.com
+                url = f"https://soundcloud.com/{sc_id}"
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))

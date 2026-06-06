@@ -82,7 +82,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
             pagination = create_pagination_row(f"artist:{artist_id}", page, total_pages)
             if pagination: markup_rows.append(pagination)
 
-        itunes_url = artist.get('artistLinkUrl') or f"https://music.apple.com/artist/{artist_id}"
+        itunes_url = artist.get('artistLinkUrl') or artist.get('artistViewUrl') or f"https://music.apple.com/artist/{artist_id}"
         markup_rows.append([
             InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:artist:{artist_id}"),
             InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}artist_{artist_id}")
@@ -183,7 +183,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         if artist_id:
             markup_rows.append([InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}")])
 
-        itunes_url = coll.get('collectionViewUrl') or f"https://music.apple.com/album/{collection_id}"
+        itunes_url = coll.get('collectionViewUrl') or coll.get('viewUrl') or f"https://music.apple.com/album/{collection_id}"
         markup_rows.append([
             InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:collection:{collection_id}"),
             InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}collection_{collection_id}")
@@ -261,7 +261,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         if artist_id: links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}"))
         if links: markup_rows.append(links)
 
-        itunes_url = track.get('trackViewUrl') or f"https://music.apple.com/song/{track_id}"
+        itunes_url = track.get('trackViewUrl') or track.get('viewUrl') or f"https://music.apple.com/song/{track_id}"
         markup_rows.append([
             InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}track_{track_id}"),
             InlineKeyboardButton(text="🍎 اپل موزیک", url=itunes_url)
