@@ -74,22 +74,22 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
                     if is_single:
                         btn_text = f"\u200e{i}. {name[:35]}{year_str} 🎵"
                         item_id = coll.get('collectionId') or coll.get('trackId')
-                        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"single_album:{item_id}")])
+                        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"single_album:{item_id}:u{owner_id}")])
                     else:
                         btn_text = f"\u200e{i}. {name[:35]}{year_str} 📀"
-                        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"collection:{coll['collectionId']}")])
+                        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"collection:{coll['collectionId']}:u{owner_id}")])
 
-            pagination = create_pagination_row(f"artist:{artist_id}", page, total_pages)
+            pagination = create_pagination_row(f"artist:{artist_id}", page, total_pages, user_id=owner_id)
             if pagination: markup_rows.append(pagination)
 
         itunes_url = artist.get('artistLinkUrl') or artist.get('artistViewUrl') or f"https://music.apple.com/artist/{artist_id}"
         markup_rows.append([
-            InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:artist:{artist_id}"),
+            InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:artist:{artist_id}:u{owner_id}"),
             InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}artist_{artist_id}")
         ])
         markup_rows.append([
             InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=itunes_url),
-            InlineKeyboardButton(text="🔍 جستجوی آهنگ‌ها", callback_data=f"refine:track:{artist_name}")
+            InlineKeyboardButton(text="🔍 جستجوی آهنگ‌ها", callback_data=f"refine:track:{artist_name}:u{owner_id}")
         ])
 
         if is_pagination and message_to_edit:
@@ -105,7 +105,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
     except Exception as e:
         logger.error(f"Error in show_artist_page: {e}")
-        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"artist:{artist_id}:1")]]
+        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"artist:{artist_id}:1:u{owner_id}")]]
         if status_msg: await edit_message(status_msg, f"خطا در نمایش صفحه هنرمند: {e}", reply_markup=retry_markup)
         else: await send_message(bot, chat_id, f"خطا در نمایش صفحه هنرمند: {e}", reply_markup=retry_markup)
 
@@ -171,26 +171,26 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
 
                 if track.get('wrapperType') == 'track':
                     btn_text = f"\u200e{track_num}. {track_name[:35]} 🎵"
-                    markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"track:{track['trackId']}")])
+                    markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"track:{track['trackId']}:u{owner_id}")])
 
-            pagination = create_pagination_row(f"collection:{collection_id}", page, total_pages)
+            pagination = create_pagination_row(f"collection:{collection_id}", page, total_pages, user_id=owner_id)
             if pagination: markup_rows.append(pagination)
 
             is_private = (await bot.get_chat(chat_id)).type not in ["group", "supergroup"]
             if is_private:
-                markup_rows.append([InlineKeyboardButton(text="⬇️ دانلود کل آلبوم", callback_data=f"download_album:{collection_id}")])
+                markup_rows.append([InlineKeyboardButton(text="⬇️ دانلود کل آلبوم", callback_data=f"download_album:{collection_id}:u{owner_id}")])
 
         if artist_id:
-            markup_rows.append([InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}")])
+            markup_rows.append([InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}:u{owner_id}")])
 
         itunes_url = coll.get('collectionViewUrl') or coll.get('viewUrl') or f"https://music.apple.com/album/{collection_id}"
         markup_rows.append([
-            InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:collection:{collection_id}"),
+            InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:collection:{collection_id}:u{owner_id}"),
             InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}collection_{collection_id}")
         ])
         markup_rows.append([
             InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=itunes_url),
-            InlineKeyboardButton(text="🎤 آثار دیگر هنرمند", callback_data=f"artist:{artist_id}")
+            InlineKeyboardButton(text="🎤 آثار دیگر هنرمند", callback_data=f"artist:{artist_id}:u{owner_id}")
         ])
 
         if is_pagination and message_to_edit:
@@ -207,7 +207,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
 
     except Exception as e:
         logger.error(f"Error in show_collection_page: {e}")
-        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"collection:{collection_id}:1")]]
+        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"collection:{collection_id}:1:u{owner_id}")]]
         if status_msg: await edit_message(status_msg, f"خطا در نمایش صفحه آلبوم: {e}", reply_markup=retry_markup)
         else: await send_message(bot, chat_id, f"خطا در نمایش صفحه آلبوم: {e}", reply_markup=retry_markup)
 
@@ -257,14 +257,14 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         if hashtags: text += f"\n{' '.join(hashtags)}\n"
 
         markup_rows = []
-        dl_btns = [InlineKeyboardButton(text="⬇️ دانلود", callback_data=f"download:{track_id}")]
+        dl_btns = [InlineKeyboardButton(text="⬇️ دانلود", callback_data=f"download:{track_id}:u{owner_id}")]
         if not is_sc and track.get("previewUrl"):
-            dl_btns.append(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}"))
+            dl_btns.append(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}:u{owner_id}"))
         markup_rows.append(dl_btns)
 
         links = []
-        if collection_id: links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{collection_id}"))
-        if artist_id: links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}"))
+        if collection_id: links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{collection_id}:u{owner_id}"))
+        if artist_id: links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}:u{owner_id}"))
         if links: markup_rows.append(links)
 
         itunes_url = track.get('trackViewUrl') or track.get('viewUrl') or f"https://music.apple.com/song/{track_id}"
@@ -277,7 +277,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         ])
 
         if is_external:
-            markup_rows.append([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
+            markup_rows.append([create_close_button(owner_id)])
 
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
 
@@ -308,6 +308,6 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
 
     except Exception as e:
         logger.error(f"Error in show_track_page: {e}")
-        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"track:{track_id}")]]
+        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"track:{track_id}:u{owner_id}")]]
         if status_msg: await edit_message(status_msg, f"خطا در نمایش صفحه آهنگ: {e}", reply_markup=retry_markup)
         else: await send_message(bot, chat_id, f"خطا در نمایش صفحه آهنگ: {e}", reply_markup=retry_markup)

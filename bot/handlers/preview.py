@@ -35,7 +35,7 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
             markup.append([InlineKeyboardButton(text="📋 کپی پیوند", copy_text=generate_deep_link("track", track_id))])
         if source_url:
             markup.append([InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=source_url)])
-        markup.append([create_close_button()])
+        markup.append([create_close_button(user_id)])
 
         reply_markup = InlineKeyboard(*markup)
 

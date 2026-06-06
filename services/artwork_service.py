@@ -121,8 +121,8 @@ class ArtworkService:
                     self.auto_download_mode[user_id] = time.time() + 900 # 15 mins
                     text = f"⚠️ *خطا در نمایش کاور*\nآیا مایلید مجدداً تلاش شود؟ (در صورت تایید کاور مستقیماً دانلود و آپلود می‌شود)"
                     retry_markup = [
-                        [InlineKeyboardButton(text="✅ بله، تلاش مجدد", callback_data=f"force_artwork:{entity_type}:{entity_id}:{caption[:30]}")],
-                        [InlineKeyboardButton(text="❌ خیر، بدون کاور بفرست", callback_data="close")]
+                        [InlineKeyboardButton(text="✅ بله، تلاش مجدد", callback_data=f"force_artwork:{entity_type}:{entity_id}:{caption[:30]}:u{user_id}")],
+                        [create_close_button(user_id)]
                     ]
                     await send_message(bot, chat_id, text, reply_markup=retry_markup)
                 return None

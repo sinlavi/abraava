@@ -11,8 +11,9 @@ async def start_command(bot: Client, message: Message):
         f"فقط کافیه اسم آهنگ رو بگی، خودم بلدم چیکار کنم 😉"
     )
 
+    user_id = message.author.id
     markup = []
-    markup.append([InlineKeyboardButton(text="🆘 راهنما", callback_data="help_cmd")])
+    markup.append([InlineKeyboardButton(text="🆘 راهنما", callback_data=f"help_cmd:u{user_id}")])
     if INFO_CHANNEL_ID:
         markup.append([create_info_channel_button()])
 

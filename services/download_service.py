@@ -59,7 +59,7 @@ class DownloadService:
             logger.info(f"Using cached audio for track {track_id} (quality: {quality_value}) -> {audio_cache}")
             try:
                 if created_status: await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
-                markup = self._build_audio_markup(track_id, track.get("trackViewUrl"))
+                markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
                 await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=InlineKeyboard(*markup))
                 if created_status: await status_msg.delete()
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
@@ -115,7 +115,7 @@ class DownloadService:
 
                 if created_status: await edit_message(status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*")
 
-                markup = self._build_audio_markup(track_id, track.get("trackViewUrl"))
+                markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
                 with open(mp3_path, 'rb') as f:
                     msg = await self.bot.send_audio(chat_id, audio=f, caption=caption, reply_markup=InlineKeyboard(*markup))
                     if msg and track_id and not str(track_id).startswith(("yt_", "sc_", "sp_", "it_")):
@@ -132,7 +132,7 @@ class DownloadService:
                 if created_status: await status_msg.delete()
         except Exception as e:
             logger.error(f"Download error: {e}")
-            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}")]]
+            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}:u{user_id}")]]
             await edit_message(status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}", reply_markup=InlineKeyboard(*retry_markup))
             cancel_cb = None
             if collection_id:
@@ -194,7 +194,7 @@ class DownloadService:
 
         return "\n".join(caption_lines) + f"\n\n{FOOTER}"
 
-    def _build_audio_markup(self, track_id, source_url=None):
+    def _build_audio_markup(self, track_id, source_url=None, user_id=None):
         source_url = source_url or f"https://player.abraava.ir?id={track_id}"
         is_external = str(track_id).startswith(("yt_", "sc_", "sp_"))
 
@@ -204,6 +204,6 @@ class DownloadService:
 
         markup.append([InlineKeyboardButton(text="📋 کپی پیوند", copy_text=generate_deep_link("track", track_id))])
         markup.append([InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=source_url)])
-        markup.append([InlineKeyboardButton(text="❌ بستن", callback_data="close")])
+        markup.append([create_close_button(user_id)])
 
         return markup

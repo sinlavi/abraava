@@ -29,6 +29,23 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     chat_id = callback_query.message.chat.id
     user_id = callback_query.author.id
 
+    # Ownership check
+    owner_id = None
+    new_parts = []
+    for part in parts:
+        if part.startswith("u") and part[1:].isdigit():
+            owner_id = int(part[1:])
+        else:
+            new_parts.append(part)
+
+    if owner_id and user_id != owner_id:
+        await bot.answer_callback_query(callback_query.id, text="⚠️ شما دسترسی به این پیام را ندارید. این پیام برای کاربر دیگری ساخته شده است.", show_alert=True)
+        return
+
+    # Use cleaned parts for the rest of the logic
+    parts = new_parts
+    data = ":".join(parts)
+
     if data == "close":
         try: await callback_query.message.delete()
         except: pass
@@ -47,25 +64,25 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     if data == "menu_quick_mode":
         current = (await user_settings_service.get_settings(user_id)).quick_mode
         await edit_message(callback_query.message, f"⚡ *تغییر حالت سریع*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
-                          reply_markup=get_confirmation_keyboard("quick_mode", not current))
+                          reply_markup=get_confirmation_keyboard("quick_mode", not current, user_id=user_id))
         return
 
     if data == "menu_artwork":
         current = (await user_settings_service.get_settings(user_id)).show_artwork
         await edit_message(callback_query.message, f"🖼️ *تغییر نمایش کاور*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
-                          reply_markup=get_confirmation_keyboard("show_artwork", not current))
+                          reply_markup=get_confirmation_keyboard("show_artwork", not current, user_id=user_id))
         return
 
     if data == "menu_auto_download":
         current = (await user_settings_service.get_settings(user_id)).auto_download
         await edit_message(callback_query.message, f"⚡ *تغییر دانلود خودکار*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
-                          reply_markup=get_confirmation_keyboard("auto_download", not current))
+                          reply_markup=get_confirmation_keyboard("auto_download", not current, user_id=user_id))
         return
 
     if data == "menu_notifications":
         current = (await user_settings_service.get_settings(user_id)).notifications
         await edit_message(callback_query.message, f"🔔 *تغییر اعلان‌ها*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
-                          reply_markup=get_confirmation_keyboard("notifications", not current))
+                          reply_markup=get_confirmation_keyboard("notifications", not current, user_id=user_id))
         return
 
     if data.startswith("confirm_dl:"):
@@ -94,7 +111,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     if data == "show_quality_menu":
         settings = await user_settings_service.get_settings(user_id)
         await edit_message(callback_query.message, "🎵 *کیفیت دانلود را انتخاب کنید:*",
-                          reply_markup=get_quality_keyboard(settings.download_quality))
+                          reply_markup=get_quality_keyboard(settings.download_quality, user_id=user_id))
         return
 
     if data.startswith("set_quality:"):
@@ -165,7 +182,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         link_id = parts[1]
         url = DIRECT_LINKS.get(link_id)
         if url:
-            await direct_download_service.ask_confirmation(chat_id, url)
+            await direct_download_service.ask_confirmation(chat_id, url, user_id=user_id)
         else:
             await bot.answer_callback_query(callback_query.id, text="❌ پیوند منقضی شده است", show_alert=True)
         try: await callback_query.message.delete()
@@ -187,10 +204,10 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         settings = await user_settings_service.get_settings(user_id)
         if settings.download_quality == DownloadQuality.ASK:
             markup = [
-                [InlineKeyboardButton(text="🎵 ۳۲۰ kbps", callback_data=f"dl_q:320:{track_id}")],
-                [InlineKeyboardButton(text="🎶 ۱۹۲ kbps", callback_data=f"dl_q:192:{track_id}")],
-                [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_q:128:{track_id}")],
-                [create_close_button()]
+                [InlineKeyboardButton(text="🎵 ۳۲۰ kbps", callback_data=f"dl_q:320:{track_id}:u{user_id}")],
+                [InlineKeyboardButton(text="🎶 ۱۹۲ kbps", callback_data=f"dl_q:192:{track_id}:u{user_id}")],
+                [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_q:128:{track_id}:u{user_id}")],
+                [create_close_button(user_id)]
             ]
             await send_message(bot, chat_id, "🎵 *کیفیت دانلود را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup))
         else:
@@ -216,10 +233,10 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         settings = await user_settings_service.get_settings(user_id)
         if settings.download_quality == DownloadQuality.ASK:
             markup = [
-                [InlineKeyboardButton(text="🎵 ۳۲۰ kbps", callback_data=f"dl_aq:320:{coll_id}")],
-                [InlineKeyboardButton(text="🎶 ۱۹۲ kbps", callback_data=f"dl_aq:192:{coll_id}")],
-                [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_aq:128:{coll_id}")],
-                [create_close_button()]
+                [InlineKeyboardButton(text="🎵 ۳۲۰ kbps", callback_data=f"dl_aq:320:{coll_id}:u{user_id}")],
+                [InlineKeyboardButton(text="🎶 ۱۹۲ kbps", callback_data=f"dl_aq:192:{coll_id}:u{user_id}")],
+                [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_aq:128:{coll_id}:u{user_id}")],
+                [create_close_button(user_id)]
             ]
             await send_message(bot, chat_id, "📀 *کیفیت دانلود آلبوم را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup))
         else:
@@ -248,11 +265,10 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
                 await asyncio.sleep(0.5)
 
     elif data.startswith("cancel_album:"):
-        owner_id_from_cb, coll_id = int(parts[1]), parts[2]
+        coll_id = parts[1]
         if coll_id.isdigit(): coll_id = int(coll_id)
-        if user_id == owner_id_from_cb:
-            download_service.album_tracker.cancel_download(user_id, coll_id)
-            await bot.answer_callback_query(callback_query.id, text="⏹️ توقف دانلود...")
+        download_service.album_tracker.cancel_download(user_id, coll_id)
+        await bot.answer_callback_query(callback_query.id, text="⏹️ توقف دانلود...")
 
     elif data.startswith("force_artwork:"):
         # Logic to force download/upload artwork
