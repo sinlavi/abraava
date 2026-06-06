@@ -25,7 +25,7 @@ from bot.handlers.callbacks import handle_callback
 from bot.handlers.broadcast import process_broadcast_message
 from bot.handlers.details import show_track_page, show_collection_page, show_artist_page
 from utils.parser import parse_search_query
-from utils.messages import send_message
+from utils.messages import send_message, edit_message
 from utils.validation import is_valid_message
 
 import asyncio
