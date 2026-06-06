@@ -79,10 +79,16 @@ async def on_message(message: Message):
 
     is_group = message.chat.type in ["group", "supergroup"]
     if is_group:
-        bot_mention = f"@{bot.user.username}"
-        if bot_mention not in text: return
+        bot_username = bot.user.username
+        is_reply_to_bot = message.reply_to_message and message.reply_to_message.author.id == bot.user.id
+        is_mentioned = f"@{bot_username}" in text
+
+        if not (is_mentioned or is_reply_to_bot):
+            return
+
         if not is_valid_message(message): return
-        text = text.replace(bot_mention, "").strip()
+        text = re.sub(rf"@{re.escape(bot_username)}\s*", "", text).strip()
+
         if len(text) > 100:
             await message.reply("⚠️ *متن پیام خیلی طولانی است*\n\nحداکثر ۱۰۰ کاراکتر مجاز است.")
             return
