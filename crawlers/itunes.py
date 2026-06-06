@@ -10,6 +10,7 @@ from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY, FOOTER
 from core.logger import logger
 from core.http_client import HttpClient
 from balethon.objects import Message
+from utils.messages import edit_message
 
 
 class iTunesCache:
@@ -118,7 +119,7 @@ async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50
 
 async def lookup_itunes(id: int, entity: Optional[str] = None, bypass_cache: bool = False, status_msg: Message = None, status_text: str = None) -> Optional[Dict[str, Any]]:
     if status_msg and status_text:
-        try: await status_msg.edit(f"{status_text}{FOOTER}")
+        try: await edit_message(status_msg, status_text, show_cancel=True)
         except: pass
     return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache)
 

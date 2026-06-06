@@ -6,7 +6,7 @@ import logging
 
 logger = logging.getLogger("ABRAAVA:MESSAGES")
 
-def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None):
+def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_cancel=False):
     if reply_markup is None: reply_markup = []
     if isinstance(reply_markup, list):
         # Flatten and check for close button in all nested lists
@@ -20,6 +20,9 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None):
         if not no_close and not has_close:
             if task_id:
                 reply_markup.append([create_cancel_button(task_id)])
+            elif show_cancel:
+                from balethon.objects import InlineKeyboardButton
+                reply_markup.append([InlineKeyboardButton(text="⏹️ لغو عملیات", callback_data="close")])
             elif show_info:
                 reply_markup.append([create_info_channel_button()])
 
@@ -33,18 +36,19 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None):
             if not has_close_now:
                 reply_markup.append([create_close_button()])
 
-        return InlineKeyboard(*reply_markup)
+        return InlineKeyboard(reply_markup)
     return reply_markup
 
-async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None):
-    markup = _prepare_markup(reply_markup, no_close, show_info, task_id)
+async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None, show_cancel=False):
+    markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
     msg = await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
     if msg: last_message_tracker.set_last(chat_id, msg.id)
     return msg
 
-async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False):
+async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False, show_cancel=False):
+    if not message: return None
     chat_id = message.chat.id
-    markup = _prepare_markup(reply_markup, no_close, show_info, task_id)
+    markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
 
     # If it's a photo message and we want to edit it, Balethon sometimes has issues if it's not the last message
     # or if we try to edit text into a photo message without edit_caption.

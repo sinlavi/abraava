@@ -11,7 +11,7 @@ logger = logging.getLogger("ABRAAVA:DETAILS")
 
 async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False):
     if not is_pagination:
-        status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*")
+        status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*", show_cancel=True)
     else:
         status_msg = None
     try:
@@ -72,7 +72,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         itunes_url = artist.get('artistLinkUrl') or f"https://music.apple.com/artist/{artist_id}"
         markup_rows.append([
             InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:artist:{artist_id}"),
-            InlineKeyboardButton(text="🔗 کپی لینک", url=f"ble://share/url?url={DEEP_LINK_BASE}artist_{artist_id}")
+            InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}artist_{artist_id}")
         ])
         markup_rows.append([
             InlineKeyboardButton(text="🍎 مشاهده در اپل موزیک", url=itunes_url),
@@ -98,7 +98,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
 async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False):
     if not is_pagination:
-        status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*")
+        status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*", show_cancel=True)
     else:
         status_msg = None
     try:
@@ -160,7 +160,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         itunes_url = coll.get('collectionViewUrl') or f"https://music.apple.com/album/{collection_id}"
         markup_rows.append([
             InlineKeyboardButton(text="🔄 تازه‌سازی", callback_data=f"recrawl:collection:{collection_id}"),
-            InlineKeyboardButton(text="🔗 کپی لینک", url=f"ble://share/url?url={DEEP_LINK_BASE}collection_{collection_id}")
+            InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}collection_{collection_id}")
         ])
         markup_rows.append([
             InlineKeyboardButton(text="🍎 مشاهده در اپل موزیک", url=itunes_url),
@@ -186,7 +186,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         else: await send_message(bot, chat_id, f"خطا در نمایش صفحه آلبوم: {e}", reply_markup=retry_markup)
 
 async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, message_to_edit=None):
-    status_msg = await send_message(bot, chat_id, "🔄 *در حال بارگذاری اطلاعات آهنگ...*")
+    status_msg = await send_message(bot, chat_id, "🔄 *در حال بارگذاری اطلاعات آهنگ...*", show_cancel=True)
     try:
         data = await get_track(track_id, status_msg)
         if not data or not data.get("results"):
@@ -231,7 +231,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
 
         itunes_url = track.get('trackViewUrl') or f"https://music.apple.com/song/{track_id}"
         markup_rows.append([
-            InlineKeyboardButton(text="🔗 کپی لینک", url=f"ble://share/url?url={DEEP_LINK_BASE}track_{track_id}"),
+            InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}track_{track_id}"),
             InlineKeyboardButton(text="🍎 اپل موزیک", url=itunes_url)
         ])
 

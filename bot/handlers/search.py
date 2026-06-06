@@ -1,5 +1,5 @@
 from balethon import Client
-from balethon.objects import Message
+from balethon.objects import Message, InlineKeyboardButton
 from core.logger import logger
 from utils.messages import send_message
 from crawlers.itunes import search_itunes
@@ -10,7 +10,7 @@ async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, ter
     type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ", "collection": "آلبوم"}
     logger.info(f"Search: {type_} - {term}")
 
-    status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجوی {type_fa_map.get(type_, type_)}: {term}...*")
+    status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجوی {type_fa_map.get(type_, type_)}: {term}...*", show_cancel=True)
 
     try:
         results = {}
@@ -37,7 +37,7 @@ async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, ter
 
 async def quick_search(bot: Client, chat_id: int, user_id: int, term: str,
                        api_client, user_settings_service, download_service):
-    status_msg = await send_message(bot, chat_id, f"⚡ *جستجوی سریع {term}...*")
+    status_msg = await send_message(bot, chat_id, f"⚡ *جستجوی سریع {term}...*", show_cancel=True)
     try:
         results = await search_itunes(term, entity="musicTrack", limit=1)
         if results and results.get("resultCount", 0) > 0:
@@ -54,8 +54,11 @@ async def quick_search(bot: Client, chat_id: int, user_id: int, term: str,
             await api_client.log_search(user_id, 'quick', term, 1)
             await status_msg.delete()
         else:
-            await send_message(bot, chat_id, "نتیجه‌ای یافت نشد.")
+            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}")]]
+            await send_message(bot, chat_id, "نتیجه‌ای یافت نشد.", reply_markup=retry_markup)
             await status_msg.delete()
     except Exception as e:
         logger.error(f"Quick search error: {e}")
+        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}")]]
+        await send_message(bot, chat_id, f"خطا در جستجوی سریع: {e}", reply_markup=retry_markup)
         await status_msg.delete()
