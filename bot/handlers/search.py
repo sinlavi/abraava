@@ -74,8 +74,9 @@ async def quick_search(bot: Client, chat_id: int, user_id: int, term: str,
         if results and int(results.get("resultCount") or 0) > 0:
             track = results["results"][0]
             track_id = track.get('trackId')
-            await download_service.download_and_send_track(chat_id, track_id, user_id, status_msg=status_msg)
+            await download_service.download_and_send_track(chat_id, track_id, user_id)
             await api_client.log_search(user_id, 'quick', term, 1)
+            await status_msg.delete()
         else:
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}:u{user_id}")]]
             await edit_message(status_msg, "نتیجه‌ای یافت نشد.", reply_markup=retry_markup, user_id=user_id)

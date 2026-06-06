@@ -11,14 +11,10 @@ from core.http_client import HttpClient
 from core.config import FOOTER
 from bot.keyboards import create_close_button
 
-async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None, message_to_edit=None):
-    if message_to_edit:
-        status_msg = await edit_message(message_to_edit, "⏳ *در حال دریافت پیش‌نمایش...*", user_id=user_id)
-    else:
-        status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*", user_id=user_id)
+async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None):
+    status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*", user_id=user_id)
     try:
-        res = await get_track(track_id, status_msg=status_msg)
-        track_data, status_msg = (res[0], res[1]) if isinstance(res, tuple) else (res, status_msg)
+        track_data = await get_track(track_id, status_msg=status_msg)
         if not track_data or not track_data.get("results"):
             await edit_message(status_msg, "اطلاعات آهنگ یافت نشد.", show_cancel=True, user_id=user_id)
             return
