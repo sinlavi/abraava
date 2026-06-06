@@ -69,7 +69,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
                         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"single_album:{item_id}")])
                     else:
                         btn_text = f"\u200e{i}. {name[:35]}{year_str} 📀"
-                        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"collection:{coll['collectionId']}:1")])
+                        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"collection:{coll['collectionId']}")])
 
             pagination = create_pagination_row(f"artist:{artist_id}", page, total_pages)
             if pagination: markup_rows.append(pagination)
@@ -122,8 +122,9 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         release_date = coll.get('releaseDate', 'نامشخص')[:10]
         artist_name = coll.get('artistName', 'نامشخص')
         artist_id = coll.get('artistId')
+        collection_id = coll.get('collectionId')
 
-        text = f"📀 *نام آلبوم:* {coll.get('collectionName', 'نامشخص')}\n"
+        text = f"📀 *نام آلبوم:* [{coll.get('collectionName', 'نامشخص')}]({generate_deep_link('collection', collection_id)})\n"
         if artist_id: text += f"🎤 *نام هنرمند:* [{artist_name}]({generate_deep_link('artist', artist_id)})\n"
         else: text += f"🎤 *نام هنرمند:* {artist_name}\n"
 
@@ -149,7 +150,11 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
                 track_num = track.get('trackNumber', i)
                 duration = format_duration(track.get('trackTimeMillis', 0))
                 track_name = track.get('trackName', 'نامشخص')
-                text += f"\u200e{track_num}. {track_name} ({duration}) 🎵\n"
+                track_id = track.get('trackId')
+                if track_id:
+                    text += f"\u200e{track_num}. [{track_name}]({generate_deep_link('track', track_id)}) ({duration}) 🎵\n"
+                else:
+                    text += f"\u200e{track_num}. {track_name} ({duration}) 🎵\n"
 
                 if track.get('wrapperType') == 'track':
                     btn_text = f"\u200e{track_num}. {track_name[:35]} 🎵"
@@ -208,8 +213,9 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         artist_id = track.get('artistId')
         collection_id = track.get('collectionId')
         collection_name = track.get('collectionName', 'نامشخص')
+        track_name = track.get('trackName', 'نامشخص')
 
-        text = f"🎵 *نام آهنگ:* {track.get('trackName', 'نامشخص')}\n"
+        text = f"🎵 *نام آهنگ:* [{track_name}]({generate_deep_link('track', track_id)})\n"
         if artist_id: text += f"🎤 *نام هنرمند:* [{artist_name}]({generate_deep_link('artist', artist_id)})\n"
         else: text += f"🎤 *نام هنرمند:* {artist_name}\n"
 

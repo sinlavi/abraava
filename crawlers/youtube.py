@@ -394,21 +394,37 @@ def _sync_search_youtube(t_name: str, a_name: str, collection_name: str, ye: str
 
 
 def get_artist_image(artist_name):
-    """Get artist image - unchanged"""
+    """Get artist image from YTMusic with improved error handling"""
     global YT
     if YT is None:
-        YT = YTMusic()
+        try:
+            YT = YTMusic()
+        except Exception as e:
+            logger.error(f"Failed to initialize YTMusic: {e}")
+            return None
+
     try:
         search_results = YT.search(artist_name, filter="artists", limit=1)
-    except Exception as e:
-        logger.error(f"YTMusic search error: {e}")
-        return None
-    if search_results:
-        artist_id = search_results[0]['browseId']
+        if not search_results or not isinstance(search_results, list):
+            return None
+
+        artist_id = search_results[0].get('browseId')
+        if not artist_id:
+            return None
+
         artist_info = YT.get_artist(artist_id)
-        if 'thumbnails' in artist_info:
-            highest_quality = artist_info['thumbnails'][0]['url']
-            return highest_quality
+        if not artist_info or not isinstance(artist_info, dict):
+            return None
+
+        thumbnails = artist_info.get('thumbnails')
+        if thumbnails and isinstance(thumbnails, list) and len(thumbnails) > 0:
+            # thumbnails are usually sorted by size, but we'll try to find the one with highest resolution
+            # or just take the first one which is standard for get_artist
+            return thumbnails[-1].get('url')
+
+    except Exception as e:
+        logger.error(f"YTMusic get_artist_image error for '{artist_name}': {e}")
+
     return None
 
 

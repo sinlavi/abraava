@@ -18,16 +18,16 @@ def create_pagination_row(callback_prefix: str, current_page: int, total_pages: 
     if total_pages <= 1: return []
     buttons = []
 
-    # Following RTL flow: [First ⏮️] [Prev ▶️] [Page] [Next ◀️] [Last ⏭️]
+    # Following RTL flow: [First ⏭️] [Prev ▶️] [Page] [Next ◀️] [Last ⏮️]
     if current_page > 1:
-        buttons.append(InlineKeyboardButton(text="⏮️", callback_data=f"{callback_prefix}:1"))
+        buttons.append(InlineKeyboardButton(text="⏭️", callback_data=f"{callback_prefix}:1"))
         buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"{callback_prefix}:{current_page - 1}"))
 
     buttons.append(InlineKeyboardButton(text=f"{current_page} از {total_pages}", callback_data="ignore"))
 
     if current_page < total_pages:
         buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"{callback_prefix}:{current_page + 1}"))
-        buttons.append(InlineKeyboardButton(text="⏭️", callback_data=f"{callback_prefix}:{total_pages}"))
+        buttons.append(InlineKeyboardButton(text="⏮️", callback_data=f"{callback_prefix}:{total_pages}"))
 
     return buttons
 
