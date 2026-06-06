@@ -134,27 +134,25 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         artist_id = parts[1]
         if artist_id.isdigit(): artist_id = int(artist_id)
         page = int(parts[2]) if len(parts) > 2 else 1
-        is_pag = (len(parts) > 2 and parts[2].isdigit()) # Only True if it's explicitly a page click
-        msg_to_edit = callback_query.message if is_pag else None
-        await show_artist_page(bot, chat_id, artist_id, page, artwork_service, user_id, msg_to_edit, is_pagination=is_pag)
+        await show_artist_page(bot, chat_id, artist_id, page, artwork_service, user_id, callback_query.message)
     elif data.startswith("collection:"):
         coll_id = parts[1]
         if coll_id.isdigit(): coll_id = int(coll_id)
         page = int(parts[2]) if len(parts) > 2 else 1
-        is_pag = (len(parts) > 2 and parts[2].isdigit()) # Only True if it's explicitly a page click
-        msg_to_edit = callback_query.message if is_pag else None
-        await show_collection_page(bot, chat_id, coll_id, page, artwork_service, user_id, msg_to_edit, is_pagination=is_pag)
+        await show_collection_page(bot, chat_id, coll_id, page, artwork_service, user_id, callback_query.message)
     elif data.startswith("track:"):
         track_id = parts[1]
         if track_id.isdigit(): track_id = int(track_id)
-        await show_track_page(bot, chat_id, track_id, artwork_service, user_id)
+        await show_track_page(bot, chat_id, track_id, artwork_service, user_id, message_to_edit=callback_query.message)
     elif data.startswith("single_album:"):
         coll_id = parts[1]
         if coll_id.isdigit(): coll_id = int(coll_id)
-        tracks_data = await crawlers.utils.get_or_crawl_collection_tracks(coll_id)
+        status_msg = await edit_message(callback_query.message, "⏳ *در حال دریافت اطلاعات آهنگ‌های آلبوم...*", user_id=user_id)
+        res = await crawlers.utils.get_or_crawl_collection_tracks(coll_id, status_msg=status_msg)
+        tracks_data, status_msg = (res[0], res[1]) if isinstance(res, tuple) else (res, status_msg)
         if tracks_data and tracks_data.get("results"):
             track_id = tracks_data["results"][0].get("trackId")
-            if track_id: await show_track_page(bot, chat_id, track_id, artwork_service, user_id)
+            if track_id: await show_track_page(bot, chat_id, track_id, artwork_service, user_id, message_to_edit=status_msg)
             else: await bot.answer_callback_query(callback_query.id, text="❌ خطایی رخ داد", show_alert=True)
     elif data.startswith("recrawl:"):
         type_, eid = parts[1], parts[2]
@@ -206,24 +204,22 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
                 [InlineKeyboardButton(text="🎶 ۱۹۲ kbps", callback_data=f"dl_q:192:{track_id}:u{user_id}")],
                 [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_q:128:{track_id}:u{user_id}")]
             ]
-            await send_message(bot, chat_id, "🎵 *کیفیت دانلود را انتخاب کنید:*", reply_markup=markup, user_id=user_id)
+            await edit_message(callback_query.message, "🎵 *کیفیت دانلود را انتخاب کنید:*", reply_markup=markup, user_id=user_id)
         else:
             await bot.answer_callback_query(callback_query.id, text="⏳ در حال آماده‌سازی...")
-            await download_service.download_and_send_track(chat_id, track_id, user_id)
+            await download_service.download_and_send_track(chat_id, track_id, user_id, status_msg=callback_query.message)
 
     elif data.startswith("dl_q:"):
         quality, track_id = parts[1], parts[2]
         if track_id.isdigit(): track_id = int(track_id)
         await bot.answer_callback_query(callback_query.id, text=f"⏳ دانلود با کیفیت {quality}...")
-        try: await callback_query.message.delete()
-        except: pass
-        await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality)
+        await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality, status_msg=callback_query.message)
 
     elif data.startswith("preview:"):
         track_id = parts[1]
         if track_id.isdigit(): track_id = int(track_id)
         await bot.answer_callback_query(callback_query.id, text="⏳ در حال دریافت...")
-        asyncio.create_task(send_voice_preview(bot, chat_id, track_id, user_id))
+        asyncio.create_task(send_voice_preview(bot, chat_id, track_id, user_id, message_to_edit=callback_query.message))
     elif data.startswith("download_album:"):
         coll_id = parts[1]
         if coll_id.isdigit(): coll_id = int(coll_id)

@@ -13,8 +13,7 @@ logger = logging.getLogger("ABRAAVA:DETAILS")
 async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False):
     if not is_pagination:
         if message_to_edit:
-            status_msg = message_to_edit
-            await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات هنرمند...*", user_id=owner_id)
+            status_msg = await edit_message(message_to_edit, "🔄 *در حال پردازش اطلاعات هنرمند...*", user_id=owner_id)
         else:
             status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*", show_cancel=True, user_id=owner_id)
     else:
@@ -24,7 +23,10 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         artist_task = asyncio.create_task(get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force))
         collections_task = asyncio.create_task(get_or_crawl_artist_collections(artist_id))
 
-        artist_data, collections_data = await asyncio.gather(artist_task, collections_task)
+        artist_res, collections_res = await asyncio.gather(artist_task, collections_task)
+
+        artist_data, status_msg = (artist_res[0], artist_res[1]) if isinstance(artist_res, tuple) else (artist_res, status_msg)
+        collections_data, _ = (collections_res[0], collections_res[1]) if isinstance(collections_res, tuple) else (collections_res, None)
 
         if not artist_data or not artist_data.get('results'):
             await edit_message(status_msg, "هنرمند مورد نظر یافت نشد.", user_id=owner_id)
@@ -112,8 +114,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False):
     if not is_pagination:
         if message_to_edit:
-            status_msg = message_to_edit
-            await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات آلبوم...*", user_id=owner_id)
+            status_msg = await edit_message(message_to_edit, "🔄 *در حال پردازش اطلاعات آلبوم...*", user_id=owner_id)
         else:
             status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*", show_cancel=True, user_id=owner_id)
     else:
@@ -123,7 +124,10 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         collection_task = asyncio.create_task(get_or_crawl_collection(collection_id, status_msg, force))
         tracks_task = asyncio.create_task(get_or_crawl_collection_tracks(collection_id))
 
-        collection_data, tracks_data = await asyncio.gather(collection_task, tracks_task)
+        collection_res, tracks_res = await asyncio.gather(collection_task, tracks_task)
+
+        collection_data, status_msg = (collection_res[0], collection_res[1]) if isinstance(collection_res, tuple) else (collection_res, status_msg)
+        tracks_data, _ = (tracks_res[0], tracks_res[1]) if isinstance(tracks_res, tuple) else (tracks_res, None)
 
         if not collection_data or not collection_data.get('results'):
             await edit_message(status_msg, "آلبوم مورد نظر یافت نشد.", user_id=owner_id)
@@ -215,10 +219,10 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
     if not message_to_edit:
         status_msg = await send_message(bot, chat_id, "🔄 *در حال بارگذاری اطلاعات آهنگ...*", show_cancel=True, user_id=owner_id)
     else:
-        status_msg = message_to_edit
-        await edit_message(status_msg, "🔄 *در حال بارگذاری اطلاعات آهنگ...*", user_id=owner_id)
+        status_msg = await edit_message(message_to_edit, "🔄 *در حال بارگذاری اطلاعات آهنگ...*", user_id=owner_id)
     try:
-        data = await get_track(track_id, status_msg)
+        res = await get_track(track_id, status_msg)
+        data, status_msg = (res[0], res[1]) if isinstance(res, tuple) else (res, status_msg)
         if not data or not data.get("results"):
             await edit_message(status_msg, "آهنگ مورد نظر یافت نشد.", user_id=owner_id)
             return
