@@ -6,11 +6,11 @@ from balethon.objects import Message
 from core.logger import logger
 from crawlers.utils import get_track
 from crawlers.itunes import get_cached_preview, set_mirror
-from utils.messages import send_message, edit_message
+from utils.messages import send_message, edit_message, safe_delete
 from core.http_client import HttpClient
 from core.config import FOOTER
 from bot.keyboards import create_close_button
-from balethon.objects import InlineKeyboard
+from balethon.objects import InlineKeyboard, InlineKeyboardButton
 
 async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None):
     status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*")
@@ -44,7 +44,7 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
         if preview_cache:
             try:
                 await bot.send_voice(chat_id, voice=preview_cache, caption=caption, reply_markup=reply_markup)
-                await status_msg.delete()
+                await safe_delete(status_msg)
                 return
             except Exception as e:
                 logger.error(f"Cache preview send failed: {e}")
@@ -58,7 +58,7 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
                 msg = await bot.send_voice(chat_id, voice=preview_data, caption=caption, reply_markup=reply_markup)
                 if msg and track_id:
                     await set_mirror('track', str(track_id), 'previewUrl', f'https://tapi.bale.ai/file/bot<token>/{msg.voice.id}')
-                await status_msg.delete()
+                await safe_delete(status_msg)
             else:
                 await edit_message(status_msg, "دریافت پیش‌نمایش با خطا مواجه شد.", show_cancel=True)
     except Exception as e:

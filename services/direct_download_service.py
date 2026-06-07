@@ -6,7 +6,7 @@ import yt_dlp
 import random
 from pathlib import Path
 from core.logger import logger
-from utils.messages import send_message, edit_message
+from utils.messages import send_message, edit_message, safe_delete
 from bot.keyboards import create_close_button
 from balethon.objects import InlineKeyboardButton, InlineKeyboard
 from core.config import PROXY, FOOTER
@@ -139,7 +139,7 @@ class DirectDownloadService:
         if meta.get("thumbnail"):
             try:
                 await self.bot.send_photo(chat_id, photo=meta["thumbnail"], caption=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*markup))
-                await status_msg.delete()
+                await safe_delete(status_msg)
             except Exception as e:
                 logger.warning(f"Failed to send thumbnail: {e}")
                 await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
@@ -187,6 +187,7 @@ class DirectDownloadService:
 
                 track_name = track_data['trackName']
                 if url:
+                    # In direct download we might not have a bot ID yet, but let's use the source URL for consistency if no ID.
                     track_name = f"[{track_name}]({url})"
 
                 fields = {
@@ -211,7 +212,7 @@ class DirectDownloadService:
                               [InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=url)],
                               [create_close_button(user_id)]]
                     await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard(*markup))
-                await status_msg.delete()
+                await safe_delete(status_msg)
             else:
                 await edit_message(status_msg, "❌ دانلود با خطا مواجه شد.", show_cancel=True)
 

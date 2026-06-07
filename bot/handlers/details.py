@@ -1,7 +1,7 @@
 from balethon.objects import InlineKeyboardButton, InlineKeyboard
 from core.config import ITEMS_PER_PAGE, DEEP_LINK_BASE
 from bot.keyboards import create_pagination_row, create_close_button
-from utils.messages import send_message, edit_message
+from utils.messages import send_message, edit_message, safe_delete
 from utils.helpers import get_high_res_artwork, format_duration, generate_deep_link
 from crawlers.utils import get_or_crawl_artist, get_or_crawl_artist_collections, get_or_crawl_collection, get_or_crawl_collection_tracks, get_track, format_artist_hashtag
 from crawlers.youtube import get_artist_image
@@ -94,12 +94,12 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
         if is_pagination and message_to_edit:
             await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
-            if status_msg: await status_msg.delete()
+            await safe_delete(status_msg)
         else:
             artwork_data = await artwork_service.get_artwork_for_display("artist", artist_id, artist_image, owner_id, entity_name=artist_name)
             if artwork_data:
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "artist", artist_id, user_id=owner_id)
-                await status_msg.delete()
+                await safe_delete(status_msg)
             else:
                 await edit_message(status_msg, text, reply_markup=markup_rows)
 
@@ -195,13 +195,13 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
 
         if is_pagination and message_to_edit:
             await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
-            if status_msg: await status_msg.delete()
+            await safe_delete(status_msg)
         else:
             artwork_url = get_high_res_artwork(coll.get("artworkUrl100"))
             artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id, artwork_url, owner_id)
             if artwork_data:
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id, user_id=owner_id)
-                await status_msg.delete()
+                await safe_delete(status_msg)
             else:
                 await edit_message(status_msg, text, reply_markup=markup_rows)
 
@@ -288,9 +288,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
                 try:
                     from core.config import FOOTER
                     await bot.send_photo(chat_id, photo=artwork_url, caption=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*markup_rows))
-                    if status_msg:
-                        try: await status_msg.delete()
-                        except: pass
+                    await safe_delete(status_msg)
                 except Exception as e:
                     logger.warning(f"Failed to send external artwork: {e}")
                     await edit_message(status_msg, text, reply_markup=markup_rows)
@@ -300,9 +298,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
             artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id or track_id, artwork_url, owner_id)
             if artwork_data:
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id or track_id, user_id=owner_id)
-                if status_msg:
-                    try: await status_msg.delete()
-                    except: pass
+                await safe_delete(status_msg)
             else:
                 await edit_message(status_msg, text, reply_markup=markup_rows)
 

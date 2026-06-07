@@ -72,7 +72,8 @@ class BaleUploadErrorNotifier:
             await bot.delete_message(INFO_CHANNEL_ID, self.notification_message_id)
             logger.info("Bale upload error notification cleared")
         except Exception as e:
-            logger.error(f"Failed to delete error notification: {e}")
+            if "message not found" not in str(e).lower():
+                logger.error(f"Failed to delete error notification: {e}")
         finally:
             self.error_active = False
             self.notification_message_id = None
