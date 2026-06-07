@@ -10,13 +10,15 @@ logger = logging.getLogger("ABRAAVA:LYRICS_SERVICE")
 
 class LyricsService:
     def __init__(self):
-        self.genius = Genius(
-            GENIUS_ACCESS_TOKEN,
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-            remove_section_headers=True,
-            retries=2
-        )
-        self.genius.verbose = False
+        self.genius = None
+        if GENIUS_ACCESS_TOKEN:
+            self.genius = Genius(
+                GENIUS_ACCESS_TOKEN,
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                remove_section_headers=True,
+                retries=2
+            )
+            self.genius.verbose = False
         self.db_path = os.path.join(CACHE_DIR, "lyrics.db")
         self._executor = ThreadPoolExecutor(max_workers=5)
 
@@ -65,6 +67,10 @@ class LyricsService:
             await db.commit()
 
     async def _fetch_from_genius(self, title, artist):
+        if not self.genius:
+            logger.warning("Genius API not configured. Skipping lyrics fetch.")
+            return None
+
         loop = asyncio.get_event_loop()
         try:
             # Clean up title/artist if needed
