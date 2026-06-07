@@ -1,12 +1,19 @@
 import asyncio
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
+# Force event loop creation for balethon compatibility with Python 3.10+
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
 import os
 import threading
+import signal
+import sys
+import time
+import re
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# Add local directory to PATH for ffmpeg
 os.environ['PATH'] = os.getcwd() + os.pathsep + os.environ.get('PATH', '')
+
 from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
 from balethon import Client
 from balethon.objects import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboard
@@ -36,12 +43,6 @@ from bot.handlers.details import show_track_page, show_collection_page, show_art
 from utils.parser import parse_search_query
 from utils.messages import send_message, edit_message, safe_delete
 from utils.validation import is_valid_message
-
-import asyncio
-import signal
-import sys
-import time
-import re
 
 # Initialize Services
 api_client = APIClient(API_BASE_URL, API_TOKEN)
@@ -190,7 +191,7 @@ async def on_message(message: Message):
                     yt_url = resolved.get("youtube_url")
                     if yt_url:
                         # Extract video ID if possible for show_track_page
-                        m = re.search(r'(?:v=|\/)([a-zA-Z0-9_-]{11})(?:&|\?|$)', yt_url)
+                        m = re.search(r'(?:v=|\/)([a-zA-Z0-9_-]{11})(?:\u0026|\?|$)', yt_url)
                         if m:
                             await show_track_page(bot, chat_id, f"yt_{m.group(1)}", artwork_service, user_id, message_to_edit=status_msg)
                         else:
