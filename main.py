@@ -9,10 +9,28 @@ import signal
 import sys
 import time
 import re
+import subprocess
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Add local directory to PATH for ffmpeg
 os.environ['PATH'] = os.getcwd() + os.pathsep + os.environ.get('PATH', '')
+
+def start_warp():
+    if os.path.exists("./warp-plus"):
+        print("🚀 Starting WARP proxy...")
+        # Start warp-plus in the background
+        # Default port is 8086
+        subprocess.Popen(["./warp-plus"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        # Set proxy environment variable for the application
+        # This will be picked up by core/config.py since it uses os.getenv("proxy")
+        os.environ["proxy"] = "socks5://127.0.0.1:8086"
+        print("✅ WARP proxy started on socks5://127.0.0.1:8086")
+    else:
+        print("⚠️ warp-plus binary not found, skipping WARP start.")
+
+start_warp()
+
 
 from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
 from balethon import Client
