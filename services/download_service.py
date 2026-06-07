@@ -35,9 +35,6 @@ class DownloadService:
         else:
             full_text = text
 
-        # Mandatory delay to avoid Bale rate limits
-        await asyncio.sleep(1.1)
-
         if not is_batch:
             # For single tracks, we delete and re-send to ensure the "temporary" nature of these status messages
             # as requested by the user, while avoiding "message not modified" or stale reference issues.

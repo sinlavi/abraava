@@ -82,7 +82,7 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
 
         max_attempts = 10 if force_edit else 3
         if ("rate limit" in err_msg or "too many" in err_msg) and attempt < max_attempts:
-            await asyncio.sleep(1.1 * attempt)
+            await asyncio.sleep(0.5 * attempt)
             return await edit_message(message, text, reply_markup, no_close, show_info, task_id, force_edit, show_cancel, attempt + 1)
 
         if force_edit:

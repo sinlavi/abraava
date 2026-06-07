@@ -147,7 +147,6 @@ class DirectDownloadService:
             status_msg = await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
 
     async def _update_status(self, chat_id, msg, text, reply_markup=None):
-        await asyncio.sleep(1.1)
         await safe_delete(msg)
         return await send_message(self.bot, chat_id, text, reply_markup=reply_markup, show_cancel=True)
 

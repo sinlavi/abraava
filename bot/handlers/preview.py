@@ -13,7 +13,6 @@ from bot.keyboards import create_close_button
 from balethon.objects import InlineKeyboard, InlineKeyboardButton
 
 async def _update_preview_status(bot, chat_id, msg, text):
-    await asyncio.sleep(1.1)
     await safe_delete(msg)
     return await send_message(bot, chat_id, text, show_cancel=True)
 
