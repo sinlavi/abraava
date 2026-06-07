@@ -1,7 +1,11 @@
 import asyncio
+import logging
 from balethon.objects import InlineKeyboardButton, InlineKeyboard
-from utils.messages import send_message, edit_message
+from utils.messages import send_message, edit_message, safe_delete
 from crawlers.utils import get_or_crawl_collection, get_or_crawl_collection_tracks
+from bot.keyboards import create_close_button
+
+logger = logging.getLogger("ABRAAVA:ALBUM_DL")
 
 async def download_album(bot, chat_id, collection_id, user_id, download_service, quality=None):
     # This message stays static (no edit) as per request
@@ -75,7 +79,7 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
             # Update parent message with progress
             progress_text = (
                 f"📀 *آلبوم:* {coll_name}\n"
-                f"🎵 *تعداد قطعات:* {len(tracks)}\n"
+                f"🎵 *تعداد کل قطعات:* {len(tracks)}\n"
                 f"✅ *موفق:* {success_count}\n"
                 f"❌ *ناموفق:* {failed_count}\n"
                 f"⬇️ *در حال دانلود...*"
@@ -97,10 +101,11 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
             if len(failed_ids) < 40:
                 markup_rows.append([InlineKeyboardButton(text="🔄 تلاش مجدد قطعات ناموفق", callback_data=f"retry_failed:{failed_ids}:u{user_id}")])
 
-        markup_rows.append([InlineKeyboardButton(text="🔄 تلاش مجدد کل آلبوم", callback_data=f"download_album:{collection_id}:u{user_id}")])
+            markup_rows.append([InlineKeyboardButton(text="🔄 تلاش مجدد کل آلبوم", callback_data=f"download_album:{collection_id}:u{user_id}")])
 
-        try: await parent_msg.delete()
-        except: pass
+        markup_rows.append([create_close_button(user_id)])
+
+        await safe_delete(parent_msg)
 
         await send_message(bot, chat_id, final_text, reply_markup=InlineKeyboard(*markup_rows))
 

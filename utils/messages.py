@@ -42,6 +42,14 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
         return InlineKeyboard(*markup)
     return reply_markup
 
+async def safe_delete(message):
+    if not message: return
+    try:
+        await message.delete()
+    except Exception as e:
+        if "message not found" not in str(e).lower():
+            logger.debug(f"Safe delete failed: {e}")
+
 async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None, show_cancel=False):
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
     msg = await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
@@ -60,8 +68,7 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
     if not force_edit and not last_message_tracker.is_recent(chat_id, message.id):
         # Only delete and send new if it's NOT among the recent messages.
         # This prevents the bot from "flickering" if it's still near the end of the chat.
-        try: await message.delete()
-        except: pass
+        await safe_delete(message)
         return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
     try:

@@ -25,7 +25,7 @@ from bot.handlers.callbacks import handle_callback
 from bot.handlers.broadcast import process_broadcast_message
 from bot.handlers.details import show_track_page, show_collection_page, show_artist_page
 from utils.parser import parse_search_query
-from utils.messages import send_message, edit_message
+from utils.messages import send_message, edit_message, safe_delete
 from utils.validation import is_valid_message
 
 import asyncio
@@ -117,9 +117,10 @@ async def on_message(message: Message):
             start_param = text.split()[1]
             if "_" in start_param:
                 type_, item_id = start_param.split("_", 1)
-                if type_ == "artist": await show_artist_page(bot, chat_id, int(item_id), 1, artwork_service, user_id)
-                elif type_ == "collection": await show_collection_page(bot, chat_id, int(item_id), 1, artwork_service, user_id)
-                elif type_ == "track": await show_track_page(bot, chat_id, int(item_id), artwork_service, user_id)
+                if item_id.isdigit(): item_id = int(item_id)
+                if type_ == "artist": await show_artist_page(bot, chat_id, item_id, 1, artwork_service, user_id)
+                elif type_ == "collection": await show_collection_page(bot, chat_id, item_id, 1, artwork_service, user_id)
+                elif type_ == "track": await show_track_page(bot, chat_id, item_id, artwork_service, user_id)
                 return
         await start_command(bot, message)
     elif text.startswith("/help"):
@@ -184,7 +185,7 @@ async def on_message(message: Message):
                         if m:
                             await show_track_page(bot, chat_id, f"yt_{m.group(1)}", artwork_service, user_id, message_to_edit=status_msg)
                         else:
-                            await status_msg.delete()
+                            await safe_delete(status_msg)
                             await direct_download_service.ask_confirmation(chat_id, yt_url, user_id=user_id)
                     else:
                         # No link at all, try searching

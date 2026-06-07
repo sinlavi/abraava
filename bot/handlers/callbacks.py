@@ -7,7 +7,7 @@ from bot.handlers.search import handle_search
 from bot.handlers.preview import send_voice_preview
 import crawlers.utils
 from bot.keyboards import get_settings_keyboard, get_quality_keyboard, get_confirmation_keyboard, create_close_button
-from utils.messages import send_message, edit_message
+from utils.messages import send_message, edit_message, safe_delete
 from core.config import OFFLINE_MODE
 from core.logger import logger
 import asyncio
@@ -47,8 +47,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     data = ":".join(parts)
 
     if data == "close":
-        try: await callback_query.message.delete()
-        except: pass
+        await safe_delete(callback_query.message)
         return
 
     if data == "help_cmd":
@@ -92,8 +91,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             settings = await user_settings_service.get_settings(user_id)
             await bot.answer_callback_query(callback_query.id, text="⬇️ در حال دانلود...")
             asyncio.create_task(direct_download_service.download_direct(chat_id, url, user_id, settings.download_quality.value if settings.download_quality.value != "ask" else "192"))
-            try: await callback_query.message.delete()
-            except: pass
+            await safe_delete(callback_query.message)
         else:
             await bot.answer_callback_query(callback_query.id, text="❌ پیوند منقضی شده است", show_alert=True)
         return
@@ -185,8 +183,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             await direct_download_service.ask_confirmation(chat_id, url, user_id=user_id)
         else:
             await bot.answer_callback_query(callback_query.id, text="❌ پیوند منقضی شده است", show_alert=True)
-        try: await callback_query.message.delete()
-        except: pass
+        await safe_delete(callback_query.message)
 
     elif data.startswith("page:ext_search:"):
         search_id, type_, page = parts[2], parts[3], int(parts[4])
@@ -218,8 +215,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         quality, track_id = parts[1], parts[2]
         if track_id.isdigit(): track_id = int(track_id)
         await bot.answer_callback_query(callback_query.id, text=f"⏳ دانلود با کیفیت {quality}...")
-        try: await callback_query.message.delete()
-        except: pass
+        await safe_delete(callback_query.message)
         await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality)
 
     elif data.startswith("preview:"):
@@ -247,15 +243,13 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         quality, coll_id = parts[1], parts[2]
         if coll_id.isdigit(): coll_id = int(coll_id)
         await bot.answer_callback_query(callback_query.id, text=f"📀 شروع دانلود با کیفیت {quality}...")
-        try: await callback_query.message.delete()
-        except: pass
+        await safe_delete(callback_query.message)
         asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service, quality=quality))
 
     elif data.startswith("retry_failed:"):
         failed_ids = parts[1].split(",")
         await bot.answer_callback_query(callback_query.id, text="🔄 تلاش مجدد برای قطعات ناموفق...")
-        try: await callback_query.message.delete()
-        except: pass
+        await safe_delete(callback_query.message)
         settings = await user_settings_service.get_settings(user_id)
         quality_value = settings.download_quality.value
         if quality_value == "ask": quality_value = "192"
@@ -276,8 +270,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         etype, eid, cap = parts[1], int(parts[2]), ":".join(parts[3:])
         # Use artworkService logic to force it
         await artwork_service.force_manual_artwork(bot, chat_id, etype, eid, cap, user_id)
-        try: await callback_query.message.delete()
-        except: pass
+        await safe_delete(callback_query.message)
 
     # Retry logic
     elif data.startswith("retry:"):
@@ -292,8 +285,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             quality_value = settings.download_quality.value
             if quality_value == "ask": quality_value = "192"
             await download_service.download_and_send_track(chat_id, tid, user_id, selected_quality=quality_value)
-        try: await callback_query.message.delete()
-        except: pass
+        await safe_delete(callback_query.message)
 
 async def update_settings_msg(bot, message, user_id, user_settings_service):
     settings = await user_settings_service.get_settings(user_id)

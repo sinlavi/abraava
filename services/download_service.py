@@ -13,7 +13,7 @@ from crawlers.utils import get_track, get_or_crawl_collection, get_or_crawl_coll
 from crawlers.youtube import search_youtube_track, download_audio
 from crawlers.itunes import get_cached_audio, set_mirror, get_cached_artwork, get_mirror
 from utils.helpers import get_high_res_artwork, format_duration, generate_deep_link
-from utils.messages import send_message, edit_message
+from utils.messages import send_message, edit_message, safe_delete
 from bot.keyboards import create_close_button
 
 class DownloadService:
@@ -62,7 +62,7 @@ class DownloadService:
                 if created_status: await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
                 markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
                 await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=InlineKeyboard(*markup))
-                if created_status: await status_msg.delete()
+                if created_status: await safe_delete(status_msg)
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
                                                  track.get('artistName', ''), track.get('collectionName', ''),
                                                  0, 'cache', quality_value)
@@ -130,7 +130,7 @@ class DownloadService:
                                                  file_size, 'youtube', quality_value)
                 self.download_rate_limiter.record_download(user_id, quality_value)
                 await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
-                if created_status: await status_msg.delete()
+                if created_status: await safe_delete(status_msg)
         except Exception as e:
             logger.error(f"Download error: {e}")
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}:u{user_id}")]]
@@ -166,12 +166,8 @@ class DownloadService:
             coll_link = None
 
         track_name = track.get('trackName')
-        track_url = track.get('trackViewUrl')
         if track_name:
-            if track_url:
-                track_name_link = f"[{track_name}]({track_url})"
-            else:
-                track_name_link = track_name
+            track_name_link = f"[{track_name}]({generate_deep_link('track', track_id)})"
         else:
             track_name_link = None
 
