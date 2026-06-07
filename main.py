@@ -18,19 +18,15 @@ os.environ['PATH'] = os.getcwd() + os.pathsep + os.environ.get('PATH', '')
 def start_warp():
     if os.path.exists("./warp-plus"):
         print("🚀 Starting WARP proxy...")
-        # Start warp-plus in the background
-        # Default port is 8086
-        subprocess.Popen(["./warp-plus"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        # Set proxy environment variable for the application
-        # This will be picked up by core/config.py since it uses os.getenv("proxy")
-        os.environ["proxy"] = "socks5://127.0.0.1:8086"
-        print("✅ WARP proxy started on socks5://127.0.0.1:8086")
+        # Start warp-plus in the background on port 1080 (as in old version)
+        # Port 1080 is the standard port checked by _check_proxy() in the codebase
+        subprocess.Popen(["./warp-plus", "-b", "127.0.0.1:1080"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print("✅ WARP proxy started on socks5://127.0.0.1:1080")
     else:
         print("⚠️ warp-plus binary not found, skipping WARP start.")
 
+# Start WARP before any other imports
 start_warp()
-
 
 from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
 from balethon import Client
@@ -227,7 +223,7 @@ async def on_message(message: Message):
                             else:
                                 status_msg = await edit_message(status_msg, "❌ متأسفانه نسخه قابل دانلودی یافت نشد.")
                         else:
-                            status_msg = await edit_message(status_msg, "❌ متأسفانه اطلاعات کافی برای این پیوند یافت نشد.")
+                            status_msg = edit_message(status_msg, "❌ متأسفانه اطلاعات کافی برای این پیوند یافت نشد.")
             elif type_ == "direct_link":
                 yt_m = re.search(r'(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})', term)
                 sc_m = re.search(r'soundcloud\.com\/([a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+)', term)
