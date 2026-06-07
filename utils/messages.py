@@ -70,10 +70,7 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
 
     try:
-        if hasattr(message, 'photo') and message.photo:
-            return await message.edit(caption=f"{text}{FOOTER}", reply_markup=markup)
-        else:
-            return await message.edit(text=f"{text}{FOOTER}", reply_markup=markup)
+        return await message.edit(text=f"{text}{FOOTER}", reply_markup=markup)
     except Exception as e:
         err_msg = str(e).lower()
 
