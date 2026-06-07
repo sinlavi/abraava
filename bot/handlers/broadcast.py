@@ -26,7 +26,7 @@ async def process_broadcast_message(bot: Client, message: Message, api_client: A
                 if "@abraava_bot" not in new_text: new_text += "\n@abraava_bot"
 
                 if message.content: await message.edit(text=new_text)
-                elif message.caption: await message.edit_caption(caption=new_text)
+                elif message.caption: await message.edit(text=new_text)
             except Exception as e:
                 logger.error(f"Failed to edit info channel message: {e}")
 

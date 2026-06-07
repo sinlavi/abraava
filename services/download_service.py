@@ -48,13 +48,15 @@ class DownloadService:
                 full_text = f"{status_prefix}\n\n{text}"
             else:
                 full_text = text
+            # Mandatory delay to avoid Bale rate limits and ensure in-place editing
+            await asyncio.sleep(1.1)
             # Use force_edit=True to ensure we don't send new messages for these internal steps
             status_msg = await edit_message(status_msg, full_text, reply_markup=reply_markup, show_cancel=not is_batch, force_edit=True)
 
         await update_status(f"🔍 *در حال دریافت اطلاعات آهنگ...*")
         track_data = await get_track(track_id)
         if not track_data or not track_data.get("results"):
-            status_msg = await edit_message(status_msg, "خطا در دریافت اطلاعات آهنگ.")
+            await update_status("خطا در دریافت اطلاعات آهنگ.")
             return status_msg, False
 
         track = track_data["results"][0]
@@ -86,7 +88,7 @@ class DownloadService:
                     await self.error_notifier.notify_upload_error(self.bot, str(e), cancel_album)
 
         if OFFLINE_MODE:
-            status_msg = await edit_message(status_msg, "بات در حالت آفلاین است.")
+            await update_status("بات در حالت آفلاین است.")
             return status_msg, False
 
         # Download from YouTube
@@ -107,7 +109,7 @@ class DownloadService:
                                                 track.get("collectionName", ""), track.get("releaseDate", "")[:4])
 
             if not video_id:
-                status_msg = await edit_message(status_msg, "لینک مناسبی یافت نشد.")
+                await update_status("لینک مناسبی یافت نشد.")
                 return status_msg, False
 
             video_url = f"https://music.youtube.com/watch?v={video_id}"
@@ -147,7 +149,11 @@ class DownloadService:
         except Exception as e:
             logger.error(f"Download error: {e}")
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}:u{user_id}")]]
-            status_msg = await edit_message(status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}", reply_markup=InlineKeyboard(*retry_markup))
+            # Use update_status to maintain delay and force_edit
+            # But since update_status doesn't support custom reply_markup easily in its current form for error state
+            # let's just use edit_message directly with force_edit=True and capture result
+            await asyncio.sleep(1.1)
+            status_msg = await edit_message(status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}", reply_markup=InlineKeyboard(*retry_markup), force_edit=True)
             cancel_cb = None
             if collection_id:
                 async def cancel_album(): self.album_tracker.cancel_download(user_id, collection_id)
