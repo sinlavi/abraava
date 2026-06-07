@@ -14,7 +14,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
     if not is_pagination:
         if message_to_edit:
             status_msg = message_to_edit
-            await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات هنرمند...*")
+            status_msg = await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات هنرمند...*")
         else:
             status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*", show_cancel=True)
     else:
@@ -27,7 +27,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         artist_data, collections_data = await asyncio.gather(artist_task, collections_task)
 
         if not artist_data or not artist_data.get('results'):
-            await edit_message(status_msg, "هنرمند مورد نظر یافت نشد.")
+            status_msg = await edit_message(status_msg, "هنرمند مورد نظر یافت نشد.")
             return
 
         artist = artist_data['results'][0]
@@ -93,7 +93,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         ])
 
         if is_pagination and message_to_edit:
-            await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
+            status_msg = await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
             await safe_delete(status_msg)
         else:
             artwork_data = await artwork_service.get_artwork_for_display("artist", artist_id, artist_image, owner_id, entity_name=artist_name)
@@ -101,19 +101,19 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "artist", artist_id, user_id=owner_id)
                 await safe_delete(status_msg)
             else:
-                await edit_message(status_msg, text, reply_markup=markup_rows)
+                status_msg = await edit_message(status_msg, text, reply_markup=markup_rows)
 
     except Exception as e:
         logger.error(f"Error in show_artist_page: {e}")
         retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"artist:{artist_id}:1:u{owner_id}")]]
-        if status_msg: await edit_message(status_msg, f"خطا در نمایش صفحه هنرمند: {e}", reply_markup=retry_markup)
+        if status_msg: status_msg = await edit_message(status_msg, f"خطا در نمایش صفحه هنرمند: {e}", reply_markup=retry_markup)
         else: await send_message(bot, chat_id, f"خطا در نمایش صفحه هنرمند: {e}", reply_markup=retry_markup)
 
 async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False):
     if not is_pagination:
         if message_to_edit:
             status_msg = message_to_edit
-            await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات آلبوم...*")
+            status_msg = await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات آلبوم...*")
         else:
             status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*", show_cancel=True)
     else:
@@ -126,7 +126,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         collection_data, tracks_data = await asyncio.gather(collection_task, tracks_task)
 
         if not collection_data or not collection_data.get('results'):
-            await edit_message(status_msg, "آلبوم مورد نظر یافت نشد.")
+            status_msg = await edit_message(status_msg, "آلبوم مورد نظر یافت نشد.")
             return
 
         coll = collection_data['results'][0]
@@ -194,7 +194,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         ])
 
         if is_pagination and message_to_edit:
-            await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
+            status_msg = await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
             await safe_delete(status_msg)
         else:
             artwork_url = get_high_res_artwork(coll.get("artworkUrl100"))
@@ -203,12 +203,12 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id, user_id=owner_id)
                 await safe_delete(status_msg)
             else:
-                await edit_message(status_msg, text, reply_markup=markup_rows)
+                status_msg = await edit_message(status_msg, text, reply_markup=markup_rows)
 
     except Exception as e:
         logger.error(f"Error in show_collection_page: {e}")
         retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"collection:{collection_id}:1:u{owner_id}")]]
-        if status_msg: await edit_message(status_msg, f"خطا در نمایش صفحه آلبوم: {e}", reply_markup=retry_markup)
+        if status_msg: status_msg = await edit_message(status_msg, f"خطا در نمایش صفحه آلبوم: {e}", reply_markup=retry_markup)
         else: await send_message(bot, chat_id, f"خطا در نمایش صفحه آلبوم: {e}", reply_markup=retry_markup)
 
 async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, message_to_edit=None):
@@ -216,11 +216,11 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         status_msg = await send_message(bot, chat_id, "🔄 *در حال بارگذاری اطلاعات آهنگ...*", show_cancel=True)
     else:
         status_msg = message_to_edit
-        await edit_message(status_msg, "🔄 *در حال بارگذاری اطلاعات آهنگ...*")
+        status_msg = await edit_message(status_msg, "🔄 *در حال بارگذاری اطلاعات آهنگ...*")
     try:
         data = await get_track(track_id, status_msg)
         if not data or not data.get("results"):
-            await edit_message(status_msg, "آهنگ مورد نظر یافت نشد.")
+            status_msg = await edit_message(status_msg, "آهنگ مورد نظر یافت نشد.")
             return
 
         track = data["results"][0]
@@ -282,28 +282,22 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
 
         if is_external:
-            # For external tracks, we don't use mirrors and don't necessarily have a collectionId that makes sense for the mirror API
-            # Just send the message with the artwork URL directly if possible, or use the artwork service but ensure it doesn't mirror
-            if artwork_url:
-                try:
-                    from core.config import FOOTER
-                    await bot.send_photo(chat_id, photo=artwork_url, caption=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*markup_rows))
-                    await safe_delete(status_msg)
-                except Exception as e:
-                    logger.warning(f"Failed to send external artwork: {e}")
-                    await edit_message(status_msg, text, reply_markup=markup_rows)
+            artwork_data = await artwork_service.get_artwork_for_display("collection", track_id, artwork_url, owner_id)
+            if artwork_data:
+                await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", track_id, user_id=owner_id)
+                await safe_delete(status_msg)
             else:
-                await edit_message(status_msg, text, reply_markup=markup_rows)
+                status_msg = await edit_message(status_msg, text, reply_markup=markup_rows)
         else:
             artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id or track_id, artwork_url, owner_id)
             if artwork_data:
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id or track_id, user_id=owner_id)
                 await safe_delete(status_msg)
             else:
-                await edit_message(status_msg, text, reply_markup=markup_rows)
+                status_msg = await edit_message(status_msg, text, reply_markup=markup_rows)
 
     except Exception as e:
         logger.error(f"Error in show_track_page: {e}")
         retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"track:{track_id}:u{owner_id}")]]
-        if status_msg: await edit_message(status_msg, f"خطا در نمایش صفحه آهنگ: {e}", reply_markup=retry_markup)
+        if status_msg: status_msg = await edit_message(status_msg, f"خطا در نمایش صفحه آهنگ: {e}", reply_markup=retry_markup)
         else: await send_message(bot, chat_id, f"خطا در نمایش صفحه آهنگ: {e}", reply_markup=retry_markup)

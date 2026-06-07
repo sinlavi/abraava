@@ -56,7 +56,7 @@ async def help_command(bot: Client, message: Message, is_callback=False):
             "📊 *آمار من:* با دستور /stats سهمیه باقی‌مانده و گزارش فعالیت خود را مشاهده کنید."
         )
     if is_callback:
-        await edit_message(message, help_text)
+        message = await edit_message(message, help_text)
     else:
         await send_message(bot, message.chat.id, help_text)
 

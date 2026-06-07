@@ -62,25 +62,25 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     # Settings menus with Confirmation
     if data == "menu_quick_mode":
         current = (await user_settings_service.get_settings(user_id)).quick_mode
-        await edit_message(callback_query.message, f"⚡ *تغییر حالت سریع*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
+        message = await edit_message(callback_query.message, f"⚡ *تغییر حالت سریع*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
                           reply_markup=get_confirmation_keyboard("quick_mode", not current, user_id=user_id))
         return
 
     if data == "menu_artwork":
         current = (await user_settings_service.get_settings(user_id)).show_artwork
-        await edit_message(callback_query.message, f"🖼️ *تغییر نمایش کاور*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
+        message = await edit_message(callback_query.message, f"🖼️ *تغییر نمایش کاور*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
                           reply_markup=get_confirmation_keyboard("show_artwork", not current, user_id=user_id))
         return
 
     if data == "menu_auto_download":
         current = (await user_settings_service.get_settings(user_id)).auto_download
-        await edit_message(callback_query.message, f"⚡ *تغییر دانلود خودکار*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
+        message = await edit_message(callback_query.message, f"⚡ *تغییر دانلود خودکار*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
                           reply_markup=get_confirmation_keyboard("auto_download", not current, user_id=user_id))
         return
 
     if data == "menu_notifications":
         current = (await user_settings_service.get_settings(user_id)).notifications
-        await edit_message(callback_query.message, f"🔔 *تغییر اعلان‌ها*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
+        message = await edit_message(callback_query.message, f"🔔 *تغییر اعلان‌ها*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
                           reply_markup=get_confirmation_keyboard("notifications", not current, user_id=user_id))
         return
 
@@ -108,7 +108,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
 
     if data == "show_quality_menu":
         settings = await user_settings_service.get_settings(user_id)
-        await edit_message(callback_query.message, "🎵 *کیفیت دانلود را انتخاب کنید:*",
+        message = await edit_message(callback_query.message, "🎵 *کیفیت دانلود را انتخاب کنید:*",
                           reply_markup=get_quality_keyboard(settings.download_quality, user_id=user_id))
         return
 
@@ -301,4 +301,4 @@ async def update_settings_msg(bot, message, user_id, user_settings_service):
         f"\n💡 *راهنما:* برای تغییر هر مورد، روی دکمه مربوطه کلیک کنید."
     )
     markup = get_settings_keyboard(settings.quick_mode, quality_text, settings.show_artwork, settings.auto_download, settings.notifications)
-    await edit_message(message, text, reply_markup=markup)
+    message = await edit_message(message, text, reply_markup=markup)

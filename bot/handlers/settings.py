@@ -48,7 +48,7 @@ async def stats_command_logic(bot, message, user_id, api_client, rate_limiter, d
     )
 
     from bot.keyboards import create_close_button
-    await edit_message(message, text, reply_markup=[[create_close_button()]])
+    message = await edit_message(message, text, reply_markup=[[create_close_button()]])
 
 async def stats_command(bot: Client, message: Message, api_client, rate_limiter, download_rate_limiter):
     user_id = message.author.id

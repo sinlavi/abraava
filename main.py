@@ -163,7 +163,7 @@ async def on_message(message: Message):
                 status_msg = await send_message(bot, chat_id, "🔍 *در حال بررسی پیوند...*")
                 resolved = await OdesliService.resolve_link(term)
                 if not resolved:
-                    await edit_message(status_msg, "❌ متأسفانه اطلاعاتی برای این پیوند یافت نشد.")
+                    status_msg = await edit_message(status_msg, "❌ متأسفانه اطلاعاتی برای این پیوند یافت نشد.")
                     return
 
                 res_type = resolved.get("type")
@@ -191,15 +191,15 @@ async def on_message(message: Message):
                         # No link at all, try searching
                         title, artist = resolved.get("title"), resolved.get("artist")
                         if title and artist:
-                            await edit_message(status_msg, f"🔍 *در حال جستجوی آهنگ در یوتیوب...*\n\n🎵 {title} - {artist}")
+                            status_msg = await edit_message(status_msg, f"🔍 *در حال جستجوی آهنگ در یوتیوب...*\n\n🎵 {title} - {artist}")
                             from crawlers.youtube import search_youtube_track
                             vid_id = await search_youtube_track(title, artist, resolved.get("album", ""), "")
                             if vid_id:
                                 await show_track_page(bot, chat_id, f"yt_{vid_id}", artwork_service, user_id, message_to_edit=status_msg)
                             else:
-                                await edit_message(status_msg, "❌ متأسفانه نسخه قابل دانلودی یافت نشد.")
+                                status_msg = await edit_message(status_msg, "❌ متأسفانه نسخه قابل دانلودی یافت نشد.")
                         else:
-                            await edit_message(status_msg, "❌ متأسفانه اطلاعات کافی برای این پیوند یافت نشد.")
+                            status_msg = await edit_message(status_msg, "❌ متأسفانه اطلاعات کافی برای این پیوند یافت نشد.")
             elif type_ == "direct_link":
                 yt_m = re.search(r'(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})', term)
                 sc_m = re.search(r'soundcloud\.com\/([a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+)', term)
