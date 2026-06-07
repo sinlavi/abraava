@@ -16,4 +16,13 @@ if [ ! -f "ffmpeg" ]; then
     chmod +x ffmpeg ffprobe
 fi
 
+# Download warp-plus
+if [ ! -f "warp-plus" ]; then
+    echo "Downloading warp-plus..."
+    curl -L https://github.com/bepass-org/warp-plus/releases/download/v1.2.6/warp-plus_linux-amd64.zip -o warp-plus.zip
+    unzip warp-plus.zip
+    chmod +x warp-plus
+    rm warp-plus.zip
+fi
+
 echo "Build completed successfully."
