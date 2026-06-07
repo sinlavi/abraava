@@ -76,15 +76,28 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
             return await message.edit(text=f"{text}{FOOTER}", reply_markup=markup)
     except Exception as e:
         err_msg = str(e).lower()
+
+        if "message is not modified" in err_msg:
+            return message
+
         if "message not found" in err_msg:
             return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
-        if ("rate limit" in err_msg or "too many" in err_msg) and attempt < 3:
-            await asyncio.sleep(0.5 * attempt)
+        max_attempts = 10 if force_edit else 3
+        if ("rate limit" in err_msg or "too many" in err_msg) and attempt < max_attempts:
+            await asyncio.sleep(1.1 * attempt)
             return await edit_message(message, text, reply_markup, no_close, show_info, task_id, force_edit, show_cancel, attempt + 1)
 
+        if force_edit:
+            logger.error(f"Force edit failed after {attempt} attempts: {e}")
+            return message
+
         logger.warning(f"Failed to edit (attempt {attempt}), sending new: {e}")
-        await safe_delete(message)
+        try:
+            await safe_delete(message)
+        except Exception:
+            pass
+
         return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
 async def reply_message(message: Message, text: str, reply_markup=None, show_info=False):
