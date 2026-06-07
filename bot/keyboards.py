@@ -1,5 +1,5 @@
-from balethon.objects import InlineKeyboard, InlineKeyboardButton
-from core.config import FOOTER, INFO_CHANNEL_USERNAME
+from core.platform import InlineKeyboard, InlineKeyboardButton
+from core.config import FOOTER, INFO_CHANNEL_USERNAME, PLATFORM, Platform
 
 def create_close_button(user_id: int = None) -> InlineKeyboardButton:
     cb = f"close:u{user_id}" if user_id else "close"
@@ -11,7 +11,8 @@ def create_cancel_button(task_id: str, user_id: int = None) -> InlineKeyboardBut
     return InlineKeyboardButton(text="⏹️ توقف", callback_data=cb)
 
 def create_info_channel_button() -> InlineKeyboardButton:
-    return InlineKeyboardButton(text="📢 کانال اطلاع‌رسانی", url=f"https://ble.ir/{INFO_CHANNEL_USERNAME.lstrip('@')}")
+    link = f"https://ble.ir/{INFO_CHANNEL_USERNAME.lstrip('@')}" if PLATFORM == Platform.BALE else f"https://t.me/{INFO_CHANNEL_USERNAME.lstrip('@')}"
+    return InlineKeyboardButton(text="📢 کانال اطلاع‌رسانی", url=link)
 
 def create_retry_button(callback_data: str, user_id: int = None, button_text: str = "🔄 تلاش مجدد") -> InlineKeyboardButton:
     cb = callback_data if callback_data.startswith("retry:") else f"retry:{callback_data}"

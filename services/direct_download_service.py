@@ -8,7 +8,7 @@ from pathlib import Path
 from core.logger import logger
 from utils.messages import send_message, edit_message, safe_delete
 from bot.keyboards import create_close_button
-from balethon.objects import InlineKeyboardButton, InlineKeyboard
+from core.platform import InlineKeyboardButton, InlineKeyboard
 from core.config import PROXY, FOOTER
 
 # ── User‑agent list (Same as youtube crawler) ────────────────────
@@ -101,8 +101,6 @@ class DirectDownloadService:
         return None
 
     async def ask_confirmation(self, chat_id, url, user_id=None):
-        # This method is now mostly a fallback for non-YouTube/non-SoundCloud direct links
-        # that couldn't be parsed into IDs.
         status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*")
         meta = await self.get_metadata(url)
         if not meta:
@@ -191,7 +189,6 @@ class DirectDownloadService:
 
                 track_name = track_data['trackName']
                 if url:
-                    # In direct download we might not have a bot ID yet, but let's use the source URL for consistency if no ID.
                     track_name = f"[{track_name}]({url})"
 
                 fields = {
@@ -209,9 +206,6 @@ class DirectDownloadService:
                 caption = "\n".join(caption_lines)
 
                 with open(mp3_path, 'rb') as f:
-                    from utils.helpers import generate_deep_link
-                    # For direct download, we might not have a reliable ID yet, but let's try to get one if meta had it
-                    # or just use close button as fallback if ID is not available.
                     markup = [[InlineKeyboardButton(text="📋 کپی پیوند", copy_text=url)],
                               [InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=url)],
                               [create_close_button(user_id)]]

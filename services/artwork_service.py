@@ -3,8 +3,7 @@ import io
 import logging
 import asyncio
 from typing import Optional, Union, Dict, Any, List, Tuple
-from balethon import Client
-from balethon.objects import Message, InlineKeyboard, InlineKeyboardButton
+from core.platform import MessageAdapter, InlineKeyboard, InlineKeyboardButton
 from core.logger import logger
 from core.http_client import HttpClient
 from services.api_client import APIClient
@@ -13,6 +12,7 @@ from crawlers.youtube import get_artist_image
 from utils.helpers import get_high_res_artwork
 from utils.image_utils import crop_to_square
 from bot.keyboards import create_close_button
+from core.config import PLATFORM, Platform
 
 class ArtworkService:
     def __init__(self, api_client: APIClient, user_settings_service):
@@ -25,6 +25,7 @@ class ArtworkService:
         return time.time() < ts
 
     async def get_cached_artwork_url(self, entity_type: str, entity_id: int) -> Optional[str]:
+        if PLATFORM != Platform.BALE: return None # Mirrors are Bale specific for now
         try:
             if not entity_id: return None
             # Skip mirroring for external sources
@@ -48,6 +49,7 @@ class ArtworkService:
             return None
 
     async def set_artwork_mirror(self, entity_type: str, entity_id: Union[int, str], file_id: str) -> bool:
+        if PLATFORM != Platform.BALE: return False
         try:
             if not entity_id or not file_id: return False
             # Skip mirroring for external sources
@@ -94,7 +96,7 @@ class ArtworkService:
                 logger.error(f"Error downloading artwork: {e}")
         return None
 
-    async def send_artwork_photo(self, bot: Client, chat_id: int, artwork_data: Union[str, bytes],
+    async def send_artwork_photo(self, bot, chat_id: int, artwork_data: Union[str, bytes],
                                   caption: str, reply_markup=None,
                                   entity_type: str = None, entity_id: int = None,
                                   user_id: int = None):
@@ -110,9 +112,11 @@ class ArtworkService:
                     photo_io.name = "artwork.jpg"
                     msg = await bot.send_photo(chat_id, photo=photo_io, caption=f"{caption}{FOOTER}", reply_markup=markup)
 
-                    if msg and msg.photo and entity_type and entity_id:
-                        file_id = str(msg.photo[0].id)
-                        await self.set_artwork_mirror(entity_type, entity_id, file_id)
+                    if msg and entity_type and entity_id:
+                        # Mirroring only for Bale
+                        if PLATFORM == Platform.BALE:
+                            file_id = str(msg.raw.photo[0].id)
+                            await self.set_artwork_mirror(entity_type, entity_id, file_id)
                 return msg
             except Exception as e:
                 logger.warning(f"Failed to send artwork: {e}")
@@ -145,12 +149,9 @@ class ArtworkService:
                 except: pass
         return None
 
-    async def force_manual_artwork(self, bot: Client, chat_id: int, entity_type: str, entity_id: int, caption: str, user_id: int):
+    async def force_manual_artwork(self, bot, chat_id: int, entity_type: str, entity_id: int, caption: str, user_id: int):
         """Attempts to recovery artwork by direct download and upload when mirrors fail."""
         try:
-            # 1. Get metadata to find the official URL if not provided
-            # For simplicity, we assume we need to find it again or it was passed
-            # Let's try to get it from itunes lookup
             from crawlers.itunes import lookup_itunes
             data = await lookup_itunes(entity_id, entity_type if entity_type != 'collection' else None)
             if not data or not data.get('results'):

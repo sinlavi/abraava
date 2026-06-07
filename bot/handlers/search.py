@@ -1,85 +1,53 @@
-from balethon import Client
-from balethon.objects import InlineKeyboardButton
+from core.platform import InlineKeyboardButton, InlineKeyboard
+from utils.messages import send_message, edit_message
+from bot.keyboards import create_close_button
 from core.logger import logger
-from utils.messages import send_message, edit_message, safe_delete
-from crawlers.itunes import search_itunes
-from bot.handlers.search_results import send_search_results, send_external_search_results
-from services.music_adapter import MusicAdapter
-import asyncio
 
-music_adapter = MusicAdapter()
-
-async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, term: str,
-                        api_client, search_cache_service, offline_mode=False):
-    if type_ in ["ytm", "sc", "sp", "itunes_official"]:
-        await handle_external_search(bot, chat_id, user_id, type_, term, search_cache_service)
+async def handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, offline_mode=False):
+    if offline_mode:
+        await send_message(bot, chat_id, "⚠️ بات در حال حاضر در حالت آفلاین است و فقط آهنگ‌های کش شده قابل دانلود هستند.")
         return
 
-    type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ", "collection": "آلبوم"}
-    logger.info(f"Search: {type_} - {term}")
-
-    status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجوی {type_fa_map.get(type_, type_)}: {term}...*", show_cancel=True)
+    status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجوی {term}...*")
 
     try:
-        results = {}
-        if not offline_mode:
-            entity_map = {"artist": "musicArtist", "album": "album", "track": "musicTrack", "collection": "album"}
-            entity = entity_map.get(type_)
-            itunes_results = await search_itunes(term, entity=entity, limit=50)
-            if itunes_results and int(itunes_results.get("resultCount") or 0) > 0:
-                results = itunes_results
+        from crawlers.utils import search_itunes
+        results = await search_itunes(term, type_ if type_ != 'itunes_official' else None)
 
-        if results and int(results.get("resultCount") or 0) > 0:
-            status_msg = await send_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg)
-            await api_client.log_search(user_id, type_, term, int(results.get("resultCount") or 0))
-        else:
-            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}:u{user_id}")]]
-            status_msg = await edit_message(status_msg, f"هیچ نتیجه‌ای برای '{term}' یافت نشد.", reply_markup=retry_markup)
+        if not results or not results.get("results"):
+            # Fallback to external if it was a general track search
+            if type_ == "track":
+                await edit_message(status_msg, "🔍 *در آیتیونز یافت نشد، در حال جستجو در یوتیوب...*")
+                from crawlers.youtube import search_youtube
+                yt_results = await search_youtube(term)
+                if yt_results:
+                    from bot.handlers.search_results import send_external_search_results
+                    await send_external_search_results(bot, chat_id, "ytm", term, yt_results, 1, search_cache_service, user_id, status_msg)
+                    return
+
+            await edit_message(status_msg, "❌ موردی یافت نشد.")
+            return
+
+        from bot.handlers.search_results import send_search_results
+        await send_search_results(bot, chat_id, type_, term, results["results"], 1, search_cache_service, user_id, status_msg)
+
     except Exception as e:
         logger.error(f"Search error: {e}")
-        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}:u{user_id}")]]
-        status_msg = await edit_message(status_msg, "خطا در جستجو.", reply_markup=retry_markup)
+        await edit_message(status_msg, "❌ خطا در جستجو. لطفا دوباره تلاش کنید.")
 
-async def handle_external_search(bot: Client, chat_id: int, user_id: int, type_: str, term: str, search_cache_service):
-    source_map = {"ytm": "یوتیوب موزیک", "sc": "ساندکلاد", "sp": "اسپاتیفای", "itunes_official": "آیتیونز"}
-    source_name = source_map.get(type_, "منابع خارجی")
-    status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجو در {source_name}: {term}...*", show_cancel=True)
+async def quick_search(bot, chat_id, user_id, term, api_client, user_settings_service, download_service):
+    status_msg = await send_message(bot, chat_id, f"⚡ *جستجوی سریع برای:* `{term}`")
 
     try:
-        results = []
-        if type_ == "ytm":
-            results = await music_adapter.search_ytm(term)
-        elif type_ == "sc":
-            results = await music_adapter.search_sc(term)
-        elif type_ == "sp":
-            results = await music_adapter.search_spotify(term)
-        elif type_ == "itunes_official":
-            results = await music_adapter.search_itunes_official(term)
+        from crawlers.utils import search_itunes
+        results = await search_itunes(term, "track")
 
-        if results:
-            status_msg = await send_external_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg)
-        else:
-            status_msg = await edit_message(status_msg, f"هیچ نتیجه‌ای در {source_name} یافت نشد.")
-    except Exception as e:
-        logger.error(f"External search error: {e}")
-        status_msg = await edit_message(status_msg, f"خطا در جستجو در {source_name}.")
-
-async def quick_search(bot: Client, chat_id: int, user_id: int, term: str,
-                       api_client, user_settings_service, download_service):
-    status_msg = await send_message(bot, chat_id, f"⚡ *جستجوی سریع {term}...*", show_cancel=True)
-    try:
-        results = await search_itunes(term, entity="musicTrack", limit=1)
-        if results and int(results.get("resultCount") or 0) > 0:
+        if results and results.get("results"):
             track = results["results"][0]
-            track_id = track.get('trackId')
-            status_msg, success = await download_service.download_and_send_track(chat_id, track_id, user_id, status_msg=status_msg)
-            await api_client.log_search(user_id, 'quick', term, 1)
-            if success:
-                await safe_delete(status_msg)
+            track_id = track["trackId"]
+            await download_service.download_and_send_track(chat_id, track_id, user_id, status_msg=status_msg)
         else:
-            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}:u{user_id}")]]
-            status_msg = await edit_message(status_msg, "نتیجه‌ای یافت نشد.", reply_markup=retry_markup)
+            await edit_message(status_msg, "❌ موردی یافت نشد.")
     except Exception as e:
         logger.error(f"Quick search error: {e}")
-        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}:u{user_id}")]]
-        status_msg = await edit_message(status_msg, f"خطا در جستجوی سریع: {e}", reply_markup=retry_markup)
+        await edit_message(status_msg, "❌ خطا در جستجوی سریع.")

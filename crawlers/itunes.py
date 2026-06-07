@@ -10,7 +10,6 @@ import aiosqlite
 from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY, FOOTER
 from core.logger import logger
 from core.http_client import HttpClient
-from balethon.objects import Message
 from utils.messages import edit_message
 
 

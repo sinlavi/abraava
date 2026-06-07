@@ -3,16 +3,28 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from core.platform import CURRENT_PLATFORM, Platform
+PLATFORM = CURRENT_PLATFORM
+
 # Bot Info
 BOT_NAME = "ابرآوا"
-BOT_USERNAME = "@abraava_bot"
-INFO_CHANNEL_USERNAME = "@abraava"
+if PLATFORM == Platform.BALE:
+    BOT_USERNAME = os.getenv("BALE_BOT_USERNAME", "@abraava_bot")
+    INFO_CHANNEL_USERNAME = "@abraava"
+    DEEP_LINK_BASE = f"https://ble.ir/{BOT_USERNAME.lstrip('@')}?start="
+else:
+    BOT_USERNAME = os.getenv("TG_BOT_USERNAME", "@abraavabot")
+    INFO_CHANNEL_USERNAME = "@abraava"
+    DEEP_LINK_BASE = f"https://t.me/{BOT_USERNAME.lstrip('@')}?start="
+
 FOOTER = f'\n\n{INFO_CHANNEL_USERNAME}\n{BOT_USERNAME}'
-DEEP_LINK_BASE = f"https://ble.ir/{BOT_USERNAME.lstrip('@')}?start="
 
 # Connection Settings
 PROXY = os.getenv("proxy")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+TG_API_ID = os.getenv("TG_API_ID")
+TG_API_HASH = os.getenv("TG_API_HASH")
+TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
 
 # Database and Channel IDs
 DB_CHANNEL_ID = os.getenv("DB_CHANNEL_ID")

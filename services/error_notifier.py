@@ -2,9 +2,7 @@ import time
 from typing import Optional, List, Dict
 from core.logger import logger
 from services.api_client import APIClient
-from balethon import Client
-from balethon.objects import Message
-from core.config import INFO_CHANNEL_ID
+from core.config import INFO_CHANNEL_ID, PLATFORM, Platform
 
 class BaleUploadErrorNotifier:
     def __init__(self, api_client: APIClient):
@@ -14,7 +12,8 @@ class BaleUploadErrorNotifier:
         self.last_error_time = 0
         self.error_cooldown = 300
 
-    async def notify_upload_error(self, bot: Client, error_message: str = "", album_download_callback: callable = None):
+    async def notify_upload_error(self, bot, error_message: str = "", album_download_callback: callable = None):
+        if PLATFORM != Platform.BALE: return # This is Bale specific
         if not INFO_CHANNEL_ID:
             return
 
@@ -49,8 +48,8 @@ class BaleUploadErrorNotifier:
         )
 
         try:
-            # We will use a central messaging helper later, but for now:
-            msg = await bot.send_message(INFO_CHANNEL_ID, notification_text)
+            from utils.messages import send_message
+            msg = await send_message(bot, INFO_CHANNEL_ID, notification_text)
             self.notification_message_id = msg.id
             self.error_active = True
             logger.warning(f"Bale upload error notification sent")
@@ -64,12 +63,18 @@ class BaleUploadErrorNotifier:
         except Exception as e:
             logger.error(f"Failed to send upload error notification: {e}")
 
-    async def clear_upload_error_notification(self, bot: Client):
+    async def clear_upload_error_notification(self, bot):
         if not INFO_CHANNEL_ID or not self.error_active:
             return
 
         try:
-            await bot.delete_message(INFO_CHANNEL_ID, self.notification_message_id)
+            from utils.messages import safe_delete
+            # We need a message object to delete, or use bot.delete_message directly
+            # For simplicity, if we have notification_message_id, we can try to delete it
+            # But safe_delete expects a MessageAdapter.
+            # Let's use a mock-ish approach or just bot raw delete
+            if PLATFORM == Platform.BALE:
+                await bot.raw.delete_message(INFO_CHANNEL_ID, self.notification_message_id)
             logger.info("Bale upload error notification cleared")
         except Exception as e:
             if "message not found" not in str(e).lower():
@@ -78,6 +83,6 @@ class BaleUploadErrorNotifier:
             self.error_active = False
             self.notification_message_id = None
 
-    async def check_and_clear_if_resolved(self, bot: Client, test_success: bool = False):
+    async def check_and_clear_if_resolved(self, bot, test_success: bool = False):
         if self.error_active and test_success:
             await self.clear_upload_error_notification(bot)

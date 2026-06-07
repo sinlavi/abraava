@@ -1,17 +1,16 @@
-from balethon import Client
-from balethon.objects import Message, InlineKeyboardButton, InlineKeyboard
-from core.config import BOT_NAME, INFO_CHANNEL_ID, REQUIRED_CHANNELS
+from core.platform import MessageAdapter, InlineKeyboardButton, InlineKeyboard
+from core.config import BOT_NAME, INFO_CHANNEL_ID, REQUIRED_CHANNELS, PLATFORM, Platform
 from utils.messages import send_message, edit_message
 from bot.keyboards import get_settings_keyboard, create_info_channel_button
 
-async def start_command(bot: Client, message: Message):
+async def start_command(bot, message: MessageAdapter):
     welcome_text = (
         f"🎵 *به ربات موسیقی {BOT_NAME} خوش آمدید*\n\n"
         f"من اینجام تا آهنگ‌های مورد علاقت رو برات پیدا کنم و بفرستم.\n"
         f"فقط کافیه اسم آهنگ رو بگی، خودم بلدم چیکار کنم 😉"
     )
 
-    user_id = message.author.id
+    user_id = message.user_id
     markup = []
     markup.append([InlineKeyboardButton(text="🆘 راهنما", callback_data=f"help_cmd:u{user_id}")])
     if INFO_CHANNEL_ID:
@@ -19,12 +18,13 @@ async def start_command(bot: Client, message: Message):
 
     if REQUIRED_CHANNELS:
         for channel in REQUIRED_CHANNELS:
-            markup.append([InlineKeyboardButton(text=f"📢 عضویت در {channel['name']}", url=f"https://ble.ir/{channel['username'].lstrip('@')}")])
+            link_prefix = "https://ble.ir/" if PLATFORM == Platform.BALE else "https://t.me/"
+            markup.append([InlineKeyboardButton(text=f"📢 عضویت در {channel['name']}", url=f"{link_prefix}{channel['username'].lstrip('@')}")])
 
-    await send_message(bot, message.chat.id, welcome_text, reply_markup=InlineKeyboard(*markup) if markup else None)
+    await send_message(bot, message.chat_id, welcome_text, reply_markup=InlineKeyboard(*markup) if markup else None)
 
-async def help_command(bot: Client, message: Message, is_callback=False):
-    is_group = message.chat.type in ["group", "supergroup"]
+async def help_command(bot, message: MessageAdapter, is_callback=False):
+    is_group = message.chat_type in ["group", "supergroup"]
     if is_group:
         help_text = (
             "🎵 *راهنمای استفاده در گروه‌ها*\n\n"
@@ -58,12 +58,13 @@ async def help_command(bot: Client, message: Message, is_callback=False):
     if is_callback:
         message = await edit_message(message, help_text)
     else:
-        await send_message(bot, message.chat.id, help_text)
+        await send_message(bot, message.chat_id, help_text)
 
-async def about_command(bot: Client, message: Message):
+async def about_command(bot, message: MessageAdapter):
+    platform_name = "بله" if PLATFORM == Platform.BALE else "تلگرام"
     about_text = (
         f"ℹ️ *درباره پروژه {BOT_NAME}*\n\n"
-        f"ربات {BOT_NAME} پیشرفته‌ترین ابزار جستجو و دانلود موسیقی در پیام‌رسان بله است که با اتصال به دیتابیس‌های جهانی همچون iTunes و YouTube Music، بهترین تجربه را برای شما فراهم می‌کند.\n\n"
+        f"ربات {BOT_NAME} پیشرفته‌ترین ابزار جستجو و دانلود موسیقی در پیام‌رسان {platform_name} است که با اتصال به دیتابیس‌های جهانی همچون iTunes و YouTube Music، بهترین تجربه را برای شما فراهم می‌کند.\n\n"
         "✨ *ویژگی‌های برجسته:*\n"
         "🔹 *کیفیت برتر:* امکان انتخاب کیفیت ۳۲۰، ۱۹۲ و ۱۲۸ kbps.\n"
         "🔹 *آلبوم کامل:* دانلود تمامی قطعات یک آلبوم به صورت یکجا و خودکار.\n"
@@ -72,4 +73,4 @@ async def about_command(bot: Client, message: Message):
         "🔹 *سرعت فوق‌العاده:* سیستم پردازش موازی و کشینگ هوشمند جهت تسریع در ارسال فایل‌ها.\n\n"
         "💎 طراحی شده برای عاشقان موسیقی."
     )
-    await send_message(bot, message.chat.id, about_text)
+    await send_message(bot, message.chat_id, about_text)

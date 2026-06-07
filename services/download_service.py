@@ -3,8 +3,7 @@ import os
 import shutil
 from pathlib import Path
 from typing import Optional, Union, List
-from balethon import Client
-from balethon.objects import Message, InlineKeyboardButton, InlineKeyboard
+from core.platform import MessageAdapter, InlineKeyboardButton, InlineKeyboard
 from core.logger import logger
 from core.config import OFFLINE_MODE, DEFAULT_QUALITY, FOOTER
 from core.http_client import HttpClient
@@ -35,8 +34,6 @@ class DownloadService:
         else:
             full_text = text
 
-        # We always delete and re-send to ensure consistent behavior across single and album downloads
-        # as requested by the user. This avoids "message not modified" errors and provides a fresh UI state.
         if status_msg:
             await safe_delete(status_msg)
         return await send_message(self.bot, chat_id, full_text, reply_markup=reply_markup, show_cancel=not is_batch)
@@ -46,7 +43,6 @@ class DownloadService:
                                      selected_quality=None, track_name_hint=None, track_index=None,
                                      status_prefix="", reply_markup=None):
 
-        # If no status_msg provided, use the first update to create it to avoid redundant send/delete
         if status_msg is None:
             prefix = f"({track_index}) " if track_index else ""
             hint = f" {track_name_hint}" if track_name_hint else ""
@@ -133,10 +129,14 @@ class DownloadService:
                 markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
                 with open(mp3_path, 'rb') as f:
                     msg = await self.bot.send_audio(chat_id, audio=f, caption=caption, reply_markup=InlineKeyboard(*markup))
+                    # Note: mirror logic might need adjustment for Telegram
                     if msg and track_id and not str(track_id).startswith(("yt_", "sc_", "sp_", "it_")):
-                        await set_mirror('track', str(track_id), 'audioUrl',
-                                         f'https://tapi.bale.ai/file/bot<token>/{msg.audio.id}',
-                                         quality=quality_value)
+                        from core.config import PLATFORM, Platform
+                        if PLATFORM == Platform.BALE:
+                            file_id = msg.raw.audio.id
+                            await set_mirror('track', str(track_id), 'audioUrl',
+                                             f'https://tapi.bale.ai/file/bot<token>/{file_id}',
+                                             quality=quality_value)
 
                 file_size = os.path.getsize(mp3_path)
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
@@ -149,7 +149,6 @@ class DownloadService:
         except Exception as e:
             logger.error(f"Download error: {e}")
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}:u{user_id}")]]
-            # But since _update_status supports custom reply_markup
             status_msg = await self._update_status(chat_id, status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}", status_prefix, InlineKeyboard(*retry_markup), is_batch)
             cancel_cb = None
             if collection_id:
@@ -193,7 +192,7 @@ class DownloadService:
 
         fields = {
             "🎵 نام آهنگ": track_name_link,
-            "🎤 نام آپلودر" if is_sc else "🎤 نام هنرمند": artist_link,
+            "🎤 نام هنرمند": artist_link,
             "💿 نام آلبوم": coll_link if not is_sc else None,
             "📅 سال انتشار": str(track.get('releaseDate', ''))[:4] if track.get('releaseDate') else None,
             "🎸 سبک": track.get('primaryGenreName'),
@@ -214,6 +213,7 @@ class DownloadService:
 
         markup = []
         if not is_external:
+            # web_app works differently on TG but we have a fallback in our adapter
             markup.append([InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://player.abraava.ir?id={track_id}")])
 
         markup.append([InlineKeyboardButton(text="📋 کپی پیوند", copy_text=generate_deep_link("track", track_id))])

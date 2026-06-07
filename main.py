@@ -1,6 +1,5 @@
-from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
-from balethon import Client
-from balethon.objects import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboard
+from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN, TG_API_ID, TG_API_HASH, TG_BOT_TOKEN, PLATFORM, Platform
+from core.platform import ClientAdapter, MessageAdapter, CallbackQueryAdapter, InlineKeyboardButton, InlineKeyboard
 from core.logger import logger
 from core.http_client import HttpClient
 
@@ -45,48 +44,41 @@ album_tracker = AlbumDownloadTracker(api_client)
 tagging_service = TaggingService()
 error_notifier = BaleUploadErrorNotifier(api_client)
 
-bot = Client(token=BOT_TOKEN)
+if PLATFORM == Platform.BALE:
+    bot = ClientAdapter(token=BOT_TOKEN)
+else:
+    bot = ClientAdapter(token=TG_BOT_TOKEN, api_id=TG_API_ID, api_hash=TG_API_HASH)
+
 download_service = DownloadService(bot, api_client, user_settings_service, artwork_service,
                                    tagging_service, error_notifier, album_tracker, download_rate_limiter)
 direct_download_service = DirectDownloadService(bot, tagging_service)
 
-@bot.on_initialize()
-async def on_init():
-    logger.info(f"Bot initialized. Offline Mode: {OFFLINE_MODE}")
-
-@bot.on_shutdown()
-async def on_shutdown():
-    await HttpClient.close()
-    logger.info("Bot shutting down...")
-
 @bot.on_message()
-async def on_message(message: Message):
-    if not message.author or message.author.is_bot: return
+async def on_message(message: MessageAdapter):
+    if message.author_is_bot: return
 
     # Broadcast forward handling
-    if message.chat.type == "channel" and str(message.chat.id) == str(INFO_CHANNEL_ID):
+    if message.chat_type == "channel" and str(message.chat_id) == str(INFO_CHANNEL_ID):
         await process_broadcast_message(bot, message, api_client)
         return
 
-    user_id = message.author.id
-    chat_id = message.chat.id
-    text = message.content or ""
+    user_id = message.user_id
+    chat_id = message.chat_id
+    text = message.text
 
     # Register user
     await registration_service.register_user(message)
 
-    if message.chat.type == "channel": return
+    if message.chat_type == "channel": return
 
-    is_group = message.chat.type in ["group", "supergroup"]
+    is_group = message.chat_type in ["group", "supergroup"]
     if is_group:
-        bot_username = bot.user.username
-        is_reply_to_bot = message.reply_to_message and message.reply_to_message.author.id == bot.user.id
+        bot_username = bot.username
         is_mentioned = f"@{bot_username}" in text
 
-        if not (is_mentioned or is_reply_to_bot):
-            return
+        if not is_mentioned:
+            if not text.startswith("/"): return
 
-        if not is_valid_message(message): return
         text = re.sub(rf"@{re.escape(bot_username)}\s*", "", text).strip()
 
         if len(text) > 100:
@@ -214,29 +206,40 @@ async def on_message(message: Message):
                 await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE)
 
 @bot.on_callback_query()
-async def on_callback(callback_query: CallbackQuery):
+async def on_callback(callback_query: CallbackQueryAdapter):
     try:
         await handle_callback(bot, callback_query, api_client, user_settings_service,
                              artwork_service, search_cache_service, download_service,
                              rate_limiter, download_rate_limiter, direct_download_service)
     except Exception as e:
         if "query is too old" in str(e).lower():
-            await bot.answer_callback_query(callback_query.id, "⚠️ این جستجو منقضی شده است. لطفاً مجدداً جستجو کنید.", show_alert=True)
+            await callback_query.answer("⚠️ این جستجو منقضی شده است. لطفاً مجدداً جستجو کنید.", show_alert=True)
         else:
             logger.error(f"Callback error: {e}")
 
+async def shutdown():
+    await HttpClient.close()
+    logger.info("Bot shutting down...")
+
 def signal_handler(sig, frame):
+    asyncio.create_task(shutdown())
     sys.exit(0)
 
-if __name__ == "__main__":
+async def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    logger.info("ABRAAVA bot is starting...")
-    while True:
-        try:
-            bot.run()
-        except KeyboardInterrupt: break
-        except Exception as e:
-            logger.exception(f"Bot crashed: {e}")
-            time.sleep(60)
+    logger.info(f"ABRAAVA bot is starting on {PLATFORM.value}...")
+    await bot.start()
+
+    try:
+        await bot.run_forever()
+    except KeyboardInterrupt: pass
+    except Exception as e:
+        logger.exception(f"Bot crashed: {e}")
+        time.sleep(60)
+    finally:
+        await shutdown()
+
+if __name__ == "__main__":
+    asyncio.run(main())

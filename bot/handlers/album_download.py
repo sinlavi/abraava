@@ -1,123 +1,111 @@
+from core.platform import InlineKeyboardButton, InlineKeyboard
+from utils.messages import send_message, edit_message, safe_delete
+from bot.keyboards import create_close_button, create_retry_button
 import asyncio
 import logging
-from balethon.objects import InlineKeyboardButton, InlineKeyboard
-from utils.messages import send_message, edit_message, safe_delete
-from crawlers.utils import get_or_crawl_collection, get_or_crawl_collection_tracks
-from bot.keyboards import create_close_button
 
-logger = logging.getLogger("ABRAAVA:ALBUM_DL")
+logger = logging.getLogger("ABRAAVA:ALBUM_DOWNLOAD")
 
 async def download_album(bot, chat_id, collection_id, user_id, download_service, quality=None, status_msg=None):
-    if status_msg:
-        await safe_delete(status_msg)
-
-    parent_msg = await send_message(bot, chat_id, "⏳ *شروع فرایند دانلود آلبوم...*")
-
+    # 1. Check for active download lock
     if not await download_service.album_tracker.acquire_lock(user_id, collection_id):
-        await safe_delete(parent_msg)
-        parent_msg = await send_message(bot, chat_id, "❌ *در حال حاضر دانلود این آلبوم در حال انجام است*")
+        await send_message(bot, chat_id, "⚠️ *یک دانلود فعال برای این آلبوم در حال اجراست.*\n\nلطفا تا اتمام دانلود قبلی منتظر بمانید.")
         return
 
     try:
+        if status_msg:
+            status_msg = await edit_message(status_msg, "💿 *در حال دریافت لیست آهنگ‌های آلبوم...*")
+        else:
+            status_msg = await send_message(bot, chat_id, "💿 *در حال دریافت لیست آهنگ‌های آلبوم...*", show_cancel=True)
+
+        from crawlers.utils import get_or_crawl_collection, get_or_crawl_collection_tracks
         collection_data = await get_or_crawl_collection(collection_id)
         tracks_data = await get_or_crawl_collection_tracks(collection_id)
 
-        if not collection_data or not tracks_data:
-            await safe_delete(parent_msg)
-            parent_msg = await send_message(bot, chat_id, "❌ اطلاعات آلبوم یافت نشد")
+        if not collection_data or not tracks_data or not tracks_data.get("results"):
+            await edit_message(status_msg, "❌ خطا در دریافت اطلاعات آلبوم.")
             return
 
-        coll = collection_data['results'][0]
-        tracks = tracks_data['results']
-        coll_name = coll.get('collectionName', 'آلبوم')
+        collection = collection_data["results"][0]
+        tracks = [t for t in tracks_data["results"] if t.get("wrapperType") == "track"]
+        total_tracks = len(tracks)
 
-        album_markup = InlineKeyboard(*[[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{collection_id}:u{user_id}")]])
-        await safe_delete(parent_msg)
-        parent_msg = await send_message(bot, chat_id, f"📀 *آلبوم:* {coll_name}\n🎵 *تعداد قطعات:* {len(tracks)}\n⬇️ *در حال دانلود...*", reply_markup=album_markup)
+        if total_tracks == 0:
+            await edit_message(status_msg, "❌ این آلبوم هیچ آهنگی ندارد.")
+            return
 
-        # Log download start - MUST be after the final parent_msg is created so tracker has correct reference
-        download_service.album_tracker.start_download(user_id, collection_id, parent_msg, len(tracks), coll_name)
+        album_name = collection.get("collectionName", "نامشخص")
+        artist_name = collection.get("artistName", "نامشخص")
 
-        # Get album cover
-        album_cover_bytes = await download_service.artwork_service.get_artwork_bytes(coll.get('collectionId'), coll.get('artworkUrl100'))
+        # 2. Start tracking with correct arguments
+        download_service.album_tracker.start_download(user_id, collection_id, status_msg, total_tracks, album_name)
 
-        settings = await download_service.user_settings_service.get_settings(user_id)
-        quality_value = quality or settings.download_quality.value
-        if quality_value == "ask": quality_value = "192"
+        # 3. Add tracks to tracker
+        for i, track in enumerate(tracks, 1):
+            download_service.album_tracker.add_track(user_id, collection_id, track.get("trackName", "نامشخص"), i)
+
+        # Get high-res cover for tagging
+        from utils.helpers import get_high_res_artwork
+        artwork_url = get_high_res_artwork(collection.get("artworkUrl100"))
+        cover_bytes = await download_service.artwork_service.get_artwork_bytes(collection_id, artwork_url)
+        download_service.album_tracker.set_cover_bytes(user_id, collection_id, cover_bytes)
 
         success_count = 0
-        failed_count = 0
-        failed_tracks = []
+        failed_ids = []
 
-        for idx, track in enumerate(tracks, 1):
+        for i, track in enumerate(tracks, 1):
             if download_service.album_tracker.is_cancelled(user_id, collection_id):
-                break
+                await edit_message(status_msg, f"⏹️ *دانلود آلبوم متوقف شد.*\n\n💿 {album_name}\n🎤 {artist_name}")
+                return
 
-            track_name = track.get('trackName', 'Unknown')
-            progress_prefix = (
-                f"📀 *آلبوم:* {coll_name}\n"
-                f"📊 *وضعیت:* {idx}/{len(tracks)} قطعه\n"
-                f"✅ *موفق:* {success_count}  |  ❌ *ناموفق:* {failed_count}\n"
-                f"━━━━━━━━━━━━━━\n"
-                f"⏳ *در حال پردازش:* {track_name}"
+            track_id = track.get("trackId")
+            track_name = track.get("trackName", "نامشخص")
+
+            status_prefix = download_service.album_tracker.get_progress_text(user_id, collection_id)
+
+            # Update status msg within download_and_send_track by passing it
+            status_msg, success = await download_service.download_and_send_track(
+                chat_id, track_id, user_id,
+                status_msg=status_msg,
+                is_batch=True,
+                album_cover_bytes=cover_bytes,
+                collection_id=collection_id,
+                selected_quality=quality,
+                track_name_hint=track_name,
+                track_index=i,
+                status_prefix=status_prefix
             )
 
-            try:
-                # Pass parent_msg to download_service to avoid new message creation
-                parent_msg, success = await download_service.download_and_send_track(
-                    chat_id, track['trackId'], user_id,
-                    status_msg=parent_msg,
-                    is_batch=True, album_cover_bytes=album_cover_bytes,
-                    collection_id=collection_id, selected_quality=quality_value,
-                    track_name_hint=track_name, track_index=idx,
-                    status_prefix=progress_prefix,
-                    reply_markup=album_markup
-                )
+            if success:
+                success_count += 1
+                download_service.album_tracker.update_track_result(user_id, collection_id, track_name, True)
+            else:
+                failed_ids.append(str(track_id))
+                download_service.album_tracker.update_track_result(user_id, collection_id, track_name, False, "Download failed")
 
-                if success:
-                    success_count += 1
-                else:
-                    failed_count += 1
-                    failed_tracks.append((track.get('trackId'), track_name))
+            # Avoid flood
+            await asyncio.sleep(0.5)
 
-            except Exception as e:
-                logger.error(f"Error downloading track {idx} in album: {e}")
-                failed_count += 1
-                failed_tracks.append((track.get('trackId'), track_name))
+        # Final Summary
+        summary = (
+            f"🏁 *دانلود آلبوم به پایان رسید*\n\n"
+            f"💿 {album_name}\n"
+            f"🎤 {artist_name}\n\n"
+            f"✅ تعداد موفق: {success_count}\n"
+            f"❌ تعداد ناموفق: {len(failed_ids)}"
+        )
 
-            await asyncio.sleep(0.3)
+        markup = []
+        if failed_ids:
+            markup.append([InlineKeyboardButton(text="🔄 تلاش مجدد قطعات ناموفق", callback_data=f"retry_failed:{','.join(failed_ids)}:u{user_id}")])
+            markup.append([InlineKeyboardButton(text="🔄 تلاش مجدد کل آلبوم", callback_data=f"download_album:{collection_id}:u{user_id}")])
 
-        if download_service.album_tracker.is_cancelled(user_id, collection_id):
-            final_text = f"⏹️ *دانلود آلبوم {coll_name} متوقف شد.*"
-        else:
-            final_text = (
-                f"🏁 *فرایند دانلود آلبوم به پایان رسید!*\n\n"
-                f"💿 *آلبوم:* {coll_name}\n"
-                f"🎵 *مجموع قطعات:* {len(tracks)}\n"
-                f"✅ *موفق:* {success_count}\n"
-            )
+        markup.append([create_close_button(user_id)])
 
-        markup_rows = []
-        if failed_count > 0:
-            final_text += f"❌ *ناموفق:* {failed_count}\n\n"
-            final_text += "📑 *لیست قطعات دانلود نشده:*\n"
-            for _, name in failed_tracks[:15]: # Limit to avoid huge message
-                final_text += f"🔸 {name}\n"
-            if len(failed_tracks) > 15:
-                final_text += f"و {len(failed_tracks) - 15} مورد دیگر...\n"
+        await edit_message(status_msg, summary, reply_markup=InlineKeyboard(*markup))
+        download_service.album_tracker.finish_download(user_id, collection_id, success_count, len(failed_ids))
 
-            failed_ids = ",".join([str(tid) for tid, _ in failed_tracks])
-            # If too many failed, we might hit callback data limit (Telegram limit is 64 bytes)
-            # In Bale it might be different, but better safe.
-            if len(failed_ids) < 40:
-                markup_rows.append([InlineKeyboardButton(text="🔄 تلاش مجدد قطعات ناموفق", callback_data=f"retry_failed:{failed_ids}:u{user_id}")])
-
-            markup_rows.append([InlineKeyboardButton(text="🔄 تلاش مجدد کل آلبوم", callback_data=f"download_album:{collection_id}:u{user_id}")])
-
-        markup_rows.append([create_close_button(user_id)])
-
-        await safe_delete(parent_msg)
-        await send_message(bot, chat_id, final_text, reply_markup=InlineKeyboard(*markup_rows))
-
-    finally:
-        download_service.album_tracker.finish_download(user_id, collection_id, success_count, failed_count)
+    except Exception as e:
+        logger.error(f"Error in download_album: {e}")
+        await edit_message(status_msg, f"❌ خطای غیرمنتظره در دانلود آلبوم: {e}")
+        download_service.album_tracker.release_lock(user_id, collection_id)

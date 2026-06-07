@@ -1,4 +1,4 @@
-from balethon.objects import InlineKeyboard, Message, InlineKeyboardButton
+from core.platform import InlineKeyboard, MessageAdapter, InlineKeyboardButton
 from core.config import FOOTER
 from bot.keyboards import create_close_button, create_info_channel_button, create_cancel_button
 import logging
@@ -15,7 +15,7 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
 
         # Flatten and check for close button in all nested lists
         has_close = any(
-            getattr(btn, 'callback_data', '') == 'close'
+            (getattr(btn, 'callback_data', '') or '').startswith('close')
             for row in markup
             if isinstance(row, list)
             for btn in row
@@ -31,7 +31,7 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
 
             # Final check just in case something was added but not 'close'
             has_close_now = any(
-                getattr(btn, 'callback_data', '') == 'close'
+                (getattr(btn, 'callback_data', '') or '').startswith('close')
                 for row in markup
                 if isinstance(row, list)
                 for btn in row
@@ -42,13 +42,13 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
         return InlineKeyboard(*markup)
     return reply_markup
 
-async def safe_delete(message, attempt=1):
+async def safe_delete(message: MessageAdapter, attempt=1):
     if not message: return
     try:
         await message.delete()
     except Exception as e:
         err = str(e).lower()
-        if "message not found" in err: return
+        if "message not found" in err or "not found" in err: return
         if ("rate limit" in err or "too many" in err) and attempt < 3:
             await asyncio.sleep(0.5 * attempt)
             return await safe_delete(message, attempt + 1)
@@ -64,9 +64,9 @@ async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, sh
             return await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
         raise
 
-async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False, show_cancel=False, attempt=1):
+async def edit_message(message: MessageAdapter, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False, show_cancel=False, attempt=1):
     if not message: return None
-    chat_id = message.chat.id
+    chat_id = message.chat_id
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
 
     try:
@@ -74,10 +74,10 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
     except Exception as e:
         err_msg = str(e).lower()
 
-        if "message is not modified" in err_msg:
+        if "message is not modified" in err_msg or "not modified" in err_msg:
             return message
 
-        if "message not found" in err_msg:
+        if "message not found" in err_msg or "not found" in err_msg:
             return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
         max_attempts = 10 if force_edit else 3
@@ -97,6 +97,6 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
 
         return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
-async def reply_message(message: Message, text: str, reply_markup=None, show_info=False):
+async def reply_message(message: MessageAdapter, text: str, reply_markup=None, show_info=False):
     markup = _prepare_markup(reply_markup, False, show_info)
     return await message.reply(text=f"{text}{FOOTER}", reply_markup=markup)

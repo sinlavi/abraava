@@ -1,4 +1,4 @@
-from balethon.objects import InlineKeyboardButton, InlineKeyboard
+from core.platform import InlineKeyboardButton, InlineKeyboard
 from core.config import ITEMS_PER_PAGE, DEEP_LINK_BASE
 from bot.keyboards import create_pagination_row, create_close_button
 from utils.messages import send_message, edit_message, safe_delete
@@ -66,8 +66,6 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
                     except: track_count = 0
 
                     wrapper = coll.get('wrapperType')
-                    # Improved album detection: If it's a collection and has more than 1 track, it's an album.
-                    # Otherwise, if it's a track or a single-track collection, treat it as a single.
                     is_album = (wrapper == 'collection') and (track_count > 1)
                     is_single = not is_album
 
@@ -175,7 +173,8 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
             pagination = create_pagination_row(f"collection:{collection_id}", page, total_pages, user_id=owner_id)
             if pagination: markup_rows.append(pagination)
 
-            is_private = (await bot.get_chat(chat_id)).type not in ["group", "supergroup"]
+            chat = await bot.get_chat(chat_id)
+            is_private = chat.type not in ["group", "supergroup"]
             if is_private:
                 markup_rows.append([InlineKeyboardButton(text="⬇️ دانلود کل آلبوم", callback_data=f"download_album:{collection_id}:u{owner_id}")])
 
