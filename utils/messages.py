@@ -79,8 +79,10 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
         if msg: last_message_tracker.set_last(chat_id, msg.id)
         return msg
     except Exception as e:
-        if "message not found" not in str(e).lower():
+        err_msg = str(e).lower()
+        if "message not found" not in err_msg:
             logger.warning(f"Failed to edit, sending new: {e}")
+            await safe_delete(message)
         return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
 async def reply_message(message: Message, text: str, reply_markup=None, show_info=False):

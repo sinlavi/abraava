@@ -94,7 +94,6 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
         if is_pagination and message_to_edit:
             status_msg = await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
-            await safe_delete(status_msg)
         else:
             artwork_data = await artwork_service.get_artwork_for_display("artist", artist_id, artist_image, owner_id, entity_name=artist_name)
             if artwork_data:
@@ -195,7 +194,6 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
 
         if is_pagination and message_to_edit:
             status_msg = await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
-            await safe_delete(status_msg)
         else:
             artwork_url = get_high_res_artwork(coll.get("artworkUrl100"))
             artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id, artwork_url, owner_id)
