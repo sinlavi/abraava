@@ -48,7 +48,7 @@ class MessageAdapter:
 
     async def edit(self, text, reply_markup=None):
         if CURRENT_PLATFORM == Platform.BALE:
-            return await self.raw.edit(text=text, reply_markup=reply_markup)
+            return await self.raw.edit_text(text=text, reply_markup=reply_markup)
         else:
             return await self.client.raw.edit_message(self.chat_id, self.id, text, buttons=reply_markup, link_preview=False)
 
@@ -97,8 +97,10 @@ class ClientAdapter:
 
     async def start(self):
         if self.platform == Platform.BALE:
-            # Balethon start is handled by run() or manual connection
-            pass
+            await self.raw.connect()
+            me = await self.raw.get_me()
+            self.username = me.username
+            logger.info(f"Bale Bot started as @{self.username}")
         else:
             await self.raw.start(bot_token=self.token)
             me = await self.raw.get_me()
@@ -189,10 +191,8 @@ class ClientAdapter:
 
     async def run_forever(self):
         if self.platform == Platform.BALE:
-            # Balethon's run is blocking and not easily awaited if it uses its own loop
-            # But we can use bot.connect() then wait
-            await self.raw.start()
-            self.username = self.raw.user.username
+            # For Balethon, we start polling. In 1.x it might be start_polling()
+            await self.raw.start_polling()
             while True:
                 await asyncio.sleep(3600)
         else:
