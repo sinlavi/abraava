@@ -48,7 +48,7 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
     ])
 
     if message_to_edit:
-        await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
+        message_to_edit = await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
     else:
         await send_message(bot, chat_id, header, reply_markup=markup_rows)
 
@@ -91,6 +91,6 @@ async def send_external_search_results(bot, chat_id, type_, term, results, page,
             markup_rows.append(pagination)
 
     if message_to_edit:
-        await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
+        message_to_edit = await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
     else:
         await send_message(bot, chat_id, header, reply_markup=markup_rows)

@@ -43,8 +43,8 @@ class DownloadService:
 
         track_data = await get_track(track_id, status_msg if created_status else None)
         if not track_data or not track_data.get("results"):
-            await edit_message(status_msg, "خطا در دریافت اطلاعات آهنگ.")
-            return
+            status_msg = await edit_message(status_msg, "خطا در دریافت اطلاعات آهنگ.")
+            return status_msg
 
         track = track_data["results"][0]
         settings = await self.user_settings_service.get_settings(user_id)
@@ -59,7 +59,7 @@ class DownloadService:
         if audio_cache:
             logger.info(f"Using cached audio for track {track_id} (quality: {quality_value}) -> {audio_cache}")
             try:
-                if created_status: await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
+                if created_status: status_msg = await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*")
                 markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
                 await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=InlineKeyboard(*markup))
                 if created_status: await safe_delete(status_msg)
@@ -67,7 +67,7 @@ class DownloadService:
                                                  track.get('artistName', ''), track.get('collectionName', ''),
                                                  0, 'cache', quality_value)
                 await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
-                return
+                return status_msg
             except Exception as e:
                 logger.error(f"Cache send failed: {e}")
                 if collection_id:
@@ -75,13 +75,13 @@ class DownloadService:
                     await self.error_notifier.notify_upload_error(self.bot, str(e), cancel_album)
 
         if OFFLINE_MODE:
-            await edit_message(status_msg, "بات در حالت آفلاین است.")
-            return
+            status_msg = await edit_message(status_msg, "بات در حالت آفلاین است.")
+            return status_msg
 
         # Download from YouTube
         cover_bytes = album_cover_bytes
         if settings.show_artwork and cover_bytes is None:
-            cover_bytes = await self.artwork_service.get_artwork_bytes(track.get('collectionId'), track.get('artworkUrl100'))
+            cover_bytes = await self.artwork_service.get_artwork_bytes(track.get('collectionId') or track_id, track.get('artworkUrl100'))
 
         video_url = None
         if isinstance(track_id, str) and track_id.startswith(("yt_", "sc_")):
@@ -89,14 +89,14 @@ class DownloadService:
             logger.info(f"Using direct URL for external track {track_id}: {video_url}")
 
         if not video_url:
-            if created_status: await edit_message(status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*")
+            if created_status: status_msg = await edit_message(status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*")
             logger.info(f"Searching YouTube for track {track_id}: {track.get('trackName')} - {track.get('artistName')}")
             video_id = await search_youtube_track(track.get("trackName", ""), track.get("artistName", ""),
                                                 track.get("collectionName", ""), track.get("releaseDate", "")[:4])
 
             if not video_id:
-                await edit_message(status_msg, "لینک مناسبی یافت نشد.")
-                return
+                status_msg = await edit_message(status_msg, "لینک مناسبی یافت نشد.")
+                return status_msg
 
             video_url = f"https://music.youtube.com/watch?v={video_id}"
         temp_dir = None
@@ -105,16 +105,16 @@ class DownloadService:
                 if collection_id:
                     self.album_tracker.start_track(user_id, collection_id, track.get("trackName", ""))
 
-                if created_status: await edit_message(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*", show_cancel=True)
+                if created_status: status_msg = await edit_message(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*", show_cancel=True)
                 logger.info(f"Downloading from YouTube: {video_url} with quality {quality_value}")
                 mp3_path = await download_audio(video_url, quality=quality_value)
                 if not mp3_path: raise Exception("Download failed")
 
                 temp_dir = os.path.dirname(mp3_path)
-                if created_status: await edit_message(status_msg, "🏷️ *در حال تگ‌گذاری فایل...*")
+                if created_status: status_msg = await edit_message(status_msg, "🏷️ *در حال تگ‌گذاری فایل...*")
                 self.tagging_service.tag_mp3(Path(mp3_path), track, cover_bytes)
 
-                if created_status: await edit_message(status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*")
+                if created_status: status_msg = await edit_message(status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*")
 
                 markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
                 with open(mp3_path, 'rb') as f:
@@ -131,15 +131,17 @@ class DownloadService:
                 self.download_rate_limiter.record_download(user_id, quality_value)
                 await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
                 if created_status: await safe_delete(status_msg)
+                return status_msg
         except Exception as e:
             logger.error(f"Download error: {e}")
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}:u{user_id}")]]
-            await edit_message(status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}", reply_markup=InlineKeyboard(*retry_markup))
+            status_msg = await edit_message(status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}", reply_markup=InlineKeyboard(*retry_markup))
             cancel_cb = None
             if collection_id:
                 async def cancel_album(): self.album_tracker.cancel_download(user_id, collection_id)
                 cancel_cb = cancel_album
             await self.error_notifier.notify_upload_error(self.bot, str(e), cancel_cb)
+            return status_msg
         finally:
             if temp_dir: shutil.rmtree(temp_dir, ignore_errors=True)
 

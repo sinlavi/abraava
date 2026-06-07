@@ -106,7 +106,7 @@ class DirectDownloadService:
         status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*")
         meta = await self.get_metadata(url)
         if not meta:
-            await edit_message(status_msg, "❌ خطا در دریافت اطلاعات پیوند.")
+            status_msg = await edit_message(status_msg, "❌ خطا در دریافت اطلاعات پیوند.")
             return
 
         from utils.helpers import format_duration
@@ -142,9 +142,9 @@ class DirectDownloadService:
                 await safe_delete(status_msg)
             except Exception as e:
                 logger.warning(f"Failed to send thumbnail: {e}")
-                await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
+                status_msg = await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
         else:
-            await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
+            status_msg = await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
 
     async def download_direct(self, chat_id, url, user_id, quality="192"):
         status_msg = await send_message(self.bot, chat_id, f"⏳ *در حال شروع دانلود...*")
@@ -182,7 +182,7 @@ class DirectDownloadService:
                     continue
 
             if success and mp3_path:
-                await edit_message(status_msg, "☁️ *در حال آماده‌سازی فایل...*", show_cancel=True)
+                status_msg = await edit_message(status_msg, "☁️ *در حال آماده‌سازی فایل...*", show_cancel=True)
                 self.tagging_service.tag_mp3(mp3_path, track_data)
 
                 track_name = track_data['trackName']
@@ -214,10 +214,10 @@ class DirectDownloadService:
                     await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard(*markup))
                 await safe_delete(status_msg)
             else:
-                await edit_message(status_msg, "❌ دانلود با خطا مواجه شد.", show_cancel=True)
+                status_msg = await edit_message(status_msg, "❌ دانلود با خطا مواجه شد.", show_cancel=True)
 
         except Exception as e:
             logger.error(f"Direct download service error: {e}")
-            await edit_message(status_msg, f"❌ خطا: {str(e)[:50]}", show_cancel=True)
+            status_msg = await edit_message(status_msg, f"❌ خطا: {str(e)[:50]}", show_cancel=True)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)

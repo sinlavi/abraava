@@ -35,11 +35,11 @@ async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, ter
             await api_client.log_search(user_id, type_, term, int(results.get("resultCount") or 0))
         else:
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}:u{user_id}")]]
-            await edit_message(status_msg, f"هیچ نتیجه‌ای برای '{term}' یافت نشد.", reply_markup=retry_markup)
+            status_msg = await edit_message(status_msg, f"هیچ نتیجه‌ای برای '{term}' یافت نشد.", reply_markup=retry_markup)
     except Exception as e:
         logger.error(f"Search error: {e}")
         retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}:u{user_id}")]]
-        await edit_message(status_msg, "خطا در جستجو.", reply_markup=retry_markup)
+        status_msg = await edit_message(status_msg, "خطا در جستجو.", reply_markup=retry_markup)
 
 async def handle_external_search(bot: Client, chat_id: int, user_id: int, type_: str, term: str, search_cache_service):
     source_map = {"ytm": "یوتیوب موزیک", "sc": "ساندکلاد", "sp": "اسپاتیفای", "itunes_official": "آیتیونز"}
@@ -61,10 +61,10 @@ async def handle_external_search(bot: Client, chat_id: int, user_id: int, type_:
             await send_external_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id)
             await safe_delete(status_msg)
         else:
-            await edit_message(status_msg, f"هیچ نتیجه‌ای در {source_name} یافت نشد.")
+            status_msg = await edit_message(status_msg, f"هیچ نتیجه‌ای در {source_name} یافت نشد.")
     except Exception as e:
         logger.error(f"External search error: {e}")
-        await edit_message(status_msg, f"خطا در جستجو در {source_name}.")
+        status_msg = await edit_message(status_msg, f"خطا در جستجو در {source_name}.")
 
 async def quick_search(bot: Client, chat_id: int, user_id: int, term: str,
                        api_client, user_settings_service, download_service):
@@ -79,8 +79,8 @@ async def quick_search(bot: Client, chat_id: int, user_id: int, term: str,
             await safe_delete(status_msg)
         else:
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}:u{user_id}")]]
-            await edit_message(status_msg, "نتیجه‌ای یافت نشد.", reply_markup=retry_markup)
+            status_msg = await edit_message(status_msg, "نتیجه‌ای یافت نشد.", reply_markup=retry_markup)
     except Exception as e:
         logger.error(f"Quick search error: {e}")
         retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}:u{user_id}")]]
-        await edit_message(status_msg, f"خطا در جستجوی سریع: {e}", reply_markup=retry_markup)
+        status_msg = await edit_message(status_msg, f"خطا در جستجوی سریع: {e}", reply_markup=retry_markup)
