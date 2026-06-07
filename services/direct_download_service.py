@@ -146,12 +146,13 @@ class DirectDownloadService:
         else:
             status_msg = await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
 
+    async def _update_status(self, chat_id, msg, text, reply_markup=None):
+        await asyncio.sleep(1.1)
+        await safe_delete(msg)
+        return await send_message(self.bot, chat_id, text, reply_markup=reply_markup, show_cancel=True)
+
     async def download_direct(self, chat_id, url, user_id, quality="192"):
         status_msg = await send_message(self.bot, chat_id, f"⏳ *در حال شروع دانلود...*")
-
-        async def update_status(msg, text, reply_markup=None):
-            await asyncio.sleep(1.1)
-            return await edit_message(msg, text, reply_markup=reply_markup, force_edit=True)
 
         unique_id = uuid.uuid4().hex
         temp_dir = os.path.join(os.getcwd(), "downloads", unique_id)
@@ -186,7 +187,7 @@ class DirectDownloadService:
                     continue
 
             if success and mp3_path:
-                status_msg = await update_status(status_msg, "☁️ *در حال آماده‌سازی فایل...*")
+                status_msg = await self._update_status(chat_id, status_msg, "☁️ *در حال آماده‌سازی فایل...*")
                 self.tagging_service.tag_mp3(mp3_path, track_data)
 
                 track_name = track_data['trackName']
@@ -219,12 +220,12 @@ class DirectDownloadService:
                 await safe_delete(status_msg)
                 return status_msg, True
             else:
-                status_msg = await update_status(status_msg, "❌ دانلود با خطا مواجه شد.")
+                status_msg = await self._update_status(chat_id, status_msg, "❌ دانلود با خطا مواجه شد.")
                 return status_msg, False
 
         except Exception as e:
             logger.error(f"Direct download service error: {e}")
-            status_msg = await update_status(status_msg, f"❌ خطا: {str(e)[:50]}")
+            status_msg = await self._update_status(chat_id, status_msg, f"❌ خطا: {str(e)[:50]}")
             return status_msg, False
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
