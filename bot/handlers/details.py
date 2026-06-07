@@ -260,6 +260,9 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
             dl_btns.append(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}:u{owner_id}"))
         markup_rows.append(dl_btns)
 
+        # Lyrics button
+        markup_rows.append([InlineKeyboardButton(text="📜 متن آهنگ", callback_data=f"lyrics:{track_id}:u{owner_id}")])
+
         links = []
         if collection_id: links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{collection_id}:u{owner_id}"))
         if artist_id: links.append(InlineKeyboardButton(text="🎤 مشاهده هنرمند", callback_data=f"artist:{artist_id}:u{owner_id}"))
