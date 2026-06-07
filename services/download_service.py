@@ -32,7 +32,7 @@ class DownloadService:
     async def download_and_send_track(self, chat_id, track_id, user_id, status_msg=None,
                                      is_batch=False, album_cover_bytes=None, collection_id=None,
                                      selected_quality=None, track_name_hint=None, track_index=None,
-                                     status_prefix=""):
+                                     status_prefix="", reply_markup=None):
 
         # In batch mode, if no status_msg provided, create a track-specific one
         created_status = False
@@ -48,7 +48,8 @@ class DownloadService:
                 full_text = f"{status_prefix}\n\n{text}"
             else:
                 full_text = text
-            status_msg = await edit_message(status_msg, full_text, show_cancel=not is_batch)
+            # Use force_edit=True to ensure we don't send new messages for these internal steps
+            status_msg = await edit_message(status_msg, full_text, reply_markup=reply_markup, show_cancel=not is_batch, force_edit=True)
 
         await update_status(f"🔍 *در حال دریافت اطلاعات آهنگ...*")
         track_data = await get_track(track_id)

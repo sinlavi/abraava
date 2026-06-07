@@ -1,7 +1,6 @@
 from balethon.objects import InlineKeyboard, Message, InlineKeyboardButton
 from core.config import FOOTER
 from bot.keyboards import create_close_button, create_info_channel_button, create_cancel_button
-from services.last_message_tracker import last_message_tracker
 import logging
 import copy
 
@@ -52,32 +51,18 @@ async def safe_delete(message):
 
 async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None, show_cancel=False):
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
-    msg = await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
-    if msg: last_message_tracker.set_last(chat_id, msg.id)
-    return msg
+    return await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
 
 async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False, show_cancel=False):
     if not message: return None
     chat_id = message.chat.id
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
 
-    # If it's a photo message and we want to edit it, Balethon sometimes has issues if it's not the last message
-    # or if we try to edit text into a photo message without edit_caption.
-    # The current logic handles edit_caption correctly if hasattr(message, 'photo').
-
-    if not force_edit and not last_message_tracker.is_recent(chat_id, message.id):
-        # Only delete and send new if it's NOT among the recent messages.
-        # This prevents the bot from "flickering" if it's still near the end of the chat.
-        await safe_delete(message)
-        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
-
     try:
         if hasattr(message, 'photo') and message.photo:
-            msg = await message.edit_caption(caption=f"{text}{FOOTER}", reply_markup=markup)
+            return await message.edit_caption(caption=f"{text}{FOOTER}", reply_markup=markup)
         else:
-            msg = await message.edit(text=f"{text}{FOOTER}", reply_markup=markup)
-        if msg: last_message_tracker.set_last(chat_id, msg.id)
-        return msg
+            return await message.edit(text=f"{text}{FOOTER}", reply_markup=markup)
     except Exception as e:
         err_msg = str(e).lower()
         if "message not found" not in err_msg:
@@ -87,6 +72,4 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
 
 async def reply_message(message: Message, text: str, reply_markup=None, show_info=False):
     markup = _prepare_markup(reply_markup, False, show_info)
-    msg = await message.reply(text=f"{text}{FOOTER}", reply_markup=markup)
-    if msg: last_message_tracker.set_last(message.chat.id, msg.id)
-    return msg
+    return await message.reply(text=f"{text}{FOOTER}", reply_markup=markup)

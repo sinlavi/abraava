@@ -7,9 +7,11 @@ from bot.keyboards import create_close_button
 
 logger = logging.getLogger("ABRAAVA:ALBUM_DL")
 
-async def download_album(bot, chat_id, collection_id, user_id, download_service, quality=None):
-    # This message stays static (no edit) as per request
-    parent_msg = await send_message(bot, chat_id, "⏳ *شروع فرایند دانلود آلبوم...*")
+async def download_album(bot, chat_id, collection_id, user_id, download_service, quality=None, status_msg=None):
+    if status_msg:
+        parent_msg = await edit_message(status_msg, "⏳ *شروع فرایند دانلود آلبوم...*")
+    else:
+        parent_msg = await send_message(bot, chat_id, "⏳ *شروع فرایند دانلود آلبوم...*")
 
     if not await download_service.album_tracker.acquire_lock(user_id, collection_id):
         parent_msg = await edit_message(parent_msg, "❌ *در حال حاضر دانلود این آلبوم در حال انجام است*")
@@ -30,8 +32,8 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
         # Log download start
         download_service.album_tracker.start_download(user_id, collection_id, parent_msg, len(tracks), coll_name)
 
-        markup = [[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{collection_id}:u{user_id}")]]
-        parent_msg = await edit_message(parent_msg, f"📀 *آلبوم:* {coll_name}\n🎵 *تعداد قطعات:* {len(tracks)}\n⬇️ *در حال دانلود...*", reply_markup=markup)
+        album_markup = InlineKeyboard(*[[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{collection_id}:u{user_id}")]])
+        parent_msg = await edit_message(parent_msg, f"📀 *آلبوم:* {coll_name}\n🎵 *تعداد قطعات:* {len(tracks)}\n⬇️ *در حال دانلود...*", reply_markup=album_markup)
 
         # Get album cover
         album_cover_bytes = await download_service.artwork_service.get_artwork_bytes(coll.get('collectionId'), coll.get('artworkUrl100'))
@@ -65,7 +67,8 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
                     is_batch=True, album_cover_bytes=album_cover_bytes,
                     collection_id=collection_id, selected_quality=quality_value,
                     track_name_hint=track_name, track_index=idx,
-                    status_prefix=progress_prefix
+                    status_prefix=progress_prefix,
+                    reply_markup=album_markup
                 )
 
                 if success:

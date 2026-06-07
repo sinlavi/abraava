@@ -209,14 +209,15 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             await send_message(bot, chat_id, "🎵 *کیفیت دانلود را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup))
         else:
             await bot.answer_callback_query(callback_query.id, text="⏳ در حال آماده‌سازی...")
+            # If quick download (not ASK), we don't have a specific status_msg yet, but it's fine.
             await download_service.download_and_send_track(chat_id, track_id, user_id)
 
     elif data.startswith("dl_q:"):
         quality, track_id = parts[1], parts[2]
         if track_id.isdigit(): track_id = int(track_id)
         await bot.answer_callback_query(callback_query.id, text=f"⏳ دانلود با کیفیت {quality}...")
-        await safe_delete(callback_query.message)
-        await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality)
+        # Don't delete, reuse the message as status_msg
+        await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality, status_msg=callback_query.message)
 
     elif data.startswith("preview:"):
         track_id = parts[1]
@@ -237,14 +238,15 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             await send_message(bot, chat_id, "📀 *کیفیت دانلود آلبوم را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup))
         else:
             await bot.answer_callback_query(callback_query.id, text="📀 شروع دانلود آلبوم...")
+            # If quick download (not ASK), we don't have a specific status_msg yet, but it's fine.
             asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service))
 
     elif data.startswith("dl_aq:"):
         quality, coll_id = parts[1], parts[2]
         if coll_id.isdigit(): coll_id = int(coll_id)
         await bot.answer_callback_query(callback_query.id, text=f"📀 شروع دانلود با کیفیت {quality}...")
-        await safe_delete(callback_query.message)
-        asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service, quality=quality))
+        # Don't delete, reuse the message as parent status msg in download_album
+        asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service, quality=quality, status_msg=callback_query.message))
 
     elif data.startswith("retry_failed:"):
         failed_ids = parts[1].split(",")
