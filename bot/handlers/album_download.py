@@ -57,8 +57,8 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
             progress_prefix = (
                 f"📀 *آلبوم:* {coll_name}\n"
                 f"📊 *وضعیت:* {idx}/{len(tracks)} قطعه\n"
-                f"✅ *موفق:* {success_count}  |  ❌ *ناموفق:* {failed_count}\n"
-                f"━━━━━━━━━━━━━━\n"
+                f"✅ *موفق:* {success_count}   \n❌ *ناموفق:* {failed_count}\n"
+               
                 f"⏳ *در حال پردازش:* {track_name}"
             )
 
