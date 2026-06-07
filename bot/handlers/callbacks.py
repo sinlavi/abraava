@@ -209,14 +209,14 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             await send_message(bot, chat_id, "🎵 *کیفیت دانلود را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup))
         else:
             await bot.answer_callback_query(callback_query.id, text="⏳ در حال آماده‌سازی...")
-            await download_service.download_and_send_track(chat_id, track_id, user_id)
+            _, _ = await download_service.download_and_send_track(chat_id, track_id, user_id)
 
     elif data.startswith("dl_q:"):
         quality, track_id = parts[1], parts[2]
         if track_id.isdigit(): track_id = int(track_id)
         await bot.answer_callback_query(callback_query.id, text=f"⏳ دانلود با کیفیت {quality}...")
         await safe_delete(callback_query.message)
-        await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality)
+        _, _ = await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality)
 
     elif data.startswith("preview:"):
         track_id = parts[1]
@@ -284,7 +284,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             settings = await user_settings_service.get_settings(user_id)
             quality_value = settings.download_quality.value
             if quality_value == "ask": quality_value = "192"
-            await download_service.download_and_send_track(chat_id, tid, user_id, selected_quality=quality_value)
+            _, _ = await download_service.download_and_send_track(chat_id, tid, user_id, selected_quality=quality_value)
         await safe_delete(callback_query.message)
 
 async def update_settings_msg(bot, message, user_id, user_settings_service):

@@ -74,7 +74,7 @@ async def quick_search(bot: Client, chat_id: int, user_id: int, term: str,
         if results and int(results.get("resultCount") or 0) > 0:
             track = results["results"][0]
             track_id = track.get('trackId')
-            await download_service.download_and_send_track(chat_id, track_id, user_id)
+            _, _ = await download_service.download_and_send_track(chat_id, track_id, user_id)
             await api_client.log_search(user_id, 'quick', term, 1)
             await safe_delete(status_msg)
         else:

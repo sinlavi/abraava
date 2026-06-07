@@ -60,17 +60,20 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
                     f"⬇️ *در حال دانلود...*"
                 )
                 prog_markup = [[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{collection_id}:u{user_id}")]]
-                parent_msg = await edit_message(parent_msg, progress_text, reply_markup=InlineKeyboard(*prog_markup))
+                parent_msg = await edit_message(parent_msg, progress_text, reply_markup=InlineKeyboard(*prog_markup), force_edit=True)
 
-                # Pass parent_msg to download_service to avoid new message creation
-                parent_msg = await download_service.download_and_send_track(
+                # Not passing parent_msg here because each track should have its own status message in batch mode
+                success, _ = await download_service.download_and_send_track(
                     chat_id, track['trackId'], user_id,
-                    status_msg=parent_msg,
                     is_batch=True, album_cover_bytes=album_cover_bytes,
                     collection_id=collection_id, selected_quality=quality_value,
                     track_name_hint=track.get('trackName'), track_index=idx
                 )
-                success_count += 1
+                if success:
+                    success_count += 1
+                else:
+                    failed_count += 1
+                    failed_tracks.append((track.get('trackId'), track.get('trackName', 'Unknown')))
             except Exception as e:
                 logger.error(f"Error downloading track {idx} in album: {e}")
                 failed_count += 1
@@ -85,7 +88,7 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
                 f"⬇️ *در حال دانلود...*"
             )
             prog_markup = [[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{collection_id}:u{user_id}")]]
-            parent_msg = await edit_message(parent_msg, progress_text, reply_markup=InlineKeyboard(*prog_markup))
+            parent_msg = await edit_message(parent_msg, progress_text, reply_markup=InlineKeyboard(*prog_markup), force_edit=True)
             await asyncio.sleep(0.5)
 
         final_text = f"✅ دانلود آلبوم {coll_name} به پایان رسید.\n🎵 مجموع قطعات: {len(tracks)}\n✅ موفق: {success_count}"

@@ -17,13 +17,13 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
     try:
         track_data = await get_track(track_id, status_msg=status_msg)
         if not track_data or not track_data.get("results"):
-            status_msg = await edit_message(status_msg, "اطلاعات آهنگ یافت نشد.", show_cancel=True)
+            status_msg = await edit_message(status_msg, "اطلاعات آهنگ یافت نشد.", show_cancel=True, force_edit=True)
             return
 
         track = track_data["results"][0]
         preview_url = track.get("previewUrl")
         if not preview_url:
-            status_msg = await edit_message(status_msg, "پیش‌نمایشی موجود نیست.", show_cancel=True)
+            status_msg = await edit_message(status_msg, "پیش‌نمایشی موجود نیست.", show_cancel=True, force_edit=True)
             return
 
         caption = f"🎧 *پیش‌نمایش آهنگ {track.get('trackName')}*\n\n{FOOTER}"
@@ -60,7 +60,7 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
                     await set_mirror('track', str(track_id), 'previewUrl', f'https://tapi.bale.ai/file/bot<token>/{msg.voice.id}')
                 await safe_delete(status_msg)
             else:
-                status_msg = await edit_message(status_msg, "دریافت پیش‌نمایش با خطا مواجه شد.", show_cancel=True)
+                status_msg = await edit_message(status_msg, "دریافت پیش‌نمایش با خطا مواجه شد.", show_cancel=True, force_edit=True)
     except Exception as e:
         logger.error(f"Failed to send preview: {e}")
-        status_msg = await edit_message(status_msg, f"خطا: {str(e)[:50]}", show_cancel=True)
+        status_msg = await edit_message(status_msg, f"خطا: {str(e)[:50]}", show_cancel=True, force_edit=True)

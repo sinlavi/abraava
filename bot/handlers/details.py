@@ -14,7 +14,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
     if not is_pagination:
         if message_to_edit:
             status_msg = message_to_edit
-            status_msg = await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات هنرمند...*")
+            status_msg = await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات هنرمند...*", force_edit=True)
         else:
             status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*", show_cancel=True)
     else:
@@ -101,7 +101,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "artist", artist_id, user_id=owner_id)
                 await safe_delete(status_msg)
             else:
-                status_msg = await edit_message(status_msg, text, reply_markup=markup_rows)
+                status_msg = await edit_message(status_msg, text, reply_markup=markup_rows, force_edit=True)
 
     except Exception as e:
         logger.error(f"Error in show_artist_page: {e}")
@@ -113,7 +113,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
     if not is_pagination:
         if message_to_edit:
             status_msg = message_to_edit
-            status_msg = await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات آلبوم...*")
+            status_msg = await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات آلبوم...*", force_edit=True)
         else:
             status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*", show_cancel=True)
     else:
@@ -203,7 +203,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id, user_id=owner_id)
                 await safe_delete(status_msg)
             else:
-                status_msg = await edit_message(status_msg, text, reply_markup=markup_rows)
+                status_msg = await edit_message(status_msg, text, reply_markup=markup_rows, force_edit=True)
 
     except Exception as e:
         logger.error(f"Error in show_collection_page: {e}")
@@ -216,7 +216,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         status_msg = await send_message(bot, chat_id, "🔄 *در حال بارگذاری اطلاعات آهنگ...*", show_cancel=True)
     else:
         status_msg = message_to_edit
-        status_msg = await edit_message(status_msg, "🔄 *در حال بارگذاری اطلاعات آهنگ...*")
+        status_msg = await edit_message(status_msg, "🔄 *در حال بارگذاری اطلاعات آهنگ...*", force_edit=True)
     try:
         data = await get_track(track_id, status_msg)
         if not data or not data.get("results"):
@@ -287,14 +287,14 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", track_id, user_id=owner_id)
                 await safe_delete(status_msg)
             else:
-                status_msg = await edit_message(status_msg, text, reply_markup=markup_rows)
+                status_msg = await edit_message(status_msg, text, reply_markup=markup_rows, force_edit=True)
         else:
             artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id or track_id, artwork_url, owner_id)
             if artwork_data:
                 await artwork_service.send_artwork_photo(bot, chat_id, artwork_data, text, markup_rows, "collection", collection_id or track_id, user_id=owner_id)
                 await safe_delete(status_msg)
             else:
-                status_msg = await edit_message(status_msg, text, reply_markup=markup_rows)
+                status_msg = await edit_message(status_msg, text, reply_markup=markup_rows, force_edit=True)
 
     except Exception as e:
         logger.error(f"Error in show_track_page: {e}")
