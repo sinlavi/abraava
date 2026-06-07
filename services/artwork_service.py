@@ -100,7 +100,7 @@ class ArtworkService:
                                   user_id: int = None):
         try:
             from utils.messages import _prepare_markup, FOOTER, send_message
-            markup = _prepare_markup(reply_markup, False)
+            markup = _prepare_markup(reply_markup, False, user_id=user_id)
 
             try:
                 if isinstance(artwork_data, str):

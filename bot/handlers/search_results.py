@@ -53,9 +53,9 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
     ])
 
     if message_to_edit:
-        return await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
+        return await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True, user_id=owner_id)
     else:
-        return await send_message(bot, chat_id, header, reply_markup=markup_rows)
+        return await send_message(bot, chat_id, header, reply_markup=markup_rows, user_id=owner_id)
 
 async def send_external_search_results(bot, chat_id, type_, term, results, page, search_cache_service, owner_id, message_to_edit=None):
     total_items = len(results)
@@ -101,6 +101,6 @@ async def send_external_search_results(bot, chat_id, type_, term, results, page,
             markup_rows.append(pagination)
 
     if message_to_edit:
-        return await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
+        return await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True, user_id=owner_id)
     else:
-        return await send_message(bot, chat_id, header, reply_markup=markup_rows)
+        return await send_message(bot, chat_id, header, reply_markup=markup_rows, user_id=owner_id)

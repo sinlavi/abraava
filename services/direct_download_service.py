@@ -103,10 +103,10 @@ class DirectDownloadService:
     async def ask_confirmation(self, chat_id, url, user_id=None):
         # This method is now mostly a fallback for non-YouTube/non-SoundCloud direct links
         # that couldn't be parsed into IDs.
-        status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*")
+        status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*", user_id=user_id)
         meta = await self.get_metadata(url)
         if not meta:
-            status_msg = await edit_message(status_msg, "❌ خطا در دریافت اطلاعات پیوند.")
+            status_msg = await edit_message(status_msg, "❌ خطا در دریافت اطلاعات پیوند.", user_id=user_id)
             return
 
         from utils.helpers import format_duration
@@ -142,16 +142,17 @@ class DirectDownloadService:
                 await safe_delete(status_msg)
             except Exception as e:
                 logger.warning(f"Failed to send thumbnail: {e}")
-                status_msg = await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
+                status_msg = await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup), user_id=user_id)
         else:
-            status_msg = await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
+            status_msg = await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup), user_id=user_id)
 
-    async def _update_status(self, chat_id, msg, text, reply_markup=None):
-        await safe_delete(msg)
-        return await send_message(self.bot, chat_id, text, reply_markup=reply_markup, show_cancel=True)
+    async def _update_status(self, chat_id, msg, text, reply_markup=None, user_id=None):
+        if msg:
+            return await edit_message(msg, text, reply_markup=reply_markup, show_cancel=True, user_id=user_id)
+        return await send_message(self.bot, chat_id, text, reply_markup=reply_markup, show_cancel=True, user_id=user_id)
 
     async def download_direct(self, chat_id, url, user_id, quality="192"):
-        status_msg = await send_message(self.bot, chat_id, f"⏳ *در حال شروع دانلود...*")
+        status_msg = await send_message(self.bot, chat_id, f"⏳ *در حال شروع دانلود...*", user_id=user_id)
 
         unique_id = uuid.uuid4().hex
         temp_dir = os.path.join(os.getcwd(), "downloads", unique_id)
@@ -186,7 +187,7 @@ class DirectDownloadService:
                     continue
 
             if success and mp3_path:
-                status_msg = await self._update_status(chat_id, status_msg, "☁️ *در حال آماده‌سازی فایل...*")
+                status_msg = await self._update_status(chat_id, status_msg, "☁️ *در حال آماده‌سازی فایل...*", user_id=user_id)
                 self.tagging_service.tag_mp3(mp3_path, track_data)
 
                 track_name = track_data['trackName']
@@ -219,12 +220,12 @@ class DirectDownloadService:
                 await safe_delete(status_msg)
                 return status_msg, True
             else:
-                status_msg = await self._update_status(chat_id, status_msg, "❌ دانلود با خطا مواجه شد.")
+                status_msg = await self._update_status(chat_id, status_msg, "❌ دانلود با خطا مواجه شد.", user_id=user_id)
                 return status_msg, False
 
         except Exception as e:
             logger.error(f"Direct download service error: {e}")
-            status_msg = await self._update_status(chat_id, status_msg, f"❌ خطا: {str(e)[:50]}")
+            status_msg = await self._update_status(chat_id, status_msg, f"❌ خطا: {str(e)[:50]}", user_id=user_id)
             return status_msg, False
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)

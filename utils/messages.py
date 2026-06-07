@@ -7,15 +7,16 @@ import asyncio
 
 logger = logging.getLogger("ABRAAVA:MESSAGES")
 
-def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_cancel=False):
+def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_cancel=False, user_id=None):
     if reply_markup is None: reply_markup = []
     if isinstance(reply_markup, list):
         # Create a deep copy to avoid modifying the original list passed by reference
         markup = copy.deepcopy(reply_markup)
 
         # Flatten and check for close button in all nested lists
+        # Use startswith to support owned close buttons like 'close:u123'
         has_close = any(
-            getattr(btn, 'callback_data', '') == 'close'
+            str(getattr(btn, 'callback_data', '')).startswith('close')
             for row in markup
             if isinstance(row, list)
             for btn in row
@@ -23,21 +24,22 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
 
         if not no_close and not has_close:
             if task_id:
-                markup.append([create_cancel_button(task_id)])
+                markup.append([create_cancel_button(task_id, user_id=user_id)])
             elif show_cancel:
-                markup.append([InlineKeyboardButton(text="⏹️ لغو عملیات", callback_data="close")])
+                cb = f"close:u{user_id}" if user_id else "close"
+                markup.append([InlineKeyboardButton(text="⏹️ لغو عملیات", callback_data=cb)])
             elif show_info:
                 markup.append([create_info_channel_button()])
 
             # Final check just in case something was added but not 'close'
             has_close_now = any(
-                getattr(btn, 'callback_data', '') == 'close'
+                str(getattr(btn, 'callback_data', '')).startswith('close')
                 for row in markup
                 if isinstance(row, list)
                 for btn in row
             )
             if not has_close_now:
-                markup.append([create_close_button()])
+                markup.append([create_close_button(user_id)])
 
         return InlineKeyboard(*markup)
     return reply_markup
@@ -54,8 +56,8 @@ async def safe_delete(message, attempt=1):
             return await safe_delete(message, attempt + 1)
         logger.debug(f"Safe delete failed: {e}")
 
-async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None, show_cancel=False):
-    markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
+async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None, show_cancel=False, user_id=None):
+    markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel, user_id=user_id)
     try:
         return await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
     except Exception as e:
@@ -64,10 +66,10 @@ async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, sh
             return await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
         raise
 
-async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False, show_cancel=False, attempt=1):
+async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False, show_cancel=False, attempt=1, user_id=None):
     if not message: return None
     chat_id = message.chat.id
-    markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
+    markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel, user_id=user_id)
 
     try:
         return await message.edit(text=f"{text}{FOOTER}", reply_markup=markup)
@@ -78,12 +80,12 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
             return message
 
         if "message not found" in err_msg:
-            return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
+            return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id, user_id=user_id)
 
         max_attempts = 10 if force_edit else 3
         if ("rate limit" in err_msg or "too many" in err_msg) and attempt < max_attempts:
             await asyncio.sleep(0.5 * attempt)
-            return await edit_message(message, text, reply_markup, no_close, show_info, task_id, force_edit, show_cancel, attempt + 1)
+            return await edit_message(message, text, reply_markup, no_close, show_info, task_id, force_edit, show_cancel, attempt + 1, user_id=user_id)
 
         if force_edit:
             logger.error(f"Force edit failed after {attempt} attempts: {e}")
@@ -95,8 +97,8 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
         except Exception:
             pass
 
-        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
+        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id, user_id=user_id)
 
-async def reply_message(message: Message, text: str, reply_markup=None, show_info=False):
-    markup = _prepare_markup(reply_markup, False, show_info)
+async def reply_message(message: Message, text: str, reply_markup=None, show_info=False, user_id=None):
+    markup = _prepare_markup(reply_markup, False, show_info, user_id=user_id)
     return await message.reply(text=f"{text}{FOOTER}", reply_markup=markup)

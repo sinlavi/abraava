@@ -9,9 +9,9 @@ logger = logging.getLogger("ABRAAVA:ALBUM_DL")
 
 async def download_album(bot, chat_id, collection_id, user_id, download_service, quality=None, status_msg=None):
     if status_msg:
-        await safe_delete(status_msg)
-
-    parent_msg = await send_message(bot, chat_id, "⏳ *شروع فرایند دانلود آلبوم...*")
+        parent_msg = await edit_message(status_msg, "⏳ *شروع فرایند دانلود آلبوم...*", user_id=user_id)
+    else:
+        parent_msg = await send_message(bot, chat_id, "⏳ *شروع فرایند دانلود آلبوم...*", user_id=user_id)
 
     if not await download_service.album_tracker.acquire_lock(user_id, collection_id):
         await safe_delete(parent_msg)
@@ -31,9 +31,8 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
         tracks = tracks_data['results']
         coll_name = coll.get('collectionName', 'آلبوم')
 
-        album_markup = InlineKeyboard(*[[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{collection_id}:u{user_id}")]])
-        await safe_delete(parent_msg)
-        parent_msg = await send_message(bot, chat_id, f"📀 *آلبوم:* {coll_name}\n🎵 *تعداد قطعات:* {len(tracks)}\n⬇️ *در حال دانلود...*", reply_markup=album_markup)
+        album_markup = [[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{collection_id}:u{user_id}")]]
+        parent_msg = await edit_message(parent_msg, f"📀 *آلبوم:* {coll_name}\n🎵 *تعداد قطعات:* {len(tracks)}\n⬇️ *در حال دانلود...*", reply_markup=album_markup, user_id=user_id)
 
         # Log download start - MUST be after the final parent_msg is created so tracker has correct reference
         download_service.album_tracker.start_download(user_id, collection_id, parent_msg, len(tracks), coll_name)
@@ -57,8 +56,8 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
             progress_prefix = (
                 f"📀 *آلبوم:* {coll_name}\n"
                 f"📊 *وضعیت:* {idx}/{len(tracks)} قطعه\n"
-                f"✅ *موفق:* {success_count}  |  ❌ *ناموفق:* {failed_count}\n"
-                f"━━━━━━━━━━━━━━\n"
+                f"✅ *موفق:* {success_count}\n"
+                f"❌ *ناموفق:* {failed_count}\n\n"
                 f"⏳ *در حال پردازش:* {track_name}"
             )
 
@@ -116,8 +115,7 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
 
         markup_rows.append([create_close_button(user_id)])
 
-        await safe_delete(parent_msg)
-        await send_message(bot, chat_id, final_text, reply_markup=InlineKeyboard(*markup_rows))
+        await edit_message(parent_msg, final_text, reply_markup=markup_rows, user_id=user_id)
 
     finally:
         download_service.album_tracker.finish_download(user_id, collection_id, success_count, failed_count)

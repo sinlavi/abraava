@@ -18,7 +18,7 @@ async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, ter
     type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ", "collection": "آلبوم"}
     logger.info(f"Search: {type_} - {term}")
 
-    status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجوی {type_fa_map.get(type_, type_)}: {term}...*", show_cancel=True)
+    status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجوی {type_fa_map.get(type_, type_)}: {term}...*", show_cancel=True, user_id=user_id)
 
     try:
         results = {}
@@ -34,16 +34,16 @@ async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, ter
             await api_client.log_search(user_id, type_, term, int(results.get("resultCount") or 0))
         else:
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}:u{user_id}")]]
-            status_msg = await edit_message(status_msg, f"هیچ نتیجه‌ای برای '{term}' یافت نشد.", reply_markup=retry_markup)
+            status_msg = await edit_message(status_msg, f"هیچ نتیجه‌ای برای '{term}' یافت نشد.", reply_markup=retry_markup, user_id=user_id)
     except Exception as e:
         logger.error(f"Search error: {e}")
         retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}:u{user_id}")]]
-        status_msg = await edit_message(status_msg, "خطا در جستجو.", reply_markup=retry_markup)
+        status_msg = await edit_message(status_msg, "خطا در جستجو.", reply_markup=retry_markup, user_id=user_id)
 
 async def handle_external_search(bot: Client, chat_id: int, user_id: int, type_: str, term: str, search_cache_service):
     source_map = {"ytm": "یوتیوب موزیک", "sc": "ساندکلاد", "sp": "اسپاتیفای", "itunes_official": "آیتیونز"}
     source_name = source_map.get(type_, "منابع خارجی")
-    status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجو در {source_name}: {term}...*", show_cancel=True)
+    status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجو در {source_name}: {term}...*", show_cancel=True, user_id=user_id)
 
     try:
         results = []
@@ -59,14 +59,14 @@ async def handle_external_search(bot: Client, chat_id: int, user_id: int, type_:
         if results:
             status_msg = await send_external_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg)
         else:
-            status_msg = await edit_message(status_msg, f"هیچ نتیجه‌ای در {source_name} یافت نشد.")
+            status_msg = await edit_message(status_msg, f"هیچ نتیجه‌ای در {source_name} یافت نشد.", user_id=user_id)
     except Exception as e:
         logger.error(f"External search error: {e}")
-        status_msg = await edit_message(status_msg, f"خطا در جستجو در {source_name}.")
+        status_msg = await edit_message(status_msg, f"خطا در جستجو در {source_name}.", user_id=user_id)
 
 async def quick_search(bot: Client, chat_id: int, user_id: int, term: str,
                        api_client, user_settings_service, download_service):
-    status_msg = await send_message(bot, chat_id, f"⚡ *جستجوی سریع {term}...*", show_cancel=True)
+    status_msg = await send_message(bot, chat_id, f"⚡ *جستجوی سریع {term}...*", show_cancel=True, user_id=user_id)
     try:
         results = await search_itunes(term, entity="musicTrack", limit=1)
         if results and int(results.get("resultCount") or 0) > 0:
@@ -78,8 +78,8 @@ async def quick_search(bot: Client, chat_id: int, user_id: int, term: str,
                 await safe_delete(status_msg)
         else:
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}:u{user_id}")]]
-            status_msg = await edit_message(status_msg, "نتیجه‌ای یافت نشد.", reply_markup=retry_markup)
+            status_msg = await edit_message(status_msg, "نتیجه‌ای یافت نشد.", reply_markup=retry_markup, user_id=user_id)
     except Exception as e:
         logger.error(f"Quick search error: {e}")
         retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}:u{user_id}")]]
-        status_msg = await edit_message(status_msg, f"خطا در جستجوی سریع: {e}", reply_markup=retry_markup)
+        status_msg = await edit_message(status_msg, f"خطا در جستجوی سریع: {e}", reply_markup=retry_markup, user_id=user_id)

@@ -63,25 +63,25 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     if data == "menu_quick_mode":
         current = (await user_settings_service.get_settings(user_id)).quick_mode
         message = await edit_message(callback_query.message, f"⚡ *تغییر حالت سریع*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
-                          reply_markup=get_confirmation_keyboard("quick_mode", not current, user_id=user_id))
+                          reply_markup=get_confirmation_keyboard("quick_mode", not current, user_id=user_id), user_id=user_id)
         return
 
     if data == "menu_artwork":
         current = (await user_settings_service.get_settings(user_id)).show_artwork
         message = await edit_message(callback_query.message, f"🖼️ *تغییر نمایش کاور*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
-                          reply_markup=get_confirmation_keyboard("show_artwork", not current, user_id=user_id))
+                          reply_markup=get_confirmation_keyboard("show_artwork", not current, user_id=user_id), user_id=user_id)
         return
 
     if data == "menu_auto_download":
         current = (await user_settings_service.get_settings(user_id)).auto_download
         message = await edit_message(callback_query.message, f"⚡ *تغییر دانلود خودکار*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
-                          reply_markup=get_confirmation_keyboard("auto_download", not current, user_id=user_id))
+                          reply_markup=get_confirmation_keyboard("auto_download", not current, user_id=user_id), user_id=user_id)
         return
 
     if data == "menu_notifications":
         current = (await user_settings_service.get_settings(user_id)).notifications
         message = await edit_message(callback_query.message, f"🔔 *تغییر اعلان‌ها*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
-                          reply_markup=get_confirmation_keyboard("notifications", not current, user_id=user_id))
+                          reply_markup=get_confirmation_keyboard("notifications", not current, user_id=user_id), user_id=user_id)
         return
 
     if data.startswith("confirm_dl:"):
@@ -109,7 +109,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     if data == "show_quality_menu":
         settings = await user_settings_service.get_settings(user_id)
         message = await edit_message(callback_query.message, "🎵 *کیفیت دانلود را انتخاب کنید:*",
-                          reply_markup=get_quality_keyboard(settings.download_quality, user_id=user_id))
+                          reply_markup=get_quality_keyboard(settings.download_quality, user_id=user_id), user_id=user_id)
         return
 
     if data.startswith("set_quality:"):
@@ -206,10 +206,10 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
                 [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_q:128:{track_id}:u{user_id}")],
                 [create_close_button(user_id)]
             ]
-            await send_message(bot, chat_id, "🎵 *کیفیت دانلود را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup))
+            await send_message(bot, chat_id, "🎵 *کیفیت دانلود را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup), user_id=user_id)
         else:
             await bot.answer_callback_query(callback_query.id, text="⏳ در حال آماده‌سازی...")
-            status_msg = await send_message(bot, chat_id, "⏳ *در حال آماده‌سازی دانلود...*", show_cancel=True)
+            status_msg = await send_message(bot, chat_id, "⏳ *در حال آماده‌سازی دانلود...*", show_cancel=True, user_id=user_id)
             status_msg, _ = await download_service.download_and_send_track(chat_id, track_id, user_id, status_msg=status_msg)
 
     elif data.startswith("dl_q:"):
@@ -235,10 +235,10 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
                 [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_aq:128:{coll_id}:u{user_id}")],
                 [create_close_button(user_id)]
             ]
-            await send_message(bot, chat_id, "📀 *کیفیت دانلود آلبوم را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup))
+            await send_message(bot, chat_id, "📀 *کیفیت دانلود آلبوم را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup), user_id=user_id)
         else:
             await bot.answer_callback_query(callback_query.id, text="📀 شروع دانلود آلبوم...")
-            status_msg = await send_message(bot, chat_id, "⏳ *در حال آماده‌سازی دانلود آلبوم...*", show_cancel=True)
+            status_msg = await send_message(bot, chat_id, "⏳ *در حال آماده‌سازی دانلود آلبوم...*", show_cancel=True, user_id=user_id)
             asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service, status_msg=status_msg))
 
     elif data.startswith("dl_aq:"):
@@ -302,5 +302,5 @@ async def update_settings_msg(bot, message, user_id, user_settings_service):
         f"🔔 *اعلان‌های سیستم:* {'✅ فعال' if settings.notifications else '❌ غیرفعال'}\n"
         f"\n💡 *راهنما:* برای تغییر هر مورد، روی دکمه مربوطه کلیک کنید."
     )
-    markup = get_settings_keyboard(settings.quick_mode, quality_text, settings.show_artwork, settings.auto_download, settings.notifications)
-    message = await edit_message(message, text, reply_markup=markup)
+    markup = get_settings_keyboard(settings.quick_mode, quality_text, settings.show_artwork, settings.auto_download, settings.notifications, user_id=user_id)
+    message = await edit_message(message, text, reply_markup=markup, user_id=user_id)

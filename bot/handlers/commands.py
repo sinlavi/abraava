@@ -21,7 +21,7 @@ async def start_command(bot: Client, message: Message):
         for channel in REQUIRED_CHANNELS:
             markup.append([InlineKeyboardButton(text=f"📢 عضویت در {channel['name']}", url=f"https://ble.ir/{channel['username'].lstrip('@')}")])
 
-    await send_message(bot, message.chat.id, welcome_text, reply_markup=InlineKeyboard(*markup) if markup else None)
+    await send_message(bot, message.chat.id, welcome_text, reply_markup=InlineKeyboard(*markup) if markup else None, user_id=user_id)
 
 async def help_command(bot: Client, message: Message, is_callback=False):
     is_group = message.chat.type in ["group", "supergroup"]
@@ -55,12 +55,14 @@ async def help_command(bot: Client, message: Message, is_callback=False):
             "⚙️ *بخش تنظیمات:* با دستور /settings می‌توانید کیفیت دانلود، نمایش کاور و حالت دانلود خودکار را مدیریت کنید.\n"
             "📊 *آمار من:* با دستور /stats سهمیه باقی‌مانده و گزارش فعالیت خود را مشاهده کنید."
         )
+    user_id = message.author.id
     if is_callback:
-        message = await edit_message(message, help_text)
+        message = await edit_message(message, help_text, user_id=user_id)
     else:
-        await send_message(bot, message.chat.id, help_text)
+        await send_message(bot, message.chat.id, help_text, user_id=user_id)
 
 async def about_command(bot: Client, message: Message):
+    user_id = message.author.id
     about_text = (
         f"ℹ️ *درباره پروژه {BOT_NAME}*\n\n"
         f"ربات {BOT_NAME} پیشرفته‌ترین ابزار جستجو و دانلود موسیقی در پیام‌رسان بله است که با اتصال به دیتابیس‌های جهانی همچون iTunes و YouTube Music، بهترین تجربه را برای شما فراهم می‌کند.\n\n"
@@ -72,4 +74,4 @@ async def about_command(bot: Client, message: Message):
         "🔹 *سرعت فوق‌العاده:* سیستم پردازش موازی و کشینگ هوشمند جهت تسریع در ارسال فایل‌ها.\n\n"
         "💎 طراحی شده برای عاشقان موسیقی."
     )
-    await send_message(bot, message.chat.id, about_text)
+    await send_message(bot, message.chat.id, about_text, user_id=user_id)

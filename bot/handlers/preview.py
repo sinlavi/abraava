@@ -12,23 +12,24 @@ from core.config import FOOTER
 from bot.keyboards import create_close_button
 from balethon.objects import InlineKeyboard, InlineKeyboardButton
 
-async def _update_preview_status(bot, chat_id, msg, text):
-    await safe_delete(msg)
-    return await send_message(bot, chat_id, text, show_cancel=True)
+async def _update_preview_status(bot, chat_id, msg, text, user_id=None):
+    if msg:
+        return await edit_message(msg, text, show_cancel=True, user_id=user_id)
+    return await send_message(bot, chat_id, text, show_cancel=True, user_id=user_id)
 
 async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None):
-    status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*")
+    status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*", user_id=user_id)
 
     try:
         track_data = await get_track(track_id)
         if not track_data or not track_data.get("results"):
-            status_msg = await _update_preview_status(bot, chat_id, status_msg, "اطلاعات آهنگ یافت نشد.")
+            status_msg = await _update_preview_status(bot, chat_id, status_msg, "اطلاعات آهنگ یافت نشد.", user_id=user_id)
             return status_msg
 
         track = track_data["results"][0]
         preview_url = track.get("previewUrl")
         if not preview_url:
-            status_msg = await _update_preview_status(bot, chat_id, status_msg, "پیش‌نمایشی موجود نیست.")
+            status_msg = await _update_preview_status(bot, chat_id, status_msg, "پیش‌نمایشی موجود نیست.", user_id=user_id)
             return status_msg
 
         caption = f"🎧 *پیش‌نمایش آهنگ {track.get('trackName')}*\n\n{FOOTER}"
@@ -65,9 +66,9 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
                     await set_mirror('track', str(track_id), 'previewUrl', f'https://tapi.bale.ai/file/bot<token>/{msg.voice.id}')
                 await safe_delete(status_msg)
             else:
-                status_msg = await _update_preview_status(bot, chat_id, status_msg, "دریافت پیش‌نمایش با خطا مواجه شد.")
+                status_msg = await _update_preview_status(bot, chat_id, status_msg, "دریافت پیش‌نمایش با خطا مواجه شد.", user_id=user_id)
     except Exception as e:
         logger.error(f"Failed to send preview: {e}")
-        status_msg = await _update_preview_status(bot, chat_id, status_msg, f"خطا: {str(e)[:50]}")
+        status_msg = await _update_preview_status(bot, chat_id, status_msg, f"خطا: {str(e)[:50]}", user_id=user_id)
 
     return status_msg
