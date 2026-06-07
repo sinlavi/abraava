@@ -8,7 +8,7 @@ from pathlib import Path
 import yt_dlp
 from ytmusicapi import YTMusic
 import spotipy
-from spotipy.oauth_createmanager import SpotifyClientCredentials
+from spotipy.oauth2 import SpotifyClientCredentials
 
 from core.config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, PROXY
 from core.logger import logger
