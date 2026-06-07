@@ -1,5 +1,5 @@
 import asyncio
-# Force event loop creation for balethon compatibility with Python 3.10+
+# Force event loop creation for balethon compatibility
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
 
@@ -16,16 +16,24 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 os.environ['PATH'] = os.getcwd() + os.pathsep + os.environ.get('PATH', '')
 
 def start_warp():
+    """Start Cloudflare WARP proxy as in the old version (caomingjun/warp equivalent)."""
     if os.path.exists("./warp-plus"):
-        print("🚀 Starting WARP proxy...")
-        # Start warp-plus in the background on port 1080 (as in old version)
-        # Port 1080 is the standard port checked by _check_proxy() in the codebase
-        subprocess.Popen(["./warp-plus", "-b", "127.0.0.1:1080"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print("✅ WARP proxy started on socks5://127.0.0.1:1080")
-    else:
-        print("⚠️ warp-plus binary not found, skipping WARP start.")
+        print("🚀 Starting Cloudflare WARP (socks5://127.0.0.1:1080)...")
+        # Start warp-plus in the background on port 1080
+        # This port is exactly what the original _check_proxy() logic in the crawlers expects.
+        subprocess.Popen(
+            ["./warp-plus", "-b", "127.0.0.1:1080"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
 
-# Start WARP before any other imports
+        # Wait a moment for WARP to initialize
+        time.sleep(2)
+        print("✅ WARP is active.")
+    else:
+        print("⚠️ warp-plus not found. Proceeding without local proxy.")
+
+# Initialize WARP before any application logic to ensure it's ready for imports
 start_warp()
 
 from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
@@ -223,7 +231,7 @@ async def on_message(message: Message):
                             else:
                                 status_msg = await edit_message(status_msg, "❌ متأسفانه نسخه قابل دانلودی یافت نشد.")
                         else:
-                            status_msg = edit_message(status_msg, "❌ متأسفانه اطلاعات کافی برای این پیوند یافت نشد.")
+                            status_msg = await edit_message(status_msg, "❌ متأسفانه اطلاعات کافی برای این پیوند یافت نشد.")
             elif type_ == "direct_link":
                 yt_m = re.search(r'(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})', term)
                 sc_m = re.search(r'soundcloud\.com\/([a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+)', term)
