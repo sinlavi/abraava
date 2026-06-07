@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: abraava-bot
+    env: docker
+    plan: free
+    region: oregon
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: BOT_TOKEN
+        sync: false
+      - key: DB_CHANNEL_ID
+        sync: false
+      - key: INFO_CHANNEL_ID
+        sync: false
+      - key: API_BASE_URL
+        sync: false
+      - key: API_TOKEN
+        sync: false
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: SPOTIFY_CLIENT_SECRET
+        sync: false

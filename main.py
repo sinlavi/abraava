@@ -1,3 +1,6 @@
+import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
 from balethon import Client
 from balethon.objects import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboard
@@ -228,9 +231,27 @@ async def on_callback(callback_query: CallbackQuery):
 def signal_handler(sig, frame):
     sys.exit(0)
 
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, format, *args):
+        return
+
+def run_health_check_server():
+    port = int(os.getenv("PORT", "8080"))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    logger.info(f"Health check server started on port {port}")
+    server.serve_forever()
+
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+    threading.Thread(target=run_health_check_server, daemon=True).start()
 
     logger.info("ABRAAVA bot is starting...")
     while True:
