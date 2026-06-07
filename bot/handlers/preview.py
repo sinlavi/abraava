@@ -15,7 +15,7 @@ from balethon.objects import InlineKeyboard, InlineKeyboardButton
 async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None):
     status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*")
     try:
-        track_data = await get_track(track_id, status_msg=status_msg)
+        track_data, status_msg = await get_track(track_id, status_msg=status_msg)
         if not track_data or not track_data.get("results"):
             status_msg = await edit_message(status_msg, "اطلاعات آهنگ یافت نشد.", show_cancel=True, force_edit=True)
             return

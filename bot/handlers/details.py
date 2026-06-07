@@ -24,7 +24,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         artist_task = asyncio.create_task(get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force))
         collections_task = asyncio.create_task(get_or_crawl_artist_collections(artist_id))
 
-        artist_data, collections_data = await asyncio.gather(artist_task, collections_task)
+        (artist_data, status_msg), (collections_data, _) = await asyncio.gather(artist_task, collections_task)
 
         if not artist_data or not artist_data.get('results'):
             status_msg = await edit_message(status_msg, "هنرمند مورد نظر یافت نشد.")
@@ -123,7 +123,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         collection_task = asyncio.create_task(get_or_crawl_collection(collection_id, status_msg, force))
         tracks_task = asyncio.create_task(get_or_crawl_collection_tracks(collection_id))
 
-        collection_data, tracks_data = await asyncio.gather(collection_task, tracks_task)
+        (collection_data, status_msg), (tracks_data, _) = await asyncio.gather(collection_task, tracks_task)
 
         if not collection_data or not collection_data.get('results'):
             status_msg = await edit_message(status_msg, "آلبوم مورد نظر یافت نشد.")
@@ -218,7 +218,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         status_msg = message_to_edit
         status_msg = await edit_message(status_msg, "🔄 *در حال بارگذاری اطلاعات آهنگ...*", force_edit=True)
     try:
-        data = await get_track(track_id, status_msg)
+        data, status_msg = await get_track(track_id, status_msg)
         if not data or not data.get("results"):
             status_msg = await edit_message(status_msg, "آهنگ مورد نظر یافت نشد.")
             return

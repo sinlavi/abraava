@@ -69,7 +69,7 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
         # Only delete and send new if it's NOT among the recent messages.
         # This prevents the bot from "flickering" if it's still near the end of the chat.
         await safe_delete(message)
-        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
+        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id, show_cancel=show_cancel)
 
     try:
         if hasattr(message, 'photo') and message.photo:
@@ -79,9 +79,13 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
         if msg: last_message_tracker.set_last(chat_id, msg.id)
         return msg
     except Exception as e:
-        if "message not found" not in str(e).lower():
+        err_msg = str(e).lower()
+        if "message is not modified" in err_msg:
+            return message
+        if "message not found" not in err_msg:
             logger.warning(f"Failed to edit, sending new: {e}")
-        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
+        await safe_delete(message)
+        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id, show_cancel=show_cancel)
 
 async def reply_message(message: Message, text: str, reply_markup=None, show_info=False):
     markup = _prepare_markup(reply_markup, False, show_info)

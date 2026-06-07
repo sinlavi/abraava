@@ -43,8 +43,9 @@ class DownloadService:
             created_status = True
 
         temp_dir = None
+        success = False
         try:
-            track_data = await get_track(track_id, status_msg if created_status else None)
+            track_data, status_msg = await get_track(track_id, status_msg if created_status else None)
             if not track_data or not track_data.get("results"):
                 status_msg = await edit_message(status_msg, "خطا در دریافت اطلاعات آهنگ.", force_edit=True)
                 return False, status_msg
@@ -62,13 +63,14 @@ class DownloadService:
             if audio_cache:
                 logger.info(f"Using cached audio for track {track_id} (quality: {quality_value}) -> {audio_cache}")
                 try:
-                    if created_status: status_msg = await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*", force_edit=True)
+                    if status_msg: status_msg = await edit_message(status_msg, "📤 *در حال ارسال فایل از حافظه کش...*", force_edit=True)
                     markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
                     await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=InlineKeyboard(*markup))
                     await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
                                                      track.get('artistName', ''), track.get('collectionName', ''),
                                                      0, 'cache', quality_value)
                     await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
+                    success = True
                     return True, status_msg
                 except Exception as e:
                     logger.error(f"Cache send failed: {e}")
@@ -91,7 +93,7 @@ class DownloadService:
                 logger.info(f"Using direct URL for external track {track_id}: {video_url}")
 
             if not video_url:
-                if created_status: status_msg = await edit_message(status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*", force_edit=True)
+                if status_msg: status_msg = await edit_message(status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*", force_edit=True, show_cancel=True)
                 logger.info(f"Searching YouTube for track {track_id}: {track.get('trackName')} - {track.get('artistName')}")
                 video_id = await search_youtube_track(track.get("trackName", ""), track.get("artistName", ""),
                                                     track.get("collectionName", ""), track.get("releaseDate", "")[:4])
@@ -106,16 +108,14 @@ class DownloadService:
                 if collection_id:
                     self.album_tracker.start_track(user_id, collection_id, track.get("trackName", ""))
 
-                if created_status: status_msg = await edit_message(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*", show_cancel=True, force_edit=True)
+                if status_msg: status_msg = await edit_message(status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*", show_cancel=True, force_edit=True)
                 logger.info(f"Downloading from YouTube: {video_url} with quality {quality_value}")
                 mp3_path = await download_audio(video_url, quality=quality_value)
                 if not mp3_path: raise Exception("Download failed")
 
                 temp_dir = os.path.dirname(mp3_path)
-                if created_status: status_msg = await edit_message(status_msg, "🏷️ *در حال تگ‌گذاری فایل...*", force_edit=True)
+                if status_msg: status_msg = await edit_message(status_msg, "🏷️☁️ *در حال تگ‌گذاری و آپلود فایل...*", force_edit=True, show_cancel=True)
                 self.tagging_service.tag_mp3(Path(mp3_path), track, cover_bytes)
-
-                if created_status: status_msg = await edit_message(status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*", force_edit=True)
 
                 markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
                 with open(mp3_path, 'rb') as f:
@@ -131,11 +131,16 @@ class DownloadService:
                                                  file_size, 'youtube', quality_value)
                 self.download_rate_limiter.record_download(user_id, quality_value)
                 await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
+                success = True
                 return True, status_msg
         except Exception as e:
             logger.error(f"Download error: {e}")
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}:u{user_id}")]]
-            status_msg = await edit_message(status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}", reply_markup=InlineKeyboard(*retry_markup), force_edit=True)
+
+            # Use hint if track is not yet initialized
+            t_name = track.get('trackName', '') if 'track' in locals() else (track_name_hint or "آهنگ")
+            status_msg = await edit_message(status_msg, f"❌ خطا در دانلود {t_name}", reply_markup=InlineKeyboard(*retry_markup), force_edit=True)
+
             cancel_cb = None
             if collection_id:
                 async def cancel_album(): self.album_tracker.cancel_download(user_id, collection_id)
@@ -144,7 +149,7 @@ class DownloadService:
             return False, status_msg
         finally:
             if temp_dir: shutil.rmtree(temp_dir, ignore_errors=True)
-            if is_batch and created_status:
+            if created_status and (is_batch or success):
                 await safe_delete(status_msg)
 
     def _build_caption(self, track, quality_value):

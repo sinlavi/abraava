@@ -148,11 +148,11 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
 async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50, official: bool = False) -> Optional[Dict[str, Any]]:
     return await fetch_itunes("search", {"term": term, "media": "music", "limit": limit, "entity": entity} if entity else {"term": term, "media": "music", "limit": limit}, official=official)
 
-async def lookup_itunes(id: Union[int, str], entity: Optional[str] = None, bypass_cache: bool = False, status_msg: Message = None, status_text: str = None, official: bool = False) -> Optional[Dict[str, Any]]:
+async def lookup_itunes(id: Union[int, str], entity: Optional[str] = None, bypass_cache: bool = False, status_msg: Message = None, status_text: str = None, official: bool = False) -> Tuple[Optional[Dict[str, Any]], Optional[Message]]:
     if status_msg and status_text:
-        try: status_msg = await edit_message(status_msg, status_text, show_cancel=True, force_edit=True)
-        except: pass
-    return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache, official=official)
+        status_msg = await edit_message(status_msg, status_text, show_cancel=True, force_edit=True)
+    data = await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache, official=official)
+    return data, status_msg
 
 async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, mirror_url: str, quality: str = None) -> Optional[Dict[str, Any]]:
     if str(entity_id).startswith(("yt_", "sc_", "sp_")):

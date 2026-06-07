@@ -12,15 +12,15 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
     parent_msg = await send_message(bot, chat_id, "⏳ *شروع فرایند دانلود آلبوم...*")
 
     if not await download_service.album_tracker.acquire_lock(user_id, collection_id):
-        parent_msg = await edit_message(parent_msg, "❌ *در حال حاضر دانلود این آلبوم در حال انجام است*")
+        parent_msg = await edit_message(parent_msg, "❌ *در حال حاضر دانلود این آلبوم در حال انجام است*", force_edit=True)
         return
 
     try:
-        collection_data = await get_or_crawl_collection(collection_id)
-        tracks_data = await get_or_crawl_collection_tracks(collection_id)
+        collection_data, _ = await get_or_crawl_collection(collection_id)
+        tracks_data, _ = await get_or_crawl_collection_tracks(collection_id)
 
         if not collection_data or not tracks_data:
-            parent_msg = await edit_message(parent_msg, "❌ اطلاعات آلبوم یافت نشد")
+            parent_msg = await edit_message(parent_msg, "❌ اطلاعات آلبوم یافت نشد", force_edit=True)
             return
 
         coll = collection_data['results'][0]
@@ -31,7 +31,7 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
         download_service.album_tracker.start_download(user_id, collection_id, parent_msg, len(tracks), coll_name)
 
         markup = [[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{collection_id}:u{user_id}")]]
-        parent_msg = await edit_message(parent_msg, f"📀 *آلبوم:* {coll_name}\n🎵 *تعداد قطعات:* {len(tracks)}\n⬇️ *در حال دانلود...*", reply_markup=markup)
+        parent_msg = await edit_message(parent_msg, f"📀 *آلبوم:* {coll_name}\n🎵 *تعداد قطعات:* {len(tracks)}\n⬇️ *در حال دانلود...*", reply_markup=markup, force_edit=True)
 
         # Get album cover
         album_cover_bytes = await download_service.artwork_service.get_artwork_bytes(coll.get('collectionId'), coll.get('artworkUrl100'))
@@ -79,16 +79,6 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
                 failed_count += 1
                 failed_tracks.append((track.get('trackId'), track.get('trackName', 'Unknown')))
 
-            # Update parent message with progress
-            progress_text = (
-                f"📀 *آلبوم:* {coll_name}\n"
-                f"🎵 *تعداد کل قطعات:* {len(tracks)}\n"
-                f"✅ *موفق:* {success_count}\n"
-                f"❌ *ناموفق:* {failed_count}\n"
-                f"⬇️ *در حال دانلود...*"
-            )
-            prog_markup = [[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{collection_id}:u{user_id}")]]
-            parent_msg = await edit_message(parent_msg, progress_text, reply_markup=InlineKeyboard(*prog_markup), force_edit=True)
             await asyncio.sleep(0.5)
 
         final_text = f"✅ دانلود آلبوم {coll_name} به پایان رسید.\n🎵 مجموع قطعات: {len(tracks)}\n✅ موفق: {success_count}"
