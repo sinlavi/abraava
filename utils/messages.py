@@ -3,6 +3,7 @@ from core.config import FOOTER
 from bot.keyboards import create_close_button, create_info_channel_button, create_cancel_button
 import logging
 import copy
+import asyncio
 
 logger = logging.getLogger("ABRAAVA:MESSAGES")
 
@@ -41,19 +42,29 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
         return InlineKeyboard(*markup)
     return reply_markup
 
-async def safe_delete(message):
+async def safe_delete(message, attempt=1):
     if not message: return
     try:
         await message.delete()
     except Exception as e:
-        if "message not found" not in str(e).lower():
-            logger.debug(f"Safe delete failed: {e}")
+        err = str(e).lower()
+        if "message not found" in err: return
+        if ("rate limit" in err or "too many" in err) and attempt < 3:
+            await asyncio.sleep(0.5 * attempt)
+            return await safe_delete(message, attempt + 1)
+        logger.debug(f"Safe delete failed: {e}")
 
 async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None, show_cancel=False):
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
-    return await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
+    try:
+        return await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
+    except Exception as e:
+        if "too many" in str(e).lower():
+            await asyncio.sleep(1)
+            return await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
+        raise
 
-async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False, show_cancel=False):
+async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False, show_cancel=False, attempt=1):
     if not message: return None
     chat_id = message.chat.id
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
@@ -65,9 +76,15 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
             return await message.edit(text=f"{text}{FOOTER}", reply_markup=markup)
     except Exception as e:
         err_msg = str(e).lower()
-        if "message not found" not in err_msg:
-            logger.warning(f"Failed to edit, sending new: {e}")
-            await safe_delete(message)
+        if "message not found" in err_msg:
+            return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
+
+        if ("rate limit" in err_msg or "too many" in err_msg) and attempt < 3:
+            await asyncio.sleep(0.5 * attempt)
+            return await edit_message(message, text, reply_markup, no_close, show_info, task_id, force_edit, show_cancel, attempt + 1)
+
+        logger.warning(f"Failed to edit (attempt {attempt}), sending new: {e}")
+        await safe_delete(message)
         return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
 async def reply_message(message: Message, text: str, reply_markup=None, show_info=False):

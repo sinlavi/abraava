@@ -35,12 +35,12 @@ class DownloadService:
                                      status_prefix="", reply_markup=None):
 
         # In batch mode, if no status_msg provided, create a track-specific one
-        created_status = False
         if status_msg is None:
             prefix = f"({track_index}) " if track_index else ""
             hint = f" {track_name_hint}" if track_name_hint else ""
-            status_msg = await send_message(self.bot, chat_id, f"⏳ *{prefix}در حال آماده‌سازی دانلود{hint}...*", show_cancel=True)
-            created_status = True
+            init_text = f"⏳ *{prefix}در حال آماده‌سازی دانلود{hint}...*"
+            if status_prefix: init_text = f"{status_prefix}\n\n{init_text}"
+            status_msg = await send_message(self.bot, chat_id, init_text, show_cancel=not is_batch)
 
         async def update_status(text):
             nonlocal status_msg
@@ -73,7 +73,7 @@ class DownloadService:
                 await update_status("📤 *در حال ارسال فایل از حافظه کش...*")
                 markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
                 await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=InlineKeyboard(*markup))
-                if created_status: await safe_delete(status_msg)
+                if not is_batch: await safe_delete(status_msg)
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
                                                  track.get('artistName', ''), track.get('collectionName', ''),
                                                  0, 'cache', quality_value)
@@ -142,7 +142,7 @@ class DownloadService:
                                                  file_size, 'youtube', quality_value)
                 self.download_rate_limiter.record_download(user_id, quality_value)
                 await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
-                if created_status: await safe_delete(status_msg)
+                if not is_batch: await safe_delete(status_msg)
                 return status_msg, True
         except Exception as e:
             logger.error(f"Download error: {e}")
