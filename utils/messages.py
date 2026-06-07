@@ -71,7 +71,7 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
 
     try:
         if hasattr(message, 'photo') and message.photo:
-            return await message.edit_caption(caption=f"{text}{FOOTER}", reply_markup=markup)
+            return await message.edit(caption=f"{text}{FOOTER}", reply_markup=markup)
         else:
             return await message.edit(text=f"{text}{FOOTER}", reply_markup=markup)
     except Exception as e:
