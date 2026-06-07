@@ -16,7 +16,12 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
 
     type_fa_map = {"artist": "هنرمند", "collection": "آلبوم", "track": "آهنگ"}
 
-    header = f"📋 *نتایج جستجو برای {type_fa_map.get(type_, type_)}: {term}*\nتعداد کل: {total_items} مورد"
+    header = (
+        f"🔍 *نتایج جستجو برای {type_fa_map.get(type_, type_)}:*\n"
+        f"📝 *عبارت:* `{term}`\n"
+        f"📊 *تعداد کل:* {total_items} مورد\n"
+        f"📄 *صفحه:* {page} از {total_pages}"
+    )
 
     markup_rows = []
     for i, item in enumerate(page_items, start_idx + 1):
@@ -48,9 +53,9 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
     ])
 
     if message_to_edit:
-        message_to_edit = await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
+        return await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
     else:
-        await send_message(bot, chat_id, header, reply_markup=markup_rows)
+        return await send_message(bot, chat_id, header, reply_markup=markup_rows)
 
 async def send_external_search_results(bot, chat_id, type_, term, results, page, search_cache_service, owner_id, message_to_edit=None):
     total_items = len(results)
@@ -63,7 +68,12 @@ async def send_external_search_results(bot, chat_id, type_, term, results, page,
 
     source_map = {"ytm": "یوتیوب موزیک", "sc": "ساندکلاد", "sp": "اسپاتیفای", "itunes_official": "آیتیونز"}
     source_name = source_map.get(type_, "منابع خارجی")
-    header = f"📋 *نتایج جستجو در {source_name}: {term}*\nتعداد کل: {total_items} مورد"
+    header = (
+        f"🔍 *نتایج جستجو در {source_name}:*\n"
+        f"📝 *عبارت:* `{term}`\n"
+        f"📊 *تعداد کل:* {total_items} مورد\n"
+        f"📄 *صفحه:* {page} از {total_pages}"
+    )
 
     markup_rows = []
     for i, item in enumerate(page_items, start_idx + 1):
@@ -91,6 +101,6 @@ async def send_external_search_results(bot, chat_id, type_, term, results, page,
             markup_rows.append(pagination)
 
     if message_to_edit:
-        message_to_edit = await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
+        return await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
     else:
-        await send_message(bot, chat_id, header, reply_markup=markup_rows)
+        return await send_message(bot, chat_id, header, reply_markup=markup_rows)

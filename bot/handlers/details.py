@@ -21,7 +21,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         status_msg = None
     try:
         # Concurrent fetching for performance
-        artist_task = asyncio.create_task(get_or_crawl_artist(artist_id=artist_id, status_msg=status_msg, force=force))
+        artist_task = asyncio.create_task(get_or_crawl_artist(artist_id=artist_id, force=force))
         collections_task = asyncio.create_task(get_or_crawl_artist_collections(artist_id))
 
         artist_data, collections_data = await asyncio.gather(artist_task, collections_task)
@@ -94,7 +94,6 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
 
         if is_pagination and message_to_edit:
             status_msg = await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
-            await safe_delete(status_msg)
         else:
             artwork_data = await artwork_service.get_artwork_for_display("artist", artist_id, artist_image, owner_id, entity_name=artist_name)
             if artwork_data:
@@ -120,7 +119,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         status_msg = None
     try:
         # Concurrent fetching for performance
-        collection_task = asyncio.create_task(get_or_crawl_collection(collection_id, status_msg, force))
+        collection_task = asyncio.create_task(get_or_crawl_collection(collection_id, force))
         tracks_task = asyncio.create_task(get_or_crawl_collection_tracks(collection_id))
 
         collection_data, tracks_data = await asyncio.gather(collection_task, tracks_task)
@@ -195,7 +194,6 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
 
         if is_pagination and message_to_edit:
             status_msg = await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
-            await safe_delete(status_msg)
         else:
             artwork_url = get_high_res_artwork(coll.get("artworkUrl100"))
             artwork_data = await artwork_service.get_artwork_for_display("collection", collection_id, artwork_url, owner_id)
@@ -218,7 +216,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         status_msg = message_to_edit
         status_msg = await edit_message(status_msg, "🔄 *در حال بارگذاری اطلاعات آهنگ...*")
     try:
-        data = await get_track(track_id, status_msg)
+        data = await get_track(track_id)
         if not data or not data.get("results"):
             status_msg = await edit_message(status_msg, "آهنگ مورد نظر یافت نشد.")
             return
