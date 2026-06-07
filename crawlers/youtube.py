@@ -1,85 +1,53 @@
-from __future__ import annotations
-
-import difflib
-import os
-import sys
-import time
-import random
-import logging
-import subprocess
-import tempfile
-import uuid
-import shutil
-from pathlib import Path
-from typing import Optional
-
 import asyncio
+import os
+import shutil
+import uuid
+import random
+import re
+import socket
+from pathlib import Path
+from typing import Optional, List, Dict, Any, Union
+
 import yt_dlp
-from rapidfuzz import fuzz
 from ytmusicapi import YTMusic
+from rapidfuzz import fuzz
 
-try:
-    from config import OFFLINE_MODE
-except ImportError:
-    OFFLINE_MODE = False
+from core.logger import logger
+from core.config import OFFLINE_MODE, PROXY
 
-logger = logging.getLogger("yt_downloader")
-logging.basicConfig(level=logging.INFO)
+YT: Optional[YTMusic] = None
 
-# ── Audio post‑processor ──────────────────────────────────────────
+# Global method orders to track what works best
+SEARCH_METHOD_ORDER = [1, 2, 3]  # 1: YTMusic, 2: YouTube Search, 3: YouTube Search (alternative)
+METHOD_ORDER = [1, 2, 3, 4, 5, 6, 7, 8]
+
+# Common yt-dlp options
+COMMON_OPTS = {
+    "format": "bestaudio/best",
+    "noplaylist": True,
+    "nocheckcertificate": True,
+    "ignoreerrors": False,
+    "logtostderr": False,
+    "quiet": True,
+    "no_warnings": True,
+    "default_search": "ytsearch",
+    "source_address": "0.0.0.0",
+}
+
 AUDIO_POSTPROCESSOR = {
     "key": "FFmpegExtractAudio",
     "preferredcodec": "mp3",
     "preferredquality": "128",
 }
 
-# ── Common yt‑dlp flags (shared by all methods) ──────────────────────────
-COMMON_OPTS: dict = {
-    "outtmpl": "%(title)s.%(ext)s",
-    "noplaylist": True,
-    "retries": 10,
-    "fragment_retries": 10,
-    "no_check_certificate": True,
-    "concurrent_fragments": 8,
-    "quiet": True,
-    "no_warnings": True,
-    "sleep_interval": 2,
-    "max_sleep_interval": 6,
-    "sleep_interval_requests": 1,
-}
-
-# ── User‑agent list (Expanded for better bot evasion) ────────────────────
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.4; rv:125.0) Gecko/20100101 Firefox/125.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36"
-]
-
-# ── Smart Method Sorting ────────────────────────────────────────────────
-METHOD_ORDER = [8, 2, 3, 4, 5, 6, 7, 1]
-
-# ── Search Method Order (same as download methods) ───────────────────────
-SEARCH_METHOD_ORDER = [8, 2, 3, 4, 5, 6, 7, 1]
-
-# ============================================================================
-# YouTube Music Helper
-# ============================================================================
-YT = None
-
 
 def _get_cookies_path() -> Optional[str]:
     """
     Get the path to cookies.txt in the root project folder.
-    Returns None if the file doesn't exist.
     """
-    script_dir = Path(__file__).parent
+    script_dir = Path(__file__).parent.parent
     cookies_path = script_dir / "cookies.txt"
-    
+
     if cookies_path.exists() and cookies_path.is_file():
         logger.info(f"Found cookies file at: {cookies_path}")
         return str(cookies_path)
@@ -88,27 +56,9 @@ def _get_cookies_path() -> Optional[str]:
         return None
 
 
-def _get_random_headers() -> dict:
-    """Generate professional browser headers to evade bot detection."""
-    return {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Upgrade-Insecure-Requests": "1"
-    }
-
-
 def _check_deno() -> bool:
-    """Return True if Deno runtime is available."""
-    try:
-        subprocess.run(["deno", "--version"], capture_output=True, check=True)
-        return True
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return False
+    """Check if deno is installed and available in PATH."""
+    return shutil.which("deno") is not None
 
 
 def _check_proxy() -> Optional[str]:
@@ -127,6 +77,109 @@ def _check_proxy() -> Optional[str]:
     return None
 
 
+def _get_random_headers() -> dict:
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    ]
+    return {
+        "User-Agent": random.choice(user_agents),
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://www.youtube.com",
+        "Referer": "https://www.youtube.com/",
+    }
+
+
+def _calculate_relevance_score(result: dict, t_name: str, a_name: str, collection_name: str, ye: str) -> float:
+    res_title = result.get('title', '')
+    res_uploader = result.get('uploader', '')
+    res_description = result.get('description', '')
+
+    score = 0.0
+    # Title match (Highest weight)
+    score += fuzz.WRatio(t_name, res_title) * 0.5
+
+    # Artist match
+    artist_score = max(fuzz.WRatio(a_name, res_uploader), fuzz.WRatio(a_name, res_description))
+    score += artist_score * 0.3
+
+    # Album/Year context
+    context_score = 0.0
+    if collection_name:
+        context_score = max(context_score, fuzz.partial_ratio(collection_name, res_title) * 0.1)
+        context_score = max(context_score, fuzz.partial_ratio(collection_name, res_description) * 0.1)
+
+    if ye:
+        if ye in res_title or ye in (result.get('upload_date', '') or ''):
+            context_score = max(context_score, 10.0)
+
+    score += context_score
+    return score / 100.0
+
+
+async def search_youtube_track(t_name: str, a_name: str, collection_name: str, ye: str) -> Optional[str]:
+    """
+    Search for a track on YouTube and return the best matching video ID.
+    Uses multiple methods including YTMusic API and yt-dlp search.
+    """
+    global SEARCH_METHOD_ORDER
+
+    logger.info(f"Searching for: {t_name} by {a_name}")
+
+    best_result = None
+    best_score = -1.0
+    successful_methods = []
+
+    for method in list(SEARCH_METHOD_ORDER):
+        try:
+            result = None
+
+            if method == 1:  # YTMusic API
+                loop = asyncio.get_event_loop()
+                result_id = await loop.run_in_executor(None, _sync_search_youtube, t_name, a_name, collection_name, ye)
+                if result_id:
+                    logger.info(f"YTMusic found match: {result_id}")
+                    return result_id
+
+            elif method == 2:  # yt-dlp search
+                search_query = f"ytsearch5:{t_name} {a_name} {collection_name} official audio"
+                opts = _build_search_ydl_opts(method, 128)
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = await asyncio.get_event_loop().run_in_executor(None, lambda: ydl.extract_info(search_query, download=False))
+                    if info and 'entries' in info and info['entries']:
+                        # Evaluate all results from this search
+                        for entry in info['entries']:
+                            if not entry: continue
+                            score = _calculate_relevance_score(entry, t_name, a_name, collection_name, ye)
+                            if score > best_score:
+                                best_score = score
+                                best_result = entry.get('id')
+
+            elif method == 3:  # yt-dlp alternative search
+                search_query = f"ytsearch3:{t_name} {a_name} topic"
+                opts = _build_search_ydl_opts(method, 128)
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = await asyncio.get_event_loop().run_in_executor(None, lambda: ydl.extract_info(search_query, download=False))
+                    if info and 'entries' in info and info['entries']:
+                        for entry in info['entries']:
+                            if not entry: continue
+                            score = _calculate_relevance_score(entry, t_name, a_name, collection_name, ye)
+                            if score > best_score:
+                                best_score = score
+                                best_result = entry.get('id')
+
+            if best_result and best_score > 0.8:
+                logger.info(f"Found high-confidence match with method {method} (score: {best_score:.2f})")
+                break
+
+        except Exception as e:
+            logger.debug(f"Search method {method} failed: {e}")
+
+    return best_result
+
+
 def _build_search_ydl_opts(method: int, preferred_quality: int) -> dict:
     """
     Build yt‑dlp options specifically for searching (extract info only).
@@ -136,206 +189,25 @@ def _build_search_ydl_opts(method: int, preferred_quality: int) -> dict:
     opts["no_warnings"] = True
     opts["extract_flat"] = False  # Get full info
     opts["skip_download"] = True  # Don't download, just extract info
-    
+
     cookies_path = _get_cookies_path()
     if cookies_path:
         opts["cookiefile"] = cookies_path
-    
+
     opts["http_headers"] = _get_random_headers()
-    
+
     has_deno = _check_deno()
     proxy = _check_proxy()
-    
-    # Same method-specific configurations as download
-    if method == 8:
-        if proxy:
-            opts["proxy"] = proxy
+
+    if method == 1:
+        if proxy: opts["proxy"] = proxy
         opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
-        if has_deno:
-            opts["js_runtimes"] = {"deno": {}}
-            opts["remote_components"] = ["ejs:github"]
-    
+
     elif method == 2:
-        if proxy:
-            opts["proxy"] = proxy
-        opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
-        if has_deno:
-            opts["js_runtimes"] = {"deno": {}}
-            opts["remote_components"] = ["ejs:npm"]
-    
-    elif method == 3:
-        if proxy:
-            opts["proxy"] = proxy
-        opts["extractor_args"] = {
-            "youtube": {"player_client": ["web", "mweb", "android_vr"]}
-        }
-        if has_deno:
-            opts["js_runtimes"] = {"deno": {}}
-            opts["remote_components"] = ["ejs:github"]
-    
-    elif method == 4:
-        if proxy:
-            opts["proxy"] = proxy
-        opts["extractor_args"] = {"youtube": {"player_client": ["mweb"]}}
-    
-    elif method == 5:
-        if proxy:
-            opts["proxy"] = proxy
-        opts["extractor_args"] = {"youtube": {"player_client": ["android_vr"]}}
-    
-    elif method == 6:
-        opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
-        if has_deno:
-            opts["js_runtimes"] = {"deno": {}}
-            opts["remote_components"] = ["ejs:github"]
-    
-    elif method == 7:
-        opts["extractor_args"] = {"youtube": {"player_client": ["mweb"]}}
-    
-    elif method == 1:
-        if proxy:
-            opts["proxy"] = proxy
+        if proxy: opts["proxy"] = proxy
         opts["extractor_args"] = {"youtube": {"player_client": ["android"]}}
-        opts["http_headers"]["User-Agent"] = (
-            "Mozilla/5.0 (Linux; Android 12; SM-S906N Build/QP1A.190711.020) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36"
-        )
-    
+
     return opts
-
-
-def _search_with_ytdlp(search_query: str, method: int) -> Optional[dict]:
-    """
-    Search YouTube using yt-dlp with specific method.
-    Returns the best matching video info or None.
-    """
-    try:
-        opts = _build_search_ydl_opts(method, 128)
-        
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            # Search query format for yt-dlp
-            search_url = f"ytsearch10:{search_query}"
-            info = ydl.extract_info(search_url, download=False)
-            
-            if info and 'entries' in info and info['entries']:
-                # Return the first result
-                return info['entries'][0]
-            
-    except Exception as e:
-        logger.debug(f"Search method {method} failed: {e}")
-    
-    return None
-
-
-def _calculate_relevance_score(video_info: dict, t_name: str, a_name: str, collection_name: str, ye: str) -> float:
-    """
-    Calculate relevance score for a search result.
-    """
-    title = video_info.get('title', '')
-    channel = video_info.get('channel', '')
-    uploader = video_info.get('uploader', '')
-    upload_date = video_info.get('upload_date', '')
-    
-    score = 0.0
-    
-    # Title matching (45% weight)
-    score += _get_similarity(t_name, title) * 0.45
-    
-    # Artist/channel matching (35% weight)
-    artist_text = f"{channel} {uploader}"
-    score += _get_similarity(a_name, artist_text) * 0.35
-    
-    # Album/collection matching (15% weight)
-    if collection_name:
-        # Check if collection name appears in title or description
-        description = video_info.get('description', '')
-        if collection_name.lower() in title.lower() or collection_name.lower() in description.lower():
-            score += 0.15
-    
-    # Year matching (5% weight)
-    if ye and upload_date:
-        video_year = upload_date[:4] if len(upload_date) >= 4 else ''
-        if str(ye) == video_year:
-            score += 0.05
-    
-    return score
-
-
-async def search_youtube_track(t_name: str, a_name: str, collection_name: str, ye: str) -> Optional[str]:
-    """
-    Search for a YouTube track using multiple methods (same as download).
-    Returns video ID or None.
-    """
-    global SEARCH_METHOD_ORDER
-    
-    if OFFLINE_MODE:
-        logger.info("Offline mode: skipping YouTube search")
-        return None
-    
-    # First try YTMusic as it's faster for searches
-    try:
-        loop = asyncio.get_event_loop()
-        ytmusic_id = await loop.run_in_executor(None, _sync_search_youtube, t_name, a_name, collection_name, ye)
-        if ytmusic_id:
-            logger.info(f"✅ YTMusic search successful: {ytmusic_id}")
-            return ytmusic_id
-    except Exception as e:
-        logger.debug(f"YTMusic search failed: {e}")
-    
-    # Build search query
-    search_query = f"{t_name} {a_name}".strip()
-    if collection_name:
-        search_query += f" {collection_name}"
-    
-    best_result = None
-    best_score = -1.0
-    successful_methods = []
-    
-    # Try each method in order
-    for method in list(SEARCH_METHOD_ORDER):
-        logger.debug(f"Searching with method {method}")
-        
-        try:
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, _search_with_ytdlp, search_query, method)
-            
-            if result and result.get('id'):
-                # Calculate relevance score
-                score = _calculate_relevance_score(result, t_name, a_name, collection_name, ye)
-                
-                logger.debug(f"Method {method} found: {result.get('title', 'N/A')} (score: {score:.2f})")
-                
-                if score > best_score:
-                    best_score = score
-                    best_result = result.get('id')
-                    successful_methods.append(method)
-                    
-                    # Update method order (bring successful method to front)
-                    if method in SEARCH_METHOD_ORDER:
-                        SEARCH_METHOD_ORDER.remove(method)
-                        SEARCH_METHOD_ORDER.insert(0, method)
-                    
-                    # If score is very high (90%+), stop searching
-                    if score >= 0.9:
-                        logger.info(f"Found excellent match with method {method} (score: {score:.2f})")
-                        break
-            
-            # Random delay between methods to avoid rate limiting
-            await asyncio.sleep(random.uniform(0.5, 1.5))
-            
-        except Exception as e:
-            logger.debug(f"Search method {method} error: {e}")
-            # Move failed method to the end
-            if method in SEARCH_METHOD_ORDER:
-                SEARCH_METHOD_ORDER.remove(method)
-                SEARCH_METHOD_ORDER.append(method)
-    
-    if best_result:
-        logger.info(f"Search successful with methods: {successful_methods}, best score: {best_score:.2f}")
-        return best_result
-    else:
-        logger.warning(f"No search results found for: {t_name} - {a_name}")
-        return None
 
 
 # Helper function for similarity (keeping existing implementation)
@@ -351,7 +223,12 @@ def _sync_search_youtube(t_name: str, a_name: str, collection_name: str, ye: str
     """
     global YT
     if YT is None:
-        YT = YTMusic()
+        cookies = _get_cookies_path()
+        try:
+            YT = YTMusic(auth=cookies) if cookies else YTMusic()
+        except Exception as e:
+            logger.error(f"Failed to initialize YTMusic: {e}")
+            YT = YTMusic()
 
     search_query = f"{t_name} {a_name} {collection_name}".strip()
 
@@ -397,8 +274,9 @@ def get_artist_image(artist_name):
     """Get artist image from YTMusic with improved error handling"""
     global YT
     if YT is None:
+        cookies = _get_cookies_path()
         try:
-            YT = YTMusic()
+            YT = YTMusic(auth=cookies) if cookies else YTMusic()
         except Exception as e:
             logger.error(f"Failed to initialize YTMusic: {e}")
             return None
@@ -418,8 +296,6 @@ def get_artist_image(artist_name):
 
         thumbnails = artist_info.get('thumbnails')
         if thumbnails and isinstance(thumbnails, list) and len(thumbnails) > 0:
-            # thumbnails are usually sorted by size, but we'll try to find the one with highest resolution
-            # or just take the first one which is standard for get_artist
             return thumbnails[-1].get('url')
 
     except Exception as e:
