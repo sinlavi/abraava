@@ -35,33 +35,25 @@ class DownloadService:
         else:
             full_text = text
 
-        if not is_batch:
-            # For single tracks, we delete and re-send to ensure the "temporary" nature of these status messages
-            # as requested by the user, while avoiding "message not modified" or stale reference issues.
+        # We always delete and re-send to ensure consistent behavior across single and album downloads
+        # as requested by the user. This avoids "message not modified" errors and provides a fresh UI state.
+        if status_msg:
             await safe_delete(status_msg)
-            return await send_message(self.bot, chat_id, full_text, reply_markup=reply_markup, show_cancel=True)
-        else:
-            # For batch/album downloads, we MUST edit in-place to maintain the persistent progress header.
-            # If status_msg is somehow lost, we fall back to sending a new one in the chat.
-            if status_msg:
-                return await edit_message(status_msg, full_text, reply_markup=reply_markup, show_cancel=False, force_edit=True)
-            else:
-                return await send_message(self.bot, chat_id, full_text, reply_markup=reply_markup, show_cancel=False)
+        return await send_message(self.bot, chat_id, full_text, reply_markup=reply_markup, show_cancel=not is_batch)
 
     async def download_and_send_track(self, chat_id, track_id, user_id, status_msg=None,
                                      is_batch=False, album_cover_bytes=None, collection_id=None,
                                      selected_quality=None, track_name_hint=None, track_index=None,
                                      status_prefix="", reply_markup=None):
 
-        # In batch mode, if no status_msg provided, create a track-specific one
+        # If no status_msg provided, use the first update to create it to avoid redundant send/delete
         if status_msg is None:
             prefix = f"({track_index}) " if track_index else ""
             hint = f" {track_name_hint}" if track_name_hint else ""
-            init_text = f"⏳ *{prefix}در حال آماده‌سازی دانلود{hint}...*"
-            if status_prefix: init_text = f"{status_prefix}\n\n{init_text}"
-            status_msg = await send_message(self.bot, chat_id, init_text, show_cancel=not is_batch)
-
-        status_msg = await self._update_status(chat_id, status_msg, "🔍 *در حال دریافت اطلاعات آهنگ...*", status_prefix, reply_markup, is_batch)
+            initial_text = f"🔍 *{prefix}در حال دریافت اطلاعات آهنگ{hint}...*"
+            status_msg = await self._update_status(chat_id, status_msg, initial_text, status_prefix, reply_markup, is_batch)
+        else:
+            status_msg = await self._update_status(chat_id, status_msg, "🔍 *در حال دریافت اطلاعات آهنگ...*", status_prefix, reply_markup, is_batch)
         track_data = await get_track(track_id)
         if not track_data or not track_data.get("results"):
             status_msg = await self._update_status(chat_id, status_msg, "خطا در دریافت اطلاعات آهنگ.", status_prefix, reply_markup, is_batch)
