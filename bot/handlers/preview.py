@@ -12,25 +12,24 @@ from core.config import FOOTER
 from bot.keyboards import create_close_button
 from balethon.objects import InlineKeyboard, InlineKeyboardButton
 
+async def _update_preview_status(bot, chat_id, msg, text):
+    await safe_delete(msg)
+    return await send_message(bot, chat_id, text, show_cancel=True)
+
 async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None):
     status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*")
-
-    async def update_status(text):
-        nonlocal status_msg
-        await asyncio.sleep(1.1)
-        status_msg = await edit_message(status_msg, text, show_cancel=True, force_edit=True)
 
     try:
         track_data = await get_track(track_id)
         if not track_data or not track_data.get("results"):
-            await update_status("اطلاعات آهنگ یافت نشد.")
-            return
+            status_msg = await _update_preview_status(bot, chat_id, status_msg, "اطلاعات آهنگ یافت نشد.")
+            return status_msg
 
         track = track_data["results"][0]
         preview_url = track.get("previewUrl")
         if not preview_url:
-            await update_status("پیش‌نمایشی موجود نیست.")
-            return
+            status_msg = await _update_preview_status(bot, chat_id, status_msg, "پیش‌نمایشی موجود نیست.")
+            return status_msg
 
         caption = f"🎧 *پیش‌نمایش آهنگ {track.get('trackName')}*\n\n{FOOTER}"
 
@@ -51,7 +50,7 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
             try:
                 await bot.send_voice(chat_id, voice=preview_cache, caption=caption, reply_markup=reply_markup)
                 await safe_delete(status_msg)
-                return
+                return status_msg
             except Exception as e:
                 logger.error(f"Cache preview send failed: {e}")
 
@@ -66,7 +65,9 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
                     await set_mirror('track', str(track_id), 'previewUrl', f'https://tapi.bale.ai/file/bot<token>/{msg.voice.id}')
                 await safe_delete(status_msg)
             else:
-                await update_status("دریافت پیش‌نمایش با خطا مواجه شد.")
+                status_msg = await _update_preview_status(bot, chat_id, status_msg, "دریافت پیش‌نمایش با خطا مواجه شد.")
     except Exception as e:
         logger.error(f"Failed to send preview: {e}")
-        await update_status(f"خطا: {str(e)[:50]}")
+        status_msg = await _update_preview_status(bot, chat_id, status_msg, f"خطا: {str(e)[:50]}")
+
+    return status_msg

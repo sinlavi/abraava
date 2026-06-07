@@ -210,14 +210,14 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         else:
             await bot.answer_callback_query(callback_query.id, text="⏳ در حال آماده‌سازی...")
             status_msg = await send_message(bot, chat_id, "⏳ *در حال آماده‌سازی دانلود...*", show_cancel=True)
-            await download_service.download_and_send_track(chat_id, track_id, user_id, status_msg=status_msg)
+            status_msg, _ = await download_service.download_and_send_track(chat_id, track_id, user_id, status_msg=status_msg)
 
     elif data.startswith("dl_q:"):
         quality, track_id = parts[1], parts[2]
         if track_id.isdigit(): track_id = int(track_id)
         await bot.answer_callback_query(callback_query.id, text=f"⏳ دانلود با کیفیت {quality}...")
         # Don't delete, reuse the message as status_msg
-        await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality, status_msg=callback_query.message)
+        status_msg, _ = await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality, status_msg=callback_query.message)
 
     elif data.startswith("preview:"):
         track_id = parts[1]
@@ -286,7 +286,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             settings = await user_settings_service.get_settings(user_id)
             quality_value = settings.download_quality.value
             if quality_value == "ask": quality_value = "192"
-            await download_service.download_and_send_track(chat_id, tid, user_id, selected_quality=quality_value)
+            status_msg, _ = await download_service.download_and_send_track(chat_id, tid, user_id, selected_quality=quality_value)
         await safe_delete(callback_query.message)
 
 async def update_settings_msg(bot, message, user_id, user_settings_service):

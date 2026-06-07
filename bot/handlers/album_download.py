@@ -9,12 +9,13 @@ logger = logging.getLogger("ABRAAVA:ALBUM_DL")
 
 async def download_album(bot, chat_id, collection_id, user_id, download_service, quality=None, status_msg=None):
     if status_msg:
-        parent_msg = await edit_message(status_msg, "⏳ *شروع فرایند دانلود آلبوم...*")
-    else:
-        parent_msg = await send_message(bot, chat_id, "⏳ *شروع فرایند دانلود آلبوم...*")
+        await safe_delete(status_msg)
+
+    parent_msg = await send_message(bot, chat_id, "⏳ *شروع فرایند دانلود آلبوم...*")
 
     if not await download_service.album_tracker.acquire_lock(user_id, collection_id):
-        parent_msg = await edit_message(parent_msg, "❌ *در حال حاضر دانلود این آلبوم در حال انجام است*")
+        await safe_delete(parent_msg)
+        parent_msg = await send_message(bot, chat_id, "❌ *در حال حاضر دانلود این آلبوم در حال انجام است*")
         return
 
     try:
@@ -22,18 +23,20 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
         tracks_data = await get_or_crawl_collection_tracks(collection_id)
 
         if not collection_data or not tracks_data:
-            parent_msg = await edit_message(parent_msg, "❌ اطلاعات آلبوم یافت نشد")
+            await safe_delete(parent_msg)
+            parent_msg = await send_message(bot, chat_id, "❌ اطلاعات آلبوم یافت نشد")
             return
 
         coll = collection_data['results'][0]
         tracks = tracks_data['results']
         coll_name = coll.get('collectionName', 'آلبوم')
 
-        # Log download start
-        download_service.album_tracker.start_download(user_id, collection_id, parent_msg, len(tracks), coll_name)
-
         album_markup = InlineKeyboard(*[[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{collection_id}:u{user_id}")]])
-        parent_msg = await edit_message(parent_msg, f"📀 *آلبوم:* {coll_name}\n🎵 *تعداد قطعات:* {len(tracks)}\n⬇️ *در حال دانلود...*", reply_markup=album_markup)
+        await safe_delete(parent_msg)
+        parent_msg = await send_message(bot, chat_id, f"📀 *آلبوم:* {coll_name}\n🎵 *تعداد قطعات:* {len(tracks)}\n⬇️ *در حال دانلود...*", reply_markup=album_markup)
+
+        # Log download start - MUST be after the final parent_msg is created so tracker has correct reference
+        download_service.album_tracker.start_download(user_id, collection_id, parent_msg, len(tracks), coll_name)
 
         # Get album cover
         album_cover_bytes = await download_service.artwork_service.get_artwork_bytes(coll.get('collectionId'), coll.get('artworkUrl100'))
