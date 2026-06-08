@@ -42,7 +42,7 @@ class DirectDownloadService:
 
     def _get_ydl_opts(self, method, output_dir, proxy=None):
         opts = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio/bestaudio*',
             'outtmpl': f'{output_dir}/%(title)s.%(ext)s',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',

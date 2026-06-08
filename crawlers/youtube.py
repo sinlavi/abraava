@@ -23,7 +23,7 @@ METHOD_ORDER = [1, 2, 3, 4, 5, 6, 7, 8]
 
 # Common yt-dlp options
 COMMON_OPTS = {
-    "format": "bestaudio/best",
+    "format": "bestaudio/bestaudio*",
     "noplaylist": True,
     "nocheckcertificate": True,
     "ignoreerrors": False,
@@ -395,7 +395,7 @@ def _build_opts(method: int, output_dir: str, preferred_quality: int) -> dict:
     """
     opts = dict(COMMON_OPTS)
     opts["outtmpl"] = f"{output_dir}/%(title)s.%(ext)s"
-    opts["format"] = "bestaudio/best"
+    opts["format"] = "bestaudio/bestaudio*"
 
     cookies_path = _get_cookies_path()
     if cookies_path:
