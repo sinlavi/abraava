@@ -146,20 +146,20 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
                 async with session.get(url, params=params, headers=headers, ssl=False, proxy=PROXY, timeout=10) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        if not is_mirror:
+                        if not is_3rah_only:
                             await _itunes_cache.set(endpoint, params, data)
                             endpoint_manager.report_success(base_url)
                         return data
                     else:
-                        if not is_mirror: endpoint_manager.report_failure(base_url)
+                        if not is_3rah_only: endpoint_manager.report_failure(base_url)
             else:
                 async with getattr(session, method.lower())(url, params=params, json=payload, headers=headers, ssl=False, proxy=PROXY, timeout=10) as resp:
                     if resp.status == 200: return await resp.json()
         except Exception as e:
             logger.error(f"iTunes fetch failed (attempt {attempt+1}): {e}")
-            if not is_mirror: endpoint_manager.report_failure(base_url)
+            if not is_3rah_only: endpoint_manager.report_failure(base_url)
 
-        if not is_mirror: await asyncio.sleep(0.5)
+        if not is_3rah_only: await asyncio.sleep(0.5)
 
     return None
 
