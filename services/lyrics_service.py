@@ -34,7 +34,6 @@ class LyricsService:
         self.ytm = YTMusic()
         if cookie_header:
             logger.info(f"Adding Cookie header from: {cookies_path}")
-            # Injecting the cookie header into the session headers
             self.ytm.headers["Cookie"] = cookie_header
 
         self.db_path = os.path.join(CACHE_DIR, "lyrics.db")
@@ -56,6 +55,9 @@ class LyricsService:
             await db.commit()
 
     async def get_lyrics(self, track_id, title, artist):
+        # Ensure track_id is a string
+        track_id = str(track_id)
+
         # 1. Check Cache
         cached_lyrics = await self._get_cached_lyrics(track_id)
         if cached_lyrics:
@@ -86,6 +88,7 @@ class LyricsService:
 
     async def _fetch_from_ytmusic(self, track_id, title, artist):
         try:
+            track_id = str(track_id)
             video_id = None
             if track_id.startswith("yt_"):
                 video_id = track_id[3:]
