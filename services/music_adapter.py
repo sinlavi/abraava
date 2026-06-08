@@ -4,7 +4,6 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from ytmusicapi import YTMusic
 import yt_dlp
-from crawlers.itunes import save_track, save_album, save_artist, lookup_itunes
 from core.config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 from core.logger import logger
 
@@ -151,19 +150,7 @@ class MusicAdapter:
             elif entity_type == "album": items = results.get("albums", {}).get("items", [])
             elif entity_type == "artist": items = results.get("artists", {}).get("items", [])
 
-            processed = []
-            for item in items:
-                it_item = self._sp_to_itunes(item, entity_type)
-                it_item["sourceType"] = "spotify"
-                it_item["sourceUrl"] = item["external_urls"].get("spotify")
-                processed.append(it_item)
-
-                # Save to 3rah
-                if entity_type == "track": asyncio.create_task(save_track(it_item))
-                elif entity_type == "album": asyncio.create_task(save_album(it_item))
-                elif entity_type == "artist": asyncio.create_task(save_artist(it_item))
-
-            return processed
+            return [self._sp_to_itunes(item, entity_type) for item in items]
         except Exception as e:
             logger.error(f"Spotify search error: {e}")
             return []
@@ -181,18 +168,7 @@ class MusicAdapter:
                 results = await loop.run_in_executor(None, lambda: self.ytm.search(term, limit=limit))
                 results = [r for r in results if r.get('resultType') in ['video', 'song']] if entity_type == 'track' else results
 
-            processed = []
-            for item in results:
-                it_item = self._ytm_to_itunes(item, entity_type)
-                it_item["sourceType"] = "youtube"
-                processed.append(it_item)
-
-                # Save to 3rah
-                if entity_type == "track": asyncio.create_task(save_track(it_item))
-                elif entity_type == "album": asyncio.create_task(save_album(it_item))
-                elif entity_type == "artist": asyncio.create_task(save_artist(it_item))
-
-            return processed
+            return [self._ytm_to_itunes(item, entity_type) for item in results]
         except Exception as e:
             logger.error(f"YTM search error: {e}")
             return []
@@ -204,76 +180,41 @@ class MusicAdapter:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = await loop.run_in_executor(None, lambda: ydl.extract_info(f"scsearch{limit}:{term}", download=False))
                 if info and 'entries' in info:
-                    processed = []
-                    for entry in info['entries']:
-                        it_item = self._sc_to_itunes(entry)
-                        it_item["sourceType"] = "soundcloud"
-                        it_item["sourceUrl"] = entry.get("webpage_url") or entry.get("url")
-                        processed.append(it_item)
-                        asyncio.create_task(save_track(it_item))
-                    return processed
+                    return [self._sc_to_itunes(entry) for entry in info['entries']]
         except Exception as e:
             logger.error(f"SoundCloud search error: {e}")
         return []
 
     async def get_sp_track(self, track_id: str) -> Optional[Dict[str, Any]]:
-        # Check 3rah first
-        cached = await lookup_itunes(track_id)
-        if cached and cached.get("results"):
-            return cached["results"][0]
-
         if not self.sp: return None
         loop = asyncio.get_event_loop()
         try:
             # Strip prefix if present
-            orig_id = track_id
             if track_id.startswith("sp_"): track_id = track_id[3:]
             track = await loop.run_in_executor(None, lambda: self.sp.track(track_id))
-            it_item = self._sp_to_itunes(track, "track")
-            it_item["sourceType"] = "spotify"
-            it_item["sourceUrl"] = track["external_urls"].get("spotify")
-            asyncio.create_task(save_track(it_item))
-            return it_item
+            return self._sp_to_itunes(track, "track")
         except Exception as e:
             logger.error(f"Spotify get track error: {e}")
             return None
 
     async def get_sp_album(self, album_id: str) -> Optional[Dict[str, Any]]:
-        # Check 3rah first
-        cached = await lookup_itunes(album_id)
-        if cached and cached.get("results"):
-            return cached["results"][0]
-
         if not self.sp: return None
         loop = asyncio.get_event_loop()
         try:
             if album_id.startswith("sp_"): album_id = album_id[3:]
             album = await loop.run_in_executor(None, lambda: self.sp.album(album_id))
-            it_item = self._sp_to_itunes(album, "album")
-            it_item["sourceType"] = "spotify"
-            it_item["sourceUrl"] = album["external_urls"].get("spotify")
-            asyncio.create_task(save_album(it_item))
-            return it_item
+            return self._sp_to_itunes(album, "album")
         except Exception as e:
             logger.error(f"Spotify get album error: {e}")
             return None
 
     async def get_sp_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
-        # Check 3rah first
-        cached = await lookup_itunes(artist_id)
-        if cached and cached.get("results"):
-            return cached["results"][0]
-
         if not self.sp: return None
         loop = asyncio.get_event_loop()
         try:
             if artist_id.startswith("sp_"): artist_id = artist_id[3:]
             artist = await loop.run_in_executor(None, lambda: self.sp.artist(artist_id))
-            it_item = self._sp_to_itunes(artist, "artist")
-            it_item["sourceType"] = "spotify"
-            it_item["sourceUrl"] = artist["external_urls"].get("spotify")
-            asyncio.create_task(save_artist(it_item))
-            return it_item
+            return self._sp_to_itunes(artist, "artist")
         except Exception as e:
             logger.error(f"Spotify get artist error: {e}")
             return None
@@ -284,14 +225,7 @@ class MusicAdapter:
         try:
             if artist_id.startswith("sp_"): artist_id = artist_id[3:]
             results = await loop.run_in_executor(None, lambda: self.sp.artist_albums(artist_id, album_type='album,single'))
-            processed = []
-            for item in results.get("items", []):
-                it_item = self._sp_to_itunes(item, "album")
-                it_item["sourceType"] = "spotify"
-                it_item["sourceUrl"] = item["external_urls"].get("spotify")
-                processed.append(it_item)
-                asyncio.create_task(save_album(it_item))
-            return processed
+            return [self._sp_to_itunes(item, "album") for item in results.get("items", [])]
         except Exception as e:
             logger.error(f"Spotify get artist albums error: {e}")
             return []
@@ -310,11 +244,7 @@ class MusicAdapter:
             tracks = []
             for item in results.get("items", []):
                 item["album"] = {"id": album_id, "images": images, "name": album_name}
-                it_item = self._sp_to_itunes(item, "track")
-                it_item["sourceType"] = "spotify"
-                it_item["sourceUrl"] = item["external_urls"].get("spotify")
-                tracks.append(it_item)
-                asyncio.create_task(save_track(it_item))
+                tracks.append(self._sp_to_itunes(item, "track"))
             return tracks
         except Exception as e:
             logger.error(f"Spotify get album tracks error: {e}")
@@ -330,13 +260,7 @@ class MusicAdapter:
         return opts
 
     async def get_yt_track(self, video_id: str) -> Optional[Dict[str, Any]]:
-        # Check 3rah first
-        cached = await lookup_itunes(video_id)
-        if cached and cached.get("results"):
-            return cached["results"][0]
-
         global YT_METADATA_METHODS
-        orig_video_id = video_id
         if video_id.startswith("yt_"): video_id = video_id[3:]
         url = f"https://www.youtube.com/watch?v={video_id}"
 
@@ -364,7 +288,7 @@ class MusicAdapter:
                             YT_METADATA_METHODS.remove(method)
                             YT_METADATA_METHODS.insert(0, method)
 
-                        it_item = {
+                        return {
                             "wrapperType": "track",
                             "trackId": f"yt_{video_id}",
                             "trackName": info.get("title", "Unknown"),
@@ -373,12 +297,8 @@ class MusicAdapter:
                             "artworkUrl100": info.get("thumbnail"),
                             "trackTimeMillis": int(info.get("duration", 0)) * 1000,
                             "releaseDate": info.get("upload_date", "")[:4],
-                            "trackViewUrl": url,
-                            "sourceType": "youtube",
-                            "sourceUrl": url
+                            "trackViewUrl": url
                         }
-                        asyncio.create_task(save_track(it_item))
-                        return it_item
             except Exception as e:
                 logger.debug(f"YT Metadata method {method} failed: {e}")
                 if method in YT_METADATA_METHODS:
@@ -390,30 +310,20 @@ class MusicAdapter:
             track = await loop.run_in_executor(None, lambda: self.ytm.get_song(video_id))
             details = track.get("videoDetails", {})
             if details:
-                it_item = {
+                return {
                     "wrapperType": "track",
                     "trackId": f"yt_{video_id}",
                     "trackName": details.get("title"),
                     "artistName": details.get("author"),
                     "artworkUrl100": details.get("thumbnail", {}).get("thumbnails", [{}])[-1].get("url"),
                     "trackTimeMillis": int(details.get("lengthSeconds", 0)) * 1000,
-                    "trackViewUrl": url,
-                    "sourceType": "youtube",
-                    "sourceUrl": url
+                    "trackViewUrl": url
                 }
-                asyncio.create_task(save_track(it_item))
-                return it_item
         except: pass
         return None
 
     async def get_sc_track(self, sc_id: str) -> Optional[Dict[str, Any]]:
-        # Check 3rah first
-        cached = await lookup_itunes(sc_id)
-        if cached and cached.get("results"):
-            return cached["results"][0]
-
         global SC_METADATA_METHODS
-        orig_sc_id = sc_id
         if sc_id.startswith("sc_"): sc_id = sc_id[3:]
 
         if sc_id.isdigit():
@@ -449,11 +359,7 @@ class MusicAdapter:
                         if method in SC_METADATA_METHODS:
                             SC_METADATA_METHODS.remove(method)
                             SC_METADATA_METHODS.insert(0, method)
-                        it_item = self._sc_to_itunes(info)
-                        it_item["sourceType"] = "soundcloud"
-                        it_item["sourceUrl"] = info.get("webpage_url") or info.get("url")
-                        asyncio.create_task(save_track(it_item))
-                        return it_item
+                        return self._sc_to_itunes(info)
             except Exception as e:
                 logger.debug(f"SC Metadata method {method} failed: {e}")
                 if method in SC_METADATA_METHODS:
@@ -462,21 +368,11 @@ class MusicAdapter:
         return None
 
     async def get_yt_album(self, browse_id: str) -> Optional[Dict[str, Any]]:
-        # Check 3rah first
-        cached = await lookup_itunes(browse_id)
-        if cached and cached.get("results"):
-            return cached["results"][0]
-
         loop = asyncio.get_event_loop()
         try:
-            orig_browse_id = browse_id
             if browse_id.startswith("yt_"): browse_id = browse_id[3:]
             album = await loop.run_in_executor(None, lambda: self.ytm.get_album(browse_id))
-            it_item = self._ytm_to_itunes(album, "album")
-            it_item["sourceType"] = "youtube"
-            it_item["sourceUrl"] = f"https://music.youtube.com/browse/{browse_id}"
-            asyncio.create_task(save_album(it_item))
-            return it_item
+            return self._ytm_to_itunes(album, "album")
         except Exception as e:
             logger.error(f"YTM get album error: {e}")
             return None
@@ -493,18 +389,18 @@ class MusicAdapter:
                 # Inject missing info for normalization
                 item["album"] = {"name": album_name}
                 if not item.get("thumbnails"): item["thumbnails"] = thumbnails
-                it_item = self._ytm_to_itunes(item, "track")
-                it_item["sourceType"] = "youtube"
-                it_item["sourceUrl"] = f"https://music.youtube.com/watch?v={item.get('videoId')}"
-                tracks.append(it_item)
-                asyncio.create_task(save_track(it_item))
+                tracks.append(self._ytm_to_itunes(item, "track"))
             return tracks
         except Exception as e:
             logger.error(f"YTM get album tracks error: {e}")
             return []
 
     def _it_to_itunes(self, it_data: Dict[str, Any]) -> Dict[str, Any]:
-        # IDs are now prefixed by the itunes crawler
+        # Prefix IDs for official iTunes results
+        it_data = it_data.copy()
+        if "trackId" in it_data: it_data["trackId"] = f"it_{it_data['trackId']}"
+        if "collectionId" in it_data: it_data["collectionId"] = f"it_{it_data['collectionId']}"
+        if "artistId" in it_data: it_data["artistId"] = f"it_{it_data['artistId']}"
         return it_data
 
     async def search_itunes_official(self, term: str, entity_type: str = "track", limit: int = 20) -> List[Dict[str, Any]]:
@@ -514,15 +410,5 @@ class MusicAdapter:
 
         results = await search_itunes(term, entity=entity, limit=limit, official=True)
         if results and "results" in results:
-            processed = []
-            for item in results["results"]:
-                it_item = self._it_to_itunes(item)
-                it_item["sourceType"] = "itunes"
-                processed.append(it_item)
-
-                # Save to 3rah
-                if entity_type == "track": asyncio.create_task(save_track(it_item))
-                elif entity_type == "album": asyncio.create_task(save_album(it_item))
-                elif entity_type == "artist": asyncio.create_task(save_artist(it_item))
-            return processed
+            return [self._it_to_itunes(item) for item in results["results"]]
         return []

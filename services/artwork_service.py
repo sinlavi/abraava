@@ -28,6 +28,9 @@ class ArtworkService:
         try:
             if not entity_id: return None
             # Skip mirroring for external sources
+            if isinstance(entity_id, str) and entity_id.startswith(("yt_", "sc_", "sp_")):
+                return None
+
             data = await get_mirror(entity_type, str(entity_id), 'artworkUrl')
             if data and isinstance(data, dict):
                 artwork_data = data.get('mirrors', {}).get('artworkUrl')
@@ -48,6 +51,9 @@ class ArtworkService:
         try:
             if not entity_id or not file_id: return False
             # Skip mirroring for external sources
+            if isinstance(entity_id, str) and entity_id.startswith(("yt_", "sc_", "sp_")):
+                return False
+
             artwork_url = f'https://tapi.bale.ai/file/bot<token>/{file_id}'
             result = await set_mirror(entity_type, str(entity_id), 'artworkUrl', artwork_url)
             return bool(result)

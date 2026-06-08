@@ -31,6 +31,8 @@ async def get_track(track_id: Union[int, str]) -> Optional[Dict[str, Any]]:
         elif track_id.startswith("sc_"):
             track = await music_adapter.get_sc_track(track_id)
             return {"results": [track]} if track else None
+        elif track_id.startswith("it_"):
+            return await lookup_itunes(track_id[3:], official=True)
 
     return await lookup_itunes(track_id)
 
@@ -41,6 +43,8 @@ async def get_or_crawl_artist(artist_id: Union[int, str], force: bool = False):
         if artist_id.startswith("sp_"):
             artist = await music_adapter.get_sp_artist(artist_id)
             return {"results": [artist]} if artist else None
+        elif artist_id.startswith("it_"):
+            return await lookup_itunes(artist_id[3:], bypass_cache=force, official=True)
 
     return await lookup_itunes(artist_id, bypass_cache=force)
 
@@ -54,6 +58,8 @@ async def get_or_crawl_collection(collection_id: Union[int, str], force: bool = 
         elif collection_id.startswith("yt_"):
             album = await music_adapter.get_yt_album(collection_id)
             return {"results": [album]} if album else None
+        elif collection_id.startswith("it_"):
+            return await lookup_itunes(collection_id[3:], bypass_cache=force, official=True)
 
     return await lookup_itunes(collection_id, bypass_cache=force)
 
@@ -64,6 +70,8 @@ async def get_or_crawl_artist_collections(artist_id: Union[int, str], force: boo
         if artist_id.startswith("sp_"):
             albums = await music_adapter.get_sp_artist_albums(artist_id)
             return {"results": albums} if albums else None
+        elif artist_id.startswith("it_"):
+            return await lookup_itunes(artist_id[3:], "album", bypass_cache=force, official=True)
 
     return await lookup_itunes(artist_id, "album", bypass_cache=force)
 
@@ -77,6 +85,12 @@ async def get_or_crawl_collection_tracks(collection_id: Union[int, str], force: 
         elif collection_id.startswith("yt_"):
             tracks = await music_adapter.get_yt_album_tracks(collection_id)
             return {"results": tracks, "resultCount": len(tracks)} if tracks else None
+        elif collection_id.startswith("it_"):
+            data = await lookup_itunes(collection_id[3:], "song", bypass_cache=force, official=True)
+            if data and data.get("results"):
+                data["results"] = data["results"][1:]
+                data["resultCount"] = len(data["results"])
+            return data
 
     data = await lookup_itunes(collection_id, "song", bypass_cache=force)
     if data and data.get("results"):
