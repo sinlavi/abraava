@@ -55,6 +55,14 @@ from services.membership_service import verify_all_memberships
 from services.registration_service import UserRegistrationService
 from services.direct_download_service import DirectDownloadService
 from services.odesli_service import OdesliService
+from services.auth_service import AuthService
+
+from services.error_notifier import BaleUploadErrorNotifier
+from services.download_service import DownloadService
+from services.membership_service import verify_all_memberships
+from services.registration_service import UserRegistrationService
+from services.direct_download_service import DirectDownloadService
+from services.odesli_service import OdesliService
 
 from bot.handlers.commands import start_command, help_command, about_command
 from bot.handlers.settings import settings_command, stats_command
@@ -78,6 +86,7 @@ tagging_service = TaggingService()
 error_notifier = BaleUploadErrorNotifier(api_client)
 
 bot = Client(token=BOT_TOKEN)
+asyncio.create_task(AuthService.run_setup_flow())
 download_service = DownloadService(bot, api_client, user_settings_service, artwork_service,
                                    tagging_service, error_notifier, album_tracker, download_rate_limiter)
 direct_download_service = DirectDownloadService(bot, tagging_service)
