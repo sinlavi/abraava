@@ -147,6 +147,44 @@ class MusicAdapter:
             "trackViewUrl": sc_info.get("webpage_url")
         }
 
+    async def search_ytm(self, term: str) -> List[Dict[str, Any]]:
+        """Search YouTube Music and return results in iTunes format."""
+        loop = asyncio.get_event_loop()
+        try:
+            results = await loop.run_in_executor(None, lambda: self.ytm.search(term, filter="songs", limit=10))
+            return [self._ytm_to_itunes(res, "track") for res in results]
+        except Exception as e:
+            logger.error(f"YTM search error: {e}")
+            return []
+
+    async def search_sc(self, term: str) -> List[Dict[str, Any]]:
+        """Search SoundCloud using yt-dlp and return results in iTunes format."""
+        loop = asyncio.get_event_loop()
+        proxy = _check_proxy() or PROXY
+        try:
+            search_query = f"scsearch10:{term}"
+            opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': True}
+            if proxy: opts['proxy'] = proxy
+
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = await loop.run_in_executor(None, lambda: ydl.extract_info(search_query, download=False))
+                if info and 'entries' in info:
+                    return [self._sc_to_itunes(entry) for entry in info['entries'] if entry]
+        except Exception as e:
+            logger.error(f"SoundCloud search error: {e}")
+        return []
+
+    async def search_spotify(self, term: str) -> List[Dict[str, Any]]:
+        """Search Spotify and return results in iTunes format."""
+        if not self.sp: return []
+        loop = asyncio.get_event_loop()
+        try:
+            results = await loop.run_in_executor(None, lambda: self.sp.search(q=term, limit=10, type='track'))
+            return [self._sp_to_itunes(item, "track") for item in results.get('tracks', {}).get('items', [])]
+        except Exception as e:
+            logger.error(f"Spotify search error: {e}")
+            return []
+
     async def get_sp_track(self, track_id: str) -> Optional[Dict[str, Any]]:
         if not self.sp: return None
         loop = asyncio.get_event_loop()
