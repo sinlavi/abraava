@@ -1,24 +1,41 @@
 import aiosqlite
 import asyncio
-from lyricsgenius import Genius
-from core.config import GENIUS_ACCESS_TOKEN, CACHE_DIR
+from ytmusicapi import YTMusic
+from core.config import CACHE_DIR
 import os
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from crawlers.youtube import search_youtube_track
+from pathlib import Path
+import http.cookiejar
 
 logger = logging.getLogger("ABRAAVA:LYRICS_SERVICE")
 
+def _load_cookies_as_header(cookie_file):
+    """Load Netscape cookies.txt and return a Cookie header string."""
+    try:
+        if not os.path.exists(cookie_file):
+            return None
+        cj = http.cookiejar.MozillaCookieJar(cookie_file)
+        cj.load(ignore_discard=True, ignore_expires=True)
+        cookies = []
+        for cookie in cj:
+            cookies.append(f"{cookie.name}={cookie.value}")
+        return "; ".join(cookies)
+    except Exception as e:
+        logger.error(f"Error loading cookies from {cookie_file}: {e}")
+        return None
+
 class LyricsService:
     def __init__(self):
-        self.genius = None
-        if GENIUS_ACCESS_TOKEN:
-            self.genius = Genius(
-                GENIUS_ACCESS_TOKEN,
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-                remove_section_headers=True,
-                retries=2
-            )
-            self.genius.verbose = False
+        cookies_path = "cookies.txt"
+        cookie_header = _load_cookies_as_header(cookies_path)
+
+        self.ytm = YTMusic()
+        if cookie_header:
+            logger.info(f"Adding Cookie header from: {cookies_path}")
+            self.ytm.headers["Cookie"] = cookie_header
+
         self.db_path = os.path.join(CACHE_DIR, "lyrics.db")
         self._executor = ThreadPoolExecutor(max_workers=5)
 
@@ -38,13 +55,16 @@ class LyricsService:
             await db.commit()
 
     async def get_lyrics(self, track_id, title, artist):
+        # Ensure track_id is a string
+        track_id = str(track_id)
+
         # 1. Check Cache
         cached_lyrics = await self._get_cached_lyrics(track_id)
         if cached_lyrics:
             return cached_lyrics
 
-        # 2. Fetch from Genius
-        lyrics = await self._fetch_from_genius(title, artist)
+        # 2. Fetch from YTMusic
+        lyrics = await self._fetch_from_ytmusic(track_id, title, artist)
 
         if lyrics:
             # 3. Cache it
@@ -66,22 +86,43 @@ class LyricsService:
             )
             await db.commit()
 
-    async def _fetch_from_genius(self, title, artist):
-        if not self.genius:
-            logger.warning("Genius API not configured. Skipping lyrics fetch.")
-            return None
-
-        loop = asyncio.get_event_loop()
+    async def _fetch_from_ytmusic(self, track_id, title, artist):
         try:
-            # Clean up title/artist if needed
-            search_query = f"{title} {artist}"
-            song = await loop.run_in_executor(self._executor, self.genius.search_song, title, artist)
+            track_id = str(track_id)
+            video_id = None
+            if track_id.startswith("yt_"):
+                video_id = track_id[3:]
+            else:
+                # Search for the track on YouTube
+                video_id = await search_youtube_track(title, artist, "", "")
 
-            if song:
-                return song.lyrics
-            return None
+            if not video_id:
+                logger.warning(f"Could not find YouTube video for {title} - {artist}")
+                return None
+
+            loop = asyncio.get_event_loop()
+
+            # Get watch playlist to find lyrics browse ID
+            watch_playlist = await loop.run_in_executor(
+                self._executor,
+                lambda: self.ytm.get_watch_playlist(video_id)
+            )
+
+            lyrics_browse_id = watch_playlist.get('lyrics')
+            if not lyrics_browse_id:
+                logger.info(f"No lyrics found for {title} - {artist} (Video ID: {video_id})")
+                return None
+
+            # Fetch the actual lyrics
+            lyrics_data = await loop.run_in_executor(
+                self._executor,
+                lambda: self.ytm.get_lyrics(lyrics_browse_id)
+            )
+
+            return lyrics_data.get('lyrics')
+
         except Exception as e:
-            logger.error(f"Error fetching lyrics from Genius: {e}")
+            logger.error(f"Error fetching lyrics from YTMusic: {e}")
             return None
 
 lyrics_service = LyricsService()

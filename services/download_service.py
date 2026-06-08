@@ -1,3 +1,4 @@
+from services.lyrics_service import lyrics_service
 import asyncio
 import os
 import shutil
@@ -126,7 +127,8 @@ class DownloadService:
 
                 temp_dir = os.path.dirname(mp3_path)
                 status_msg = await self._update_status(chat_id, status_msg, "🏷️ *در حال تگ‌گذاری فایل...*", status_prefix, reply_markup, is_batch)
-                self.tagging_service.tag_mp3(Path(mp3_path), track, cover_bytes)
+                lyrics = await lyrics_service.get_lyrics(track_id, track.get("trackName", ""), track.get("artistName", ""))
+                self.tagging_service.tag_mp3(Path(mp3_path), track, cover_bytes, lyrics=lyrics)
 
                 status_msg = await self._update_status(chat_id, status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*", status_prefix, reply_markup, is_batch)
 
