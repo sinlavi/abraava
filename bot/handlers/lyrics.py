@@ -1,0 +1,79 @@
+from services.lyrics_service import lyrics_service
+from crawlers.utils import get_track
+from utils.messages import send_message, edit_message
+from bot.keyboards import create_close_button
+from balethon.objects import InlineKeyboard
+import logging
+import re
+
+logger = logging.getLogger("ABRAAVA:LYRICS_HANDLER")
+
+async def handle_lyrics_request(bot, chat_id, track_id, owner_id, message_to_edit=None):
+    if message_to_edit:
+        status_msg = await edit_message(message_to_edit, "🔍 *در حال جستجوی متن آهنگ...*")
+    else:
+        status_msg = await send_message(bot, chat_id, "🔍 *در حال جستجوی متن آهنگ...*")
+
+    try:
+        data = await get_track(track_id)
+        if not data or not data.get("results"):
+            await edit_message(status_msg, "❌ اطلاعات آهنگ یافت نشد.")
+            return
+
+        track = data["results"][0]
+        title = track.get("trackName")
+        artist = track.get("artistName")
+
+        lyrics = await lyrics_service.get_lyrics(track_id, title, artist)
+
+        if not lyrics:
+            await edit_message(status_msg, "❌ متأسفانه متن این آهنگ یافت نشد.")
+            return
+
+        # Clean lyrics (Genius adds some metadata at the beginning/end sometimes)
+        lyrics = clean_lyrics(lyrics, title)
+
+        # Header for the lyrics
+        header = f"📜 *متن آهنگ {title} - {artist}*\n\n"
+
+        # Split lyrics if too long
+        max_length = 3800
+        parts = []
+
+        if len(header + lyrics) <= 4000:
+            parts.append(header + lyrics)
+        else:
+            current_part = header
+            lines = lyrics.split("\n")
+            for line in lines:
+                if len(current_part + line + "\n") > max_length:
+                    parts.append(current_part.strip())
+                    current_part = ""
+                current_part += line + "\n"
+            if current_part:
+                parts.append(current_part.strip())
+
+        # Send lyrics
+        for i, part in enumerate(parts):
+            reply_markup = InlineKeyboard([create_close_button(owner_id)]) if i == len(parts) - 1 else None
+            if i == 0:
+                status_msg = await edit_message(status_msg, part, reply_markup=reply_markup)
+            else:
+                await send_message(bot, chat_id, part, reply_markup=reply_markup)
+
+    except Exception as e:
+        logger.error(f"Error handling lyrics request: {e}")
+        await edit_message(status_msg, f"❌ خطا در دریافت متن آهنگ: {e}")
+
+def clean_lyrics(lyrics, title):
+    # Genius often adds "Title Lyrics" at the start
+    lyrics = re.sub(rf"^{re.escape(title)}\s*Lyrics", "", lyrics, flags=re.IGNORECASE).strip()
+
+    # Remove things like "123 Contributors", "Embed" etc at the end
+    lyrics = re.sub(r"\d+ Contributors?.*$", "", lyrics, flags=re.MULTILINE)
+    lyrics = re.sub(r"Embed$", "", lyrics, flags=re.MULTILINE)
+
+    # Remove starting [Verse 1] etc if user preferred, but usually it's fine.
+    # The Genius object already has remove_section_headers=True, but let's be safe
+
+    return lyrics.strip()

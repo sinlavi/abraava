@@ -51,6 +51,7 @@ from services.tracker import AlbumDownloadTracker
 from services.tagging_service import TaggingService
 from services.error_notifier import BaleUploadErrorNotifier
 from services.download_service import DownloadService
+from services.lyrics_service import lyrics_service
 from services.membership_service import verify_all_memberships
 from services.registration_service import UserRegistrationService
 from services.direct_download_service import DirectDownloadService
@@ -93,6 +94,7 @@ direct_download_service = DirectDownloadService(bot, tagging_service)
 
 @bot.on_initialize()
 async def on_init():
+    await lyrics_service.init_db()
     logger.info(f"Bot initialized. Offline Mode: {OFFLINE_MODE}")
 
 @bot.on_shutdown()

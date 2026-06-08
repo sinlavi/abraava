@@ -5,6 +5,7 @@ from bot.handlers.search_results import send_search_results, send_external_searc
 from bot.handlers.album_download import download_album
 from bot.handlers.search import handle_search
 from bot.handlers.preview import send_voice_preview
+from bot.handlers.lyrics import handle_lyrics_request
 import crawlers.utils
 from bot.keyboards import get_settings_keyboard, get_quality_keyboard, get_confirmation_keyboard, create_close_button
 from utils.messages import send_message, edit_message, safe_delete
@@ -161,6 +162,12 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         if eid.isdigit(): eid = int(eid)
         if type_ == "artist": await show_artist_page(bot, chat_id, eid, 1, artwork_service, user_id, callback_query.message, force=True)
         elif type_ == "collection": await show_collection_page(bot, chat_id, eid, 1, artwork_service, user_id, callback_query.message, force=True)
+
+    elif data.startswith("lyrics:"):
+        track_id = parts[1]
+        if track_id.isdigit(): track_id = int(track_id)
+        await handle_lyrics_request(bot, chat_id, track_id, user_id, message_to_edit=None) # Start fresh or edit? Better fresh for long lyrics.
+        await bot.answer_callback_query(callback_query.id)
 
     # Searches
     elif data.startswith("page:search:"):
