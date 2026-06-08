@@ -135,12 +135,25 @@ function initDatabase(SQLite3 $db): void {
     // Migrate entityMirrors entityId to TEXT
     $res = $db->query("PRAGMA table_info(entityMirrors)");
     $isText = false;
+    $mirrorExists = false;
     while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+        $mirrorExists = true;
         if ($row['name'] === 'entityId' && strtoupper($row['type']) === 'TEXT') {
             $isText = true;
         }
     }
-    if (!$isText) {
+    if (!$mirrorExists) {
+        $db->exec("CREATE TABLE entityMirrors (
+            entityType TEXT NOT NULL,
+            entityId TEXT NOT NULL,
+            urlType TEXT NOT NULL,
+            mirrorUrl TEXT NOT NULL,
+            quality TEXT,
+            updatedAt TEXT,
+            PRIMARY KEY (entityType, entityId, urlType, quality)
+        )");
+    } elseif (!$isText) {
+        $db->exec("DROP TABLE IF EXISTS entityMirrors_new");
         $db->exec("CREATE TABLE entityMirrors_new (
             entityType TEXT NOT NULL,
             entityId TEXT NOT NULL,
