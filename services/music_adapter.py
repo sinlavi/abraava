@@ -14,8 +14,8 @@ from core.config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, PROXY
 from core.logger import logger
 from crawlers.itunes import search_itunes, lookup_itunes
 
-YT_METADATA_METHODS = [1, 2, 3]
-SC_METADATA_METHODS = [1, 2]
+YT_METADATA_METHODS = [1, 11, 2, 12, 3, 13]
+SC_METADATA_METHODS = [1, 11, 2, 12]
 
 def _get_cookies_path() -> Optional[str]:
     """Get path to cookies.txt in root folder."""
@@ -161,17 +161,20 @@ class MusicAdapter:
         """Search SoundCloud using yt-dlp and return results in iTunes format."""
         loop = asyncio.get_event_loop()
         proxy = _check_proxy() or PROXY
-        try:
-            search_query = f"scsearch10:{term}"
-            opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': True}
-            if proxy: opts['proxy'] = proxy
 
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = await loop.run_in_executor(None, lambda: ydl.extract_info(search_query, download=False))
-                if info and 'entries' in info:
-                    return [self._sc_to_itunes(entry) for entry in info['entries'] if entry]
-        except Exception as e:
-            logger.error(f"SoundCloud search error: {e}")
+        # Try with proxy then without
+        for use_proxy in [True, False]:
+            try:
+                search_query = f"scsearch10:{term}"
+                opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': True}
+                if use_proxy and proxy: opts['proxy'] = proxy
+
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = await loop.run_in_executor(None, lambda: ydl.extract_info(search_query, download=False))
+                    if info and 'entries' in info:
+                        return [self._sc_to_itunes(entry) for entry in info['entries'] if entry]
+            except Exception as e:
+                logger.debug(f"SoundCloud search error (proxy={use_proxy}): {e}")
         return []
 
     async def search_spotify(self, term: str) -> List[Dict[str, Any]]:
@@ -254,11 +257,12 @@ class MusicAdapter:
         cookies = _get_cookies_path()
         if cookies: opts['cookiefile'] = cookies
 
-        # Apply proxy consistently
-        if proxy:
+        # Apply proxy if method is < 10
+        if 1 <= method <= 10 and proxy:
             opts['proxy'] = proxy
 
-        if method == 3:
+        norm_method = method % 10
+        if norm_method == 3:
             opts['extractor_args'] = {"youtube": {"player_client": ["web", "mweb", "android_vr"]}}
 
         return opts
@@ -332,7 +336,9 @@ class MusicAdapter:
         for method in list(SC_METADATA_METHODS):
             try:
                 opts = {'quiet': True, 'no_check_certificate': True}
-                if proxy:
+
+                # Apply proxy if method is < 10
+                if 1 <= method <= 10 and proxy:
                     opts['proxy'] = proxy
 
                 with yt_dlp.YoutubeDL(opts) as ydl:

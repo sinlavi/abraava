@@ -18,8 +18,9 @@ from core.config import OFFLINE_MODE, PROXY
 YT: Optional[YTMusic] = None
 
 # Global method orders to track what works best
-SEARCH_METHOD_ORDER = [1, 2, 3]  # 1: YTMusic, 2: YouTube Search, 3: YouTube Search (alternative)
-METHOD_ORDER = [1, 2, 3, 4, 5, 6, 7, 8]
+# 1-8: Proxy methods, 11-18: Non-proxy methods
+SEARCH_METHOD_ORDER = [1, 2, 3, 11, 12, 13]
+METHOD_ORDER = [1, 11, 2, 12, 3, 13, 4, 14, 5, 15, 6, 16, 7, 17, 8, 18]
 
 # Common yt-dlp options
 COMMON_OPTS = {
@@ -130,35 +131,21 @@ async def search_youtube_track(t_name: str, a_name: str, collection_name: str, y
 
     best_result = None
     best_score = -1.0
-    successful_methods = []
 
     for method in list(SEARCH_METHOD_ORDER):
         try:
-            result = None
-
-            if method == 1:  # YTMusic API
+            if method == 1:  # YTMusic API (Always tries to use proxy internally)
                 loop = asyncio.get_event_loop()
                 result_id = await loop.run_in_executor(None, _sync_search_youtube, t_name, a_name, collection_name, ye)
                 if result_id:
                     logger.info(f"YTMusic found match: {result_id}")
                     return result_id
 
-            elif method == 2:  # yt-dlp search
-                search_query = f"ytsearch5:{t_name} {a_name} {collection_name} official audio"
-                opts = _build_search_ydl_opts(method, 128)
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = await asyncio.get_event_loop().run_in_executor(None, lambda: ydl.extract_info(search_query, download=False))
-                    if info and 'entries' in info and info['entries']:
-                        # Evaluate all results from this search
-                        for entry in info['entries']:
-                            if not entry: continue
-                            score = _calculate_relevance_score(entry, t_name, a_name, collection_name, ye)
-                            if score > best_score:
-                                best_score = score
-                                best_result = entry.get('id')
+            elif method in [2, 3, 12, 13]:  # yt-dlp search
+                limit = 5 if method in [2, 12] else 3
+                query_suffix = " official audio" if method in [2, 12] else " topic"
+                search_query = f"ytsearch{limit}:{t_name} {a_name} {collection_name}{query_suffix}"
 
-            elif method == 3:  # yt-dlp alternative search
-                search_query = f"ytsearch3:{t_name} {a_name} topic"
                 opts = _build_search_ydl_opts(method, 128)
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = await asyncio.get_event_loop().run_in_executor(None, lambda: ydl.extract_info(search_query, download=False))
@@ -172,6 +159,11 @@ async def search_youtube_track(t_name: str, a_name: str, collection_name: str, y
 
             if best_result and best_score > 0.8:
                 logger.info(f"Found high-confidence match with method {method} (score: {best_score:.2f})")
+
+                # Update method order
+                if method in SEARCH_METHOD_ORDER:
+                    SEARCH_METHOD_ORDER.remove(method)
+                    SEARCH_METHOD_ORDER.insert(0, method)
                 break
 
         except Exception as e:
@@ -182,13 +174,14 @@ async def search_youtube_track(t_name: str, a_name: str, collection_name: str, y
 
 def _build_search_ydl_opts(method: int, preferred_quality: int) -> dict:
     """
-    Build yt‑dlp options specifically for searching (extract info only).
+    Build yt‑dlp options specifically for searching.
+    1-10: Proxy enabled, 11-20: Proxy disabled.
     """
     opts = dict(COMMON_OPTS)
     opts["quiet"] = True
     opts["no_warnings"] = True
-    opts["extract_flat"] = False  # Get full info
-    opts["skip_download"] = True  # Don't download, just extract info
+    opts["extract_flat"] = False
+    opts["skip_download"] = True
 
     cookies_path = _get_cookies_path()
     if cookies_path:
@@ -196,21 +189,25 @@ def _build_search_ydl_opts(method: int, preferred_quality: int) -> dict:
 
     opts["http_headers"] = _get_random_headers()
 
-    proxy = _check_proxy() or PROXY
-    if proxy:
-        opts["proxy"] = proxy
+    # Proxy selection logic
+    if 1 <= method <= 10:
+        proxy = _check_proxy() or PROXY
+        if proxy:
+            opts["proxy"] = proxy
+            logger.debug(f"Search Method {method}: Proxy enabled -> {proxy}")
+    else:
+        logger.debug(f"Search Method {method}: Proxy disabled")
 
-    has_deno = _check_deno()
-
-    if method == 1:
+    # Client selection
+    norm_method = method % 10
+    if norm_method == 1:
         opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
-    elif method == 2:
+    elif norm_method == 2:
         opts["extractor_args"] = {"youtube": {"player_client": ["android"]}}
 
     return opts
 
 
-# Helper function for similarity (keeping existing implementation)
 def _get_similarity(a: str, b: str) -> float:
     if not a or not b:
         return 0.0
@@ -225,6 +222,8 @@ def _sync_search_youtube(t_name: str, a_name: str, collection_name: str, ye: str
     if YT is None:
         cookies = _get_cookies_path()
         try:
+            # Note: YTMusic doesn't have a direct 'proxy' param in init for socks5 easily
+            # but it respects system/env proxies if set.
             YT = YTMusic(auth=cookies) if cookies else YTMusic()
         except Exception as e:
             logger.error(f"Failed to initialize YTMusic: {e}")
@@ -329,7 +328,6 @@ async def download_audio(
     os.makedirs(unique_dir, exist_ok=True)
 
     logger.info("Starting download: %s", url)
-    logger.info("Unique output directory: %s", unique_dir)
 
     before = set(Path(unique_dir).glob("*.mp3"))
     loop = asyncio.get_event_loop()
@@ -348,11 +346,12 @@ async def download_audio(
 
             except Exception as exc:
                 logger.warning("Method %d failed: %s", method, exc)
+                # Move failed method to end of its category (proxy or non-proxy)
                 if method in METHOD_ORDER:
                     METHOD_ORDER.remove(method)
                     METHOD_ORDER.append(method)
 
-                await asyncio.sleep(random.uniform(1.5, 3.0))
+                await asyncio.sleep(random.uniform(0.5, 1.5))
                 continue
 
             after = set(Path(unique_dir).glob("*.mp3"))
@@ -369,7 +368,7 @@ async def download_audio(
                 return str(mp3_path)
             else:
                 logger.warning("Method %d completed but no MP3 found – retrying…", method)
-                await asyncio.sleep(random.uniform(1.0, 2.0))
+                await asyncio.sleep(random.uniform(0.5, 1.0))
 
     try:
         shutil.rmtree(unique_dir, ignore_errors=True)
@@ -391,7 +390,8 @@ def _normalize_url(url: str) -> str:
 
 def _build_opts(method: int, output_dir: str, preferred_quality: int) -> dict:
     """
-    Build yt‑dlp options dict for the given method number (1‑8).
+    Build yt‑dlp options dict for the given method number.
+    1-10: Proxy enabled, 11-20: Proxy disabled.
     """
     opts = dict(COMMON_OPTS)
     opts["outtmpl"] = f"{output_dir}/%(title)s.%(ext)s"
@@ -401,55 +401,59 @@ def _build_opts(method: int, output_dir: str, preferred_quality: int) -> dict:
     if cookies_path:
         opts["cookiefile"] = cookies_path
         logger.debug(f"Using cookies from: {cookies_path}")
-    else:
-        logger.debug("No cookies.txt found, proceeding without cookies")
 
     AUDIO_POSTPROCESSOR['preferredquality'] = str(preferred_quality)
     opts["postprocessors"] = [AUDIO_POSTPROCESSOR]
 
     has_deno = _check_deno()
-    proxy = _check_proxy() or PROXY
-    if proxy:
-        opts["proxy"] = proxy
+
+    # Proxy selection logic
+    if 1 <= method <= 10:
+        proxy = _check_proxy() or PROXY
+        if proxy:
+            opts["proxy"] = proxy
+            logger.debug(f"Download Method {method}: Proxy enabled -> {proxy}")
+    else:
+        logger.debug(f"Download Method {method}: Proxy disabled")
 
     opts["http_headers"] = _get_random_headers()
 
-    if method == 8:
+    norm_method = method % 10
+
+    if norm_method == 8:
         opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
         if has_deno:
             opts["js_runtimes"] = {"deno": {}}
             opts["remote_components"] = ["ejs:github"]
 
-    elif method == 2:
+    elif norm_method == 2:
         opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
         if has_deno:
             opts["js_runtimes"] = {"deno": {}}
             opts["remote_components"] = ["ejs:npm"]
 
-    elif method == 3:
-        opts["extractor_args"] = {
-            "youtube": {"player_client": ["web", "mweb", "android_vr"]}
-        }
+    elif norm_method == 3:
+        opts["extractor_args"] = {"youtube": {"player_client": ["web", "mweb", "android_vr"]}}
         if has_deno:
             opts["js_runtimes"] = {"deno": {}}
             opts["remote_components"] = ["ejs:github"]
 
-    elif method == 4:
+    elif norm_method == 4:
         opts["extractor_args"] = {"youtube": {"player_client": ["mweb"]}}
 
-    elif method == 5:
+    elif norm_method == 5:
         opts["extractor_args"] = {"youtube": {"player_client": ["android_vr"]}}
 
-    elif method == 6:
+    elif norm_method == 6:
         opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
         if has_deno:
             opts["js_runtimes"] = {"deno": {}}
             opts["remote_components"] = ["ejs:github"]
 
-    elif method == 7:
+    elif norm_method == 7:
         opts["extractor_args"] = {"youtube": {"player_client": ["mweb"]}}
 
-    elif method == 1:
+    elif norm_method == 1:
         opts["extractor_args"] = {"youtube": {"player_client": ["android"]}}
         opts["http_headers"]["User-Agent"] = (
             "Mozilla/5.0 (Linux; Android 12; SM-S906N Build/QP1A.190711.020) "

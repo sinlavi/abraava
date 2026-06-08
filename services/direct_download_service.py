@@ -55,11 +55,12 @@ class DirectDownloadService:
         cookies = _get_cookies_path()
         if cookies: opts['cookiefile'] = cookies
 
-        # Consistently apply proxy
-        if proxy:
+        # Apply proxy if method is < 10
+        if 1 <= method <= 10 and proxy:
             opts['proxy'] = proxy
 
-        if method == 3:
+        norm_method = method % 10
+        if norm_method == 3:
             opts['extractor_args'] = {"youtube": {"player_client": ["web", "mweb", "android_vr"]}}
 
         return opts
@@ -72,12 +73,16 @@ class DirectDownloadService:
         loop = asyncio.get_event_loop()
 
         info = None
-        for method in [1, 2, 3]:
+        # Try method 1 (proxy), method 11 (no proxy), method 2 (proxy), method 12 (no proxy)
+        for method in [1, 11, 2, 12]:
             try:
                 opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': True}
                 cookies = _get_cookies_path()
                 if cookies: opts['cookiefile'] = cookies
-                if proxy: opts['proxy'] = proxy
+
+                # Apply proxy if method is < 10
+                if 1 <= method <= 10 and proxy:
+                    opts['proxy'] = proxy
 
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
