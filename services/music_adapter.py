@@ -13,17 +13,10 @@ from spotipy.oauth2 import SpotifyClientCredentials
 from core.config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, PROXY
 from core.logger import logger
 from crawlers.itunes import search_itunes, lookup_itunes
+from services.auth_service import AuthService
 
 YT_METADATA_METHODS = [1, 11, 2, 12, 3, 13]
 SC_METADATA_METHODS = [1, 11, 2, 12]
-
-def _get_cookies_path() -> Optional[str]:
-    """Get path to cookies.txt in root folder."""
-    script_dir = Path(__file__).parent.parent
-    cookies_path = script_dir / "cookies.txt"
-    if cookies_path.exists() and cookies_path.is_file():
-        return str(cookies_path)
-    return None
 
 def _check_proxy() -> Optional[str]:
     """Return SOCKS5 proxy URL if WARP/Dante/etc. is listening on 1080."""
@@ -53,10 +46,10 @@ class MusicAdapter:
         else:
             self.sp = None
 
-        # Initialize YouTube Music
-        cookies = _get_cookies_path()
+        # Initialize YouTube Music with OAuth if available
+        auth = AuthService.get_ytmusic_auth()
         try:
-            self.ytm = YTMusic(auth=cookies) if cookies else YTMusic()
+            self.ytm = YTMusic(auth=auth) if auth else YTMusic()
         except Exception as e:
             logger.error(f"Failed to initialize YTMusic: {e}")
             self.ytm = YTMusic()
@@ -254,8 +247,11 @@ class MusicAdapter:
 
     def _get_ydl_opts(self, method, proxy=None):
         opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': False}
-        cookies = _get_cookies_path()
-        if cookies: opts['cookiefile'] = cookies
+
+        # Use OAuth if available
+        if AuthService.get_ytmusic_auth():
+            opts["username"] = "oauth2"
+            opts["password"] = ""
 
         # Apply proxy if method is < 10
         if 1 <= method <= 10 and proxy:
@@ -340,6 +336,11 @@ class MusicAdapter:
                 # Apply proxy if method is < 10
                 if 1 <= method <= 10 and proxy:
                     opts['proxy'] = proxy
+
+                # Use OAuth if available
+                if AuthService.get_ytmusic_auth():
+                    opts["username"] = "oauth2"
+                    opts["password"] = ""
 
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
