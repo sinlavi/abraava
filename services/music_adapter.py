@@ -25,6 +25,21 @@ def _get_cookies_path() -> Optional[str]:
         return str(cookies_path)
     return None
 
+def _check_proxy() -> Optional[str]:
+    """Return SOCKS5 proxy URL if WARP/Dante/etc. is listening on 1080."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(0.5)
+    try:
+        if s.connect_ex(("127.0.0.1", 1080)) == 0:
+            s.close()
+            return "socks5://127.0.0.1:1080"
+    except Exception:
+        pass
+    finally:
+        s.close()
+    return None
+
 class MusicAdapter:
     def __init__(self):
         # Initialize Spotify
@@ -201,11 +216,13 @@ class MusicAdapter:
         cookies = _get_cookies_path()
         if cookies: opts['cookiefile'] = cookies
 
-        if method == 2 and proxy:
+        # Apply proxy consistently
+        if proxy:
             opts['proxy'] = proxy
-        elif method == 3:
+
+        if method == 3:
             opts['extractor_args'] = {"youtube": {"player_client": ["web", "mweb", "android_vr"]}}
-            if proxy: opts['proxy'] = proxy
+
         return opts
 
     async def get_yt_track(self, video_id: str) -> Optional[Dict[str, Any]]:
@@ -213,18 +230,7 @@ class MusicAdapter:
         if video_id.startswith("yt_"): video_id = video_id[3:]
         url = f"https://www.youtube.com/watch?v={video_id}"
 
-        from core.config import PROXY
-        proxy = PROXY
-        if not proxy:
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            try:
-                if s.connect_ex(("127.0.0.1", 1080)) == 0:
-                    proxy = "socks5://127.0.0.1:1080"
-            except: pass
-            finally: s.close()
-
+        proxy = _check_proxy() or PROXY
         loop = asyncio.get_event_loop()
 
         for method in list(YT_METADATA_METHODS):
@@ -282,24 +288,13 @@ class MusicAdapter:
         else:
             url = f"https://soundcloud.com/{sc_id}"
 
-        from core.config import PROXY
-        proxy = PROXY
-        if not proxy:
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            try:
-                if s.connect_ex(("127.0.0.1", 1080)) == 0:
-                    proxy = "socks5://127.0.0.1:1080"
-            except: pass
-            finally: s.close()
-
+        proxy = _check_proxy() or PROXY
         loop = asyncio.get_event_loop()
 
         for method in list(SC_METADATA_METHODS):
             try:
                 opts = {'quiet': True, 'no_check_certificate': True}
-                if method == 2 and proxy:
+                if proxy:
                     opts['proxy'] = proxy
 
                 with yt_dlp.YoutubeDL(opts) as ydl:

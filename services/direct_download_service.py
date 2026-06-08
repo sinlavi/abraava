@@ -20,22 +20,25 @@ def _get_cookies_path() -> Optional[str]:
         return str(cookies_path)
     return None
 
+def _check_proxy() -> Optional[str]:
+    """Return SOCKS5 proxy URL if WARP/Dante/etc. is listening on 1080."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(0.5)
+    try:
+        if s.connect_ex(("127.0.0.1", 1080)) == 0:
+            s.close()
+            return "socks5://127.0.0.1:1080"
+    except Exception:
+        pass
+    finally:
+        s.close()
+    return None
+
 class DirectDownloadService:
     def __init__(self, bot, tagging_service):
         self.bot = bot
         self.tagging_service = tagging_service
-
-    def _get_proxy(self):
-        """Return SOCKS5 proxy URL from config or check for local WARP/Dante."""
-        if PROXY: return PROXY
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.5)
-        try:
-            if s.connect_ex(("127.0.0.1", 1080)) == 0:
-                return "socks5://127.0.0.1:1080"
-        except: pass
-        finally: s.close()
-        return None
 
     def _get_ydl_opts(self, method, output_dir, proxy=None):
         opts = {
@@ -52,18 +55,20 @@ class DirectDownloadService:
         cookies = _get_cookies_path()
         if cookies: opts['cookiefile'] = cookies
 
-        if method == 2 and proxy:
+        # Consistently apply proxy
+        if proxy:
             opts['proxy'] = proxy
-        elif method == 3:
+
+        if method == 3:
             opts['extractor_args'] = {"youtube": {"player_client": ["web", "mweb", "android_vr"]}}
-            if proxy: opts['proxy'] = proxy
+
         return opts
 
     async def ask_confirmation(self, chat_id, url, user_id=None):
         """Show metadata preview and ask for download confirmation."""
         status_msg = await send_message(self.bot, chat_id, "🔍 *در حال دریافت اطلاعات پیوند...*")
 
-        proxy = self._get_proxy()
+        proxy = _check_proxy() or PROXY
         loop = asyncio.get_event_loop()
 
         info = None
@@ -72,7 +77,7 @@ class DirectDownloadService:
                 opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': True}
                 cookies = _get_cookies_path()
                 if cookies: opts['cookiefile'] = cookies
-                if method == 2 and proxy: opts['proxy'] = proxy
+                if proxy: opts['proxy'] = proxy
 
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
