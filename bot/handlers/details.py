@@ -270,6 +270,8 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
 
         itunes_url = track.get('trackViewUrl') or track.get('viewUrl') or f"https://music.apple.com/song/{track_id}"
 
+        is_external = str(track_id).startswith(("yt_", "sc_", "sp_", "it_"))
+
         markup_rows.append([
             InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}track_{track_id}"),
             InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=itunes_url)
