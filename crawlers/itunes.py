@@ -110,14 +110,16 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
 
     session = await HttpClient.get_session()
 
-    is_mirror = endpoint.startswith("mirror")
-    max_attempts = 1 if is_mirror else 3
+    # 3rah-only endpoints: mirror, lyrics, and save operations
+    is_3rah_only = endpoint.startswith(("mirror", "lyrics", "track/save", "album/save", "artist/save"))
+
+    max_attempts = 1 if is_3rah_only else 3
 
     for attempt in range(max_attempts):
         if official:
             base_url = "https://itunes.apple.com"
         else:
-            base_url = endpoint_manager.get_endpoint() if not is_mirror else ITUNES_BASE_URL
+            base_url = endpoint_manager.get_endpoint() if not is_3rah_only else ITUNES_BASE_URL
         api_path = f"/{endpoint}" if not endpoint.startswith("/") else endpoint
         url = f"{base_url}{api_path}"
 

@@ -15,7 +15,7 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
 
         # Flatten and check for close button in all nested lists
         has_close = any(
-            getattr(btn, 'callback_data', '') == 'close'
+            str(getattr(btn, 'callback_data', '')).startswith('close')
             for row in markup
             if isinstance(row, list)
             for btn in row
