@@ -12,6 +12,22 @@ from core.logger import logger
 from core.http_client import HttpClient
 from balethon.objects import Message
 from utils.messages import edit_message
+from typing import Any
+
+
+def _prefix_itunes_ids(data: Any) -> Any:
+    if isinstance(data, list):
+        return [_prefix_itunes_ids(i) for i in data]
+    if isinstance(data, dict):
+        new_data = {k: _prefix_itunes_ids(v) for k, v in data.items()}
+        # Prefix IDs if they are purely numeric
+        for key in ["trackId", "collectionId", "artistId"]:
+            if key in new_data:
+                val = new_data[key]
+                if val and (isinstance(val, int) or (isinstance(val, str) and val.isdigit())):
+                    new_data[key] = f"it_{val}"
+        return new_data
+    return data
 
 
 class iTunesSQLiteCache:
@@ -148,20 +164,35 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
     return None
 
 async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50, official: bool = False) -> Optional[Dict[str, Any]]:
+    params = {"term": term, "media": "music", "limit": limit}
+    if entity: params["entity"] = entity
+
     if not official:
         # Check 3rah first
-        data = await fetch_itunes("search", {"term": term, "media": "music", "limit": limit, "entity": entity} if entity else {"term": term, "media": "music", "limit": limit})
+        data = await fetch_itunes("search", params)
         if data and data.get("resultCount", 0) > 0:
-            return data
-    return await fetch_itunes("search", {"term": term, "media": "music", "limit": limit, "entity": entity} if entity else {"term": term, "media": "music", "limit": limit}, official=official)
+            return _prefix_itunes_ids(data)
+
+    data = await fetch_itunes("search", params, official=official)
+    return _prefix_itunes_ids(data)
 
 async def lookup_itunes(id: Union[int, str], entity: Optional[str] = None, bypass_cache: bool = False, official: bool = False) -> Optional[Dict[str, Any]]:
+    raw_id = str(id)
+    stripped_id = raw_id[3:] if raw_id.startswith("it_") else raw_id
+
+    params = {"id": raw_id}
+    if entity: params["entity"] = entity
+
     if not official:
         # Check 3rah first
-        data = await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache)
+        data = await fetch_itunes("lookup", params, bypass_cache=bypass_cache)
         if data and data.get("resultCount", 0) > 0:
-            return data
-    return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache, official=official)
+            return _prefix_itunes_ids(data)
+
+    # Official lookup or not found in 3rah
+    params["id"] = stripped_id
+    data = await fetch_itunes("lookup", params, bypass_cache=bypass_cache, official=official)
+    return _prefix_itunes_ids(data)
 
 async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, mirror_url: str, quality: str = None) -> Optional[Dict[str, Any]]:
     payload = {"entityType": entity_type, "entityId": str(entity_id), "urlType": url_type, "mirrorUrl": mirror_url}

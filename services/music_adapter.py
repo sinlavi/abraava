@@ -504,11 +504,7 @@ class MusicAdapter:
             return []
 
     def _it_to_itunes(self, it_data: Dict[str, Any]) -> Dict[str, Any]:
-        # Prefix IDs for official iTunes results
-        it_data = it_data.copy()
-        if "trackId" in it_data: it_data["trackId"] = f"it_{it_data['trackId']}"
-        if "collectionId" in it_data: it_data["collectionId"] = f"it_{it_data['collectionId']}"
-        if "artistId" in it_data: it_data["artistId"] = f"it_{it_data['artistId']}"
+        # IDs are now prefixed by the itunes crawler
         return it_data
 
     async def search_itunes_official(self, term: str, entity_type: str = "track", limit: int = 20) -> List[Dict[str, Any]]:
