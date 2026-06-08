@@ -196,15 +196,15 @@ def _build_search_ydl_opts(method: int, preferred_quality: int) -> dict:
 
     opts["http_headers"] = _get_random_headers()
 
+    proxy = _check_proxy() or PROXY
+    if proxy:
+        opts["proxy"] = proxy
+
     has_deno = _check_deno()
-    proxy = _check_proxy()
 
     if method == 1:
-        if proxy: opts["proxy"] = proxy
         opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
-
     elif method == 2:
-        if proxy: opts["proxy"] = proxy
         opts["extractor_args"] = {"youtube": {"player_client": ["android"]}}
 
     return opts
@@ -408,29 +408,25 @@ def _build_opts(method: int, output_dir: str, preferred_quality: int) -> dict:
     opts["postprocessors"] = [AUDIO_POSTPROCESSOR]
 
     has_deno = _check_deno()
-    proxy = _check_proxy()
+    proxy = _check_proxy() or PROXY
+    if proxy:
+        opts["proxy"] = proxy
 
     opts["http_headers"] = _get_random_headers()
 
     if method == 8:
-        if proxy:
-            opts["proxy"] = proxy
         opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
         if has_deno:
             opts["js_runtimes"] = {"deno": {}}
             opts["remote_components"] = ["ejs:github"]
 
     elif method == 2:
-        if proxy:
-            opts["proxy"] = proxy
         opts["extractor_args"] = {"youtube": {"player_client": ["web"]}}
         if has_deno:
             opts["js_runtimes"] = {"deno": {}}
             opts["remote_components"] = ["ejs:npm"]
 
     elif method == 3:
-        if proxy:
-            opts["proxy"] = proxy
         opts["extractor_args"] = {
             "youtube": {"player_client": ["web", "mweb", "android_vr"]}
         }
@@ -439,13 +435,9 @@ def _build_opts(method: int, output_dir: str, preferred_quality: int) -> dict:
             opts["remote_components"] = ["ejs:github"]
 
     elif method == 4:
-        if proxy:
-            opts["proxy"] = proxy
         opts["extractor_args"] = {"youtube": {"player_client": ["mweb"]}}
 
     elif method == 5:
-        if proxy:
-            opts["proxy"] = proxy
         opts["extractor_args"] = {"youtube": {"player_client": ["android_vr"]}}
 
     elif method == 6:
@@ -458,8 +450,6 @@ def _build_opts(method: int, output_dir: str, preferred_quality: int) -> dict:
         opts["extractor_args"] = {"youtube": {"player_client": ["mweb"]}}
 
     elif method == 1:
-        if proxy:
-            opts["proxy"] = proxy
         opts["extractor_args"] = {"youtube": {"player_client": ["android"]}}
         opts["http_headers"]["User-Agent"] = (
             "Mozilla/5.0 (Linux; Android 12; SM-S906N Build/QP1A.190711.020) "
