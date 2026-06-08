@@ -1,3 +1,4 @@
+from services.lyrics_service import lyrics_service
 import asyncio
 import os
 import shutil
@@ -187,7 +188,8 @@ class DirectDownloadService:
 
             if success and mp3_path:
                 status_msg = await self._update_status(chat_id, status_msg, "☁️ *در حال آماده‌سازی فایل...*")
-                self.tagging_service.tag_mp3(mp3_path, track_data)
+                lyrics = await lyrics_service.get_lyrics(track_id, track_data.get("trackName", ""), track_data.get("artistName", ""))
+                self.tagging_service.tag_mp3(mp3_path, track_data, lyrics=lyrics)
 
                 track_name = track_data['trackName']
                 if url:

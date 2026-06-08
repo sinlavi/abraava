@@ -1,12 +1,12 @@
 import os
 from pathlib import Path
 from typing import Optional
-from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, TCOM, TCON, TDRC, TPOS, TRCK, COMM, TLEN, TXXX, TCOP, TPUB
+from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, TCOM, TCON, TDRC, TPOS, TRCK, COMM, TLEN, TXXX, TCOP, TPUB, USLT
 from core.logger import logger
 
 class TaggingService:
     @staticmethod
-    def tag_mp3(file_path: Path, track_data: dict, cover_bytes: Optional[bytes] = None):
+    def tag_mp3(file_path: Path, track_data: dict, cover_bytes: Optional[bytes] = None, lyrics: Optional[str] = None):
         """Add comprehensive ID3 metadata to the downloaded MP3 file."""
         try:
             audio = ID3(file_path)
@@ -88,6 +88,10 @@ class TaggingService:
                     desc='Cover',
                     data=cover_bytes
                 ))
+
+            # Add lyrics
+            if lyrics:
+                audio.add(USLT(encoding=3, lang='eng', desc='Lyrics', text=lyrics))
 
             # Save with ID3 v2.3 for better compatibility
             audio.save(file_path, v2_version=3)
