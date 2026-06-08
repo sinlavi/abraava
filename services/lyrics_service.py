@@ -6,6 +6,7 @@ import os
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from crawlers.youtube import search_youtube_track
+from crawlers.itunes import get_lyrics_from_api, save_lyrics
 from pathlib import Path
 import http.cookiejar
 
@@ -63,12 +64,20 @@ class LyricsService:
         if cached_lyrics:
             return cached_lyrics
 
-        # 2. Fetch from YTMusic
+        # 2. Check 3rah API
+        api_lyrics = await get_lyrics_from_api(track_id)
+        if api_lyrics:
+            await self._cache_lyrics(track_id, api_lyrics, title, artist)
+            return api_lyrics
+
+        # 3. Fetch from YTMusic
         lyrics = await self._fetch_from_ytmusic(track_id, title, artist)
 
         if lyrics:
-            # 3. Cache it
+            # 4. Cache it
             await self._cache_lyrics(track_id, lyrics, title, artist)
+            # 5. Save to 3rah API
+            await save_lyrics(track_id, lyrics)
 
         return lyrics
 

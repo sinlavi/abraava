@@ -146,14 +146,22 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
     return None
 
 async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50, official: bool = False) -> Optional[Dict[str, Any]]:
+    if not official:
+        # Check 3rah first
+        data = await fetch_itunes("search", {"term": term, "media": "music", "limit": limit, "entity": entity} if entity else {"term": term, "media": "music", "limit": limit})
+        if data and data.get("resultCount", 0) > 0:
+            return data
     return await fetch_itunes("search", {"term": term, "media": "music", "limit": limit, "entity": entity} if entity else {"term": term, "media": "music", "limit": limit}, official=official)
 
 async def lookup_itunes(id: Union[int, str], entity: Optional[str] = None, bypass_cache: bool = False, official: bool = False) -> Optional[Dict[str, Any]]:
+    if not official:
+        # Check 3rah first
+        data = await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache)
+        if data and data.get("resultCount", 0) > 0:
+            return data
     return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache, official=official)
 
 async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, mirror_url: str, quality: str = None) -> Optional[Dict[str, Any]]:
-    if str(entity_id).startswith(("yt_", "sc_", "sp_")):
-        return None
     payload = {"entityType": entity_type, "entityId": str(entity_id), "urlType": url_type, "mirrorUrl": mirror_url}
     if quality: payload["quality"] = quality
     logger.info(f"Setting mirror: {entity_type} {entity_id} {url_type} -> {mirror_url} ({quality})")
@@ -161,12 +169,34 @@ async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str
 
 
 async def get_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, quality: str = None) -> Optional[Dict[str, Any]]:
-    if str(entity_id).startswith(("yt_", "sc_", "sp_")):
-        return None
     params = {"entityType": entity_type, "entityId": str(entity_id), "urlType": url_type}
     if quality: params["quality"] = quality
     logger.info(f"Checking mirror for {entity_type} {entity_id} {url_type} ({quality})")
     return await fetch_itunes("mirror/get", params=params)
+
+
+async def save_track(track_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    return await fetch_itunes("track/save", method="POST", payload=track_data)
+
+
+async def save_album(album_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    return await fetch_itunes("album/save", method="POST", payload=album_data)
+
+
+async def save_artist(artist_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    return await fetch_itunes("artist/save", method="POST", payload=artist_data)
+
+
+async def save_lyrics(track_id: Union[int, str], lyrics: str) -> Optional[Dict[str, Any]]:
+    payload = {"trackId": str(track_id), "lyrics": lyrics}
+    return await fetch_itunes("lyrics/save", method="POST", payload=payload)
+
+
+async def get_lyrics_from_api(track_id: Union[int, str]) -> Optional[str]:
+    data = await fetch_itunes("lyrics/get", params={"trackId": str(track_id)})
+    if data and data.get("success"):
+        return data.get("lyrics")
+    return None
 
 
 async def get_cached_audio(track_id: Union[int, str], quality: str = None) -> Optional[str]:
