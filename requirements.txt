@@ -8,5 +8,4 @@ dotenv
 rapidfuzz
 spotipy
 pillow
-lyricsgenius
 beautifulsoup4

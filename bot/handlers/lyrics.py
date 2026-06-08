@@ -10,9 +10,9 @@ logger = logging.getLogger("ABRAAVA:LYRICS_HANDLER")
 
 async def handle_lyrics_request(bot, chat_id, track_id, owner_id, message_to_edit=None):
     if message_to_edit:
-        status_msg = await edit_message(message_to_edit, "🔍 *در حال جستجوی متن آهنگ...*")
+        status_msg = await edit_message(message_to_edit, "🔍 *در حال جستجوی متن آهنگ از یوتیوب...*")
     else:
-        status_msg = await send_message(bot, chat_id, "🔍 *در حال جستجوی متن آهنگ...*")
+        status_msg = await send_message(bot, chat_id, "🔍 *در حال جستجوی متن آهنگ از یوتیوب...*")
 
     try:
         data = await get_track(track_id)
@@ -27,11 +27,11 @@ async def handle_lyrics_request(bot, chat_id, track_id, owner_id, message_to_edi
         lyrics = await lyrics_service.get_lyrics(track_id, title, artist)
 
         if not lyrics:
-            await edit_message(status_msg, "❌ متأسفانه متن این آهنگ یافت نشد.")
+            await edit_message(status_msg, "❌ متأسفانه متن این آهنگ در یوتیوب موزیک یافت نشد.")
             return
 
-        # Clean lyrics (Genius adds some metadata at the beginning/end sometimes)
-        lyrics = clean_lyrics(lyrics, title)
+        # Clean lyrics
+        lyrics = clean_lyrics(lyrics)
 
         # Header for the lyrics
         header = f"📜 *متن آهنگ {title} - {artist}*\n\n"
@@ -65,15 +65,12 @@ async def handle_lyrics_request(bot, chat_id, track_id, owner_id, message_to_edi
         logger.error(f"Error handling lyrics request: {e}")
         await edit_message(status_msg, f"❌ خطا در دریافت متن آهنگ: {e}")
 
-def clean_lyrics(lyrics, title):
-    # Genius often adds "Title Lyrics" at the start
-    lyrics = re.sub(rf"^{re.escape(title)}\s*Lyrics", "", lyrics, flags=re.IGNORECASE).strip()
+def clean_lyrics(lyrics):
+    if not lyrics:
+        return ""
 
-    # Remove things like "123 Contributors", "Embed" etc at the end
-    lyrics = re.sub(r"\d+ Contributors?.*$", "", lyrics, flags=re.MULTILINE)
-    lyrics = re.sub(r"Embed$", "", lyrics, flags=re.MULTILINE)
-
-    # Remove starting [Verse 1] etc if user preferred, but usually it's fine.
-    # The Genius object already has remove_section_headers=True, but let's be safe
+    # YouTube Music lyrics are usually clean, but let's do basic cleanup
+    # Remove excessive empty lines
+    lyrics = re.sub(r'\n\s*\n\s*\n+', '\n\n', lyrics)
 
     return lyrics.strip()
