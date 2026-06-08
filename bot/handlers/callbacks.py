@@ -167,7 +167,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         track_id = parts[1]
         if track_id.isdigit(): track_id = int(track_id)
         await handle_lyrics_request(bot, chat_id, track_id, user_id, message_to_edit=None) # Start fresh or edit? Better fresh for long lyrics.
-        await bot.answer_callback_query(callback_query.id)
+        await bot.answer_callback_query(callback_query.id, text="")
 
     # Searches
     elif data.startswith("page:search:"):
