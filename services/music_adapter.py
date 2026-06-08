@@ -1,190 +1,195 @@
 import asyncio
-import os
-import re
-import socket
-from typing import Optional, List, Dict, Any, Union
-from pathlib import Path
-
-import yt_dlp
-from ytmusicapi import YTMusic
+from typing import List, Dict, Any, Optional
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
-
-from core.config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, PROXY
+from ytmusicapi import YTMusic
+import yt_dlp
+from core.config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
 from core.logger import logger
-from crawlers.itunes import search_itunes, lookup_itunes
-from services.auth_service import AuthService
 
-YT_METADATA_METHODS = [1, 11, 2, 12, 3, 13]
-SC_METADATA_METHODS = [1, 11, 2, 12]
-
-def _check_proxy() -> Optional[str]:
-    """Return SOCKS5 proxy URL if WARP/Dante/etc. is listening on 1080."""
-    import socket
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(0.5)
-    try:
-        if s.connect_ex(("127.0.0.1", 1080)) == 0:
-            s.close()
-            return "socks5://127.0.0.1:1080"
-    except Exception:
-        pass
-    finally:
-        s.close()
-    return None
+YT_METADATA_METHODS = [1, 2, 3]
+SC_METADATA_METHODS = [1, 2]
 
 class MusicAdapter:
     def __init__(self):
-        # Initialize Spotify
+        self.sp = None
         if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET:
             try:
                 auth_manager = SpotifyClientCredentials(client_id=SPOTIFY_CLIENT_ID, client_secret=SPOTIFY_CLIENT_SECRET)
                 self.sp = spotipy.Spotify(auth_manager=auth_manager)
             except Exception as e:
                 logger.error(f"Failed to initialize Spotify: {e}")
-                self.sp = None
-        else:
-            self.sp = None
 
-        # Initialize YouTube Music with OAuth if available
-        auth = AuthService.get_ytmusic_auth()
-        try:
-            self.ytm = YTMusic(auth=auth) if auth else YTMusic()
-        except Exception as e:
-            logger.error(f"Failed to initialize YTMusic: {e}")
-            self.ytm = YTMusic()
+        self.ytm = YTMusic()
 
     def _sp_to_itunes(self, sp_data: Dict[str, Any], entity_type: str) -> Dict[str, Any]:
-        """Normalize Spotify metadata to iTunes-like format."""
         if entity_type == "track":
-            album = sp_data.get("album") or {}
-            images = album.get("images") or sp_data.get("images") or []
+            album = sp_data.get("album", {})
             return {
                 "wrapperType": "track",
                 "trackId": f"sp_{sp_data['id']}",
                 "trackName": sp_data["name"],
-                "artistName": ", ".join([a["name"] for a in sp_data["artists"]]),
-                "collectionName": album.get("name"),
-                "artworkUrl100": images[0]["url"] if images else None,
-                "trackTimeMillis": sp_data["duration_ms"],
-                "releaseDate": album.get("release_date"),
-                "trackViewUrl": sp_data["external_urls"]["spotify"]
+                "artistId": f"sp_{sp_data['artists'][0]['id']}" if sp_data.get("artists") else None,
+                "artistName": ", ".join([a["name"] for a in sp_data["artists"]]) if sp_data.get("artists") else "Unknown",
+                "collectionId": f"sp_{album['id']}" if album.get("id") else None,
+                "collectionName": album.get("name", "Unknown"),
+                "artworkUrl100": album["images"][0]["url"] if album.get("images") else None,
+                "trackTimeMillis": sp_data.get("duration_ms", 0),
+                "releaseDate": album.get("release_date", ""),
+                "primaryGenreName": None, # Spotify doesn't provide genre at track level easily
+                "trackViewUrl": sp_data["external_urls"].get("spotify"),
+                "previewUrl": sp_data.get("preview_url")
             }
         elif entity_type == "album":
-            images = sp_data.get("images") or []
             return {
                 "wrapperType": "collection",
                 "collectionId": f"sp_{sp_data['id']}",
                 "collectionName": sp_data["name"],
-                "artistName": ", ".join([a["name"] for a in sp_data["artists"]]),
-                "artworkUrl100": images[0]["url"] if images else None,
+                "artistId": f"sp_{sp_data['artists'][0]['id']}" if sp_data.get("artists") else None,
+                "artistName": ", ".join([a["name"] for a in sp_data["artists"]]) if sp_data.get("artists") else "Unknown",
+                "artworkUrl100": sp_data["images"][0]["url"] if sp_data.get("images") else None,
                 "trackCount": sp_data.get("total_tracks", 0),
-                "releaseDate": sp_data.get("release_date"),
-                "collectionViewUrl": sp_data["external_urls"]["spotify"]
+                "releaseDate": sp_data.get("release_date", ""),
+                "primaryGenreName": ", ".join(sp_data.get("genres", [])),
+                "collectionViewUrl": sp_data["external_urls"].get("spotify")
             }
         elif entity_type == "artist":
-            images = sp_data.get("images") or []
             return {
                 "wrapperType": "artist",
                 "artistId": f"sp_{sp_data['id']}",
                 "artistName": sp_data["name"],
-                "primaryGenreName": sp_data.get("genres", [None])[0] if sp_data.get("genres") else None,
-                "artworkUrl100": images[0]["url"] if images else None,
-                "artistLinkUrl": sp_data["external_urls"]["spotify"]
+                "primaryGenreName": ", ".join(sp_data.get("genres", [])),
+                "artistLinkUrl": sp_data["external_urls"].get("spotify"),
+                "artworkUrl100": sp_data["images"][0]["url"] if sp_data.get("images") else None
             }
         return sp_data
 
     def _ytm_to_itunes(self, ytm_data: Dict[str, Any], entity_type: str) -> Dict[str, Any]:
-        """Normalize YTMusic metadata to iTunes-like format."""
         if entity_type == "track":
-            thumbnails = ytm_data.get("thumbnails") or []
-            artists = ytm_data.get("artists") or []
-            artist_name = ", ".join([a["name"] for a in artists]) if isinstance(artists, list) else "Unknown"
-            album = ytm_data.get("album") or {}
+            artists = ytm_data.get("artists")
+            if not artists and "author" in ytm_data:
+                artist_name = ytm_data["author"].replace(" - Topic", "")
+            elif artists:
+                artist_name = ", ".join([a["name"].replace(" - Topic", "") for a in artists])
+            else:
+                artist_name = "Unknown"
+
+            album = ytm_data.get("album")
+            if isinstance(album, dict):
+                album_name = album.get("name")
+            else:
+                album_name = album if album else None
+
+            thumbnails = ytm_data.get("thumbnails", [])
+            artwork_url = thumbnails[-1]["url"] if thumbnails else None
+            if artwork_url and "w120-h120" in artwork_url:
+                artwork_url = artwork_url.replace("w120-h120", "w1000-h1000")
+
+            # Extract videoId properly
+            v_id = ytm_data.get('videoId') or ytm_data.get('id')
+
+            duration = ytm_data.get("duration_seconds") or ytm_data.get("duration") or 0
+            if isinstance(duration, str):
+                # Handle cases where duration might be like "4:24"
+                if ":" in duration:
+                    parts = duration.split(":")
+                    if len(parts) == 2: duration = int(parts[0]) * 60 + int(parts[1])
+                    elif len(parts) == 3: duration = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                else:
+                    try: duration = int(duration)
+                    except: duration = 0
 
             return {
                 "wrapperType": "track",
-                "trackId": f"yt_{ytm_data.get('videoId')}",
-                "trackName": ytm_data.get("title"),
+                "trackId": f"yt_{v_id}" if v_id else None,
+                "trackName": ytm_data.get("title", "Unknown"),
                 "artistName": artist_name,
-                "collectionName": album.get("name") if isinstance(album, dict) else album,
-                "artworkUrl100": thumbnails[-1]["url"] if thumbnails else None,
-                "trackTimeMillis": int(ytm_data.get("duration_seconds", 0)) * 1000,
-                "trackViewUrl": f"https://music.youtube.com/watch?v={ytm_data.get('videoId')}"
+                "collectionName": album_name,
+                "artworkUrl100": artwork_url,
+                "trackTimeMillis": duration * 1000,
+                "releaseDate": str(ytm_data.get("year", "")) if ytm_data.get("year") else None,
+                "trackViewUrl": f"https://music.youtube.com/watch?v={v_id}" if v_id else None
             }
         elif entity_type == "album":
-            thumbnails = ytm_data.get("thumbnails") or []
-            artists = ytm_data.get("artists") or []
-            artist_name = ", ".join([a["name"] for a in artists]) if isinstance(artists, list) else "Unknown"
-
+            thumbnails = ytm_data.get("thumbnails", [])
+            artist_name = ytm_data.get("artist", "Unknown").replace(" - Topic", "")
             return {
                 "wrapperType": "collection",
-                "collectionId": f"yt_{ytm_data.get('browseId')}",
-                "collectionName": ytm_data.get("title"),
+                "collectionId": f"yt_{ytm_data['browseId']}",
+                "collectionName": ytm_data["title"],
                 "artistName": artist_name,
                 "artworkUrl100": thumbnails[-1]["url"] if thumbnails else None,
-                "trackCount": int(ytm_data.get("trackCount") or 0),
-                "collectionViewUrl": f"https://music.youtube.com/browse/{ytm_data.get('browseId')}"
+                "releaseDate": ytm_data.get("year", ""),
+                "collectionViewUrl": f"https://music.youtube.com/browse/{ytm_data['browseId']}"
             }
         return ytm_data
 
-    def _sc_to_itunes(self, sc_info: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize SoundCloud metadata (from yt-dlp) to iTunes-like format."""
+    def _sc_to_itunes(self, sc_data: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "wrapperType": "track",
-            "trackId": f"sc_{sc_info.get('id')}",
-            "trackName": sc_info.get("title"),
-            "artistName": sc_info.get("uploader"),
-            "artworkUrl100": sc_info.get("thumbnail"),
-            "trackTimeMillis": int(sc_info.get("duration", 0)) * 1000,
-            "trackViewUrl": sc_info.get("webpage_url")
+            "trackId": f"sc_{sc_data['id']}",
+            "trackName": sc_data.get("title", "Unknown"),
+            "artistName": sc_data.get("uploader", sc_data.get("uploader_id", "Unknown")),
+            "artworkUrl100": sc_data.get("thumbnail"),
+            "trackTimeMillis": 0, # Duration removed as per request
+            "releaseDate": sc_data.get("upload_date", "")[:4] if sc_data.get("upload_date") else None,
+            "trackViewUrl": sc_data.get("webpage_url") or sc_data.get("url")
         }
 
-    async def search_ytm(self, term: str) -> List[Dict[str, Any]]:
-        """Search YouTube Music and return results in iTunes format."""
+    async def search_spotify(self, term: str, entity_type: str = "track", limit: int = 20) -> List[Dict[str, Any]]:
+        if not self.sp:
+            logger.warning("Spotify not initialized")
+            return []
         loop = asyncio.get_event_loop()
         try:
-            results = await loop.run_in_executor(None, lambda: self.ytm.search(term, filter="songs", limit=10))
-            return [self._ytm_to_itunes(res, "track") for res in results]
+            type_map = {"track": "track", "album": "album", "artist": "artist"}
+            results = await loop.run_in_executor(None, lambda: self.sp.search(q=term, limit=limit, type=type_map.get(entity_type, "track")))
+
+            items = []
+            if entity_type == "track": items = results.get("tracks", {}).get("items", [])
+            elif entity_type == "album": items = results.get("albums", {}).get("items", [])
+            elif entity_type == "artist": items = results.get("artists", {}).get("items", [])
+
+            return [self._sp_to_itunes(item, entity_type) for item in items]
+        except Exception as e:
+            logger.error(f"Spotify search error: {e}")
+            return []
+
+    async def search_ytm(self, term: str, entity_type: str = "track", limit: int = 20) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+        try:
+            filter_map = {"track": "songs", "album": "albums", "artist": "artists"}
+            yt_filter = filter_map.get(entity_type, "songs")
+
+            results = await loop.run_in_executor(None, lambda: self.ytm.search(term, filter=yt_filter, limit=limit))
+
+            # Fallback if filter returned nothing
+            if not results:
+                results = await loop.run_in_executor(None, lambda: self.ytm.search(term, limit=limit))
+                results = [r for r in results if r.get('resultType') in ['video', 'song']] if entity_type == 'track' else results
+
+            return [self._ytm_to_itunes(item, entity_type) for item in results]
         except Exception as e:
             logger.error(f"YTM search error: {e}")
             return []
 
-    async def search_sc(self, term: str) -> List[Dict[str, Any]]:
-        """Search SoundCloud using yt-dlp and return results in iTunes format."""
-        loop = asyncio.get_event_loop()
-        proxy = _check_proxy() or PROXY
-
-        # Try with proxy then without
-        for use_proxy in [True, False]:
-            try:
-                search_query = f"scsearch10:{term}"
-                opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': True}
-                if use_proxy and proxy: opts['proxy'] = proxy
-
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = await loop.run_in_executor(None, lambda: ydl.extract_info(search_query, download=False))
-                    if info and 'entries' in info:
-                        return [self._sc_to_itunes(entry) for entry in info['entries'] if entry]
-            except Exception as e:
-                logger.debug(f"SoundCloud search error (proxy={use_proxy}): {e}")
-        return []
-
-    async def search_spotify(self, term: str) -> List[Dict[str, Any]]:
-        """Search Spotify and return results in iTunes format."""
-        if not self.sp: return []
+    async def search_sc(self, term: str, limit: int = 20) -> List[Dict[str, Any]]:
+        ydl_opts = {'quiet': True, 'extract_flat': True}
         loop = asyncio.get_event_loop()
         try:
-            results = await loop.run_in_executor(None, lambda: self.sp.search(q=term, limit=10, type='track'))
-            return [self._sp_to_itunes(item, "track") for item in results.get('tracks', {}).get('items', [])]
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = await loop.run_in_executor(None, lambda: ydl.extract_info(f"scsearch{limit}:{term}", download=False))
+                if info and 'entries' in info:
+                    return [self._sc_to_itunes(entry) for entry in info['entries']]
         except Exception as e:
-            logger.error(f"Spotify search error: {e}")
-            return []
+            logger.error(f"SoundCloud search error: {e}")
+        return []
 
     async def get_sp_track(self, track_id: str) -> Optional[Dict[str, Any]]:
         if not self.sp: return None
         loop = asyncio.get_event_loop()
         try:
+            # Strip prefix if present
             if track_id.startswith("sp_"): track_id = track_id[3:]
             track = await loop.run_in_executor(None, lambda: self.sp.track(track_id))
             return self._sp_to_itunes(track, "track")
@@ -247,20 +252,11 @@ class MusicAdapter:
 
     def _get_ydl_opts(self, method, proxy=None):
         opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': False}
-
-        # Use OAuth if available
-        if AuthService.get_ytmusic_auth():
-            opts["username"] = "oauth2"
-            opts["password"] = ""
-
-        # Apply proxy if method is < 10
-        if 1 <= method <= 10 and proxy:
+        if method == 2 and proxy:
             opts['proxy'] = proxy
-
-        norm_method = method % 10
-        if norm_method == 3:
+        elif method == 3:
             opts['extractor_args'] = {"youtube": {"player_client": ["web", "mweb", "android_vr"]}}
-
+            if proxy: opts['proxy'] = proxy
         return opts
 
     async def get_yt_track(self, video_id: str) -> Optional[Dict[str, Any]]:
@@ -268,7 +264,18 @@ class MusicAdapter:
         if video_id.startswith("yt_"): video_id = video_id[3:]
         url = f"https://www.youtube.com/watch?v={video_id}"
 
-        proxy = _check_proxy() or PROXY
+        from core.config import PROXY
+        proxy = PROXY
+        if not proxy:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            try:
+                if s.connect_ex(("127.0.0.1", 1080)) == 0:
+                    proxy = "socks5://127.0.0.1:1080"
+            except: pass
+            finally: s.close()
+
         loop = asyncio.get_event_loop()
 
         for method in list(YT_METADATA_METHODS):
@@ -326,21 +333,25 @@ class MusicAdapter:
         else:
             url = f"https://soundcloud.com/{sc_id}"
 
-        proxy = _check_proxy() or PROXY
+        from core.config import PROXY
+        proxy = PROXY
+        if not proxy:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            try:
+                if s.connect_ex(("127.0.0.1", 1080)) == 0:
+                    proxy = "socks5://127.0.0.1:1080"
+            except: pass
+            finally: s.close()
+
         loop = asyncio.get_event_loop()
 
         for method in list(SC_METADATA_METHODS):
             try:
                 opts = {'quiet': True, 'no_check_certificate': True}
-
-                # Apply proxy if method is < 10
-                if 1 <= method <= 10 and proxy:
+                if method == 2 and proxy:
                     opts['proxy'] = proxy
-
-                # Use OAuth if available
-                if AuthService.get_ytmusic_auth():
-                    opts["username"] = "oauth2"
-                    opts["password"] = ""
 
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))

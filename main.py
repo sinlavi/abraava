@@ -1,41 +1,3 @@
-import asyncio
-# Force event loop creation for balethon compatibility
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
-
-import os
-import threading
-import signal
-import sys
-import time
-import re
-import subprocess
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-# Add local directory to PATH for ffmpeg
-os.environ['PATH'] = os.getcwd() + os.pathsep + os.environ.get('PATH', '')
-
-def start_warp():
-    """Start Cloudflare WARP proxy as in the old version (caomingjun/warp equivalent)."""
-    if os.path.exists("./warp-plus"):
-        print("🚀 Starting Cloudflare WARP (socks5://127.0.0.1:1080)...")
-        # Start warp-plus in the background on port 1080
-        # This port is exactly what the original _check_proxy() logic in the crawlers expects.
-        subprocess.Popen(
-            ["./warp-plus", "-b", "127.0.0.1:1080"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-
-        # Wait a moment for WARP to initialize
-        time.sleep(2)
-        print("✅ WARP is active.")
-    else:
-        print("⚠️ warp-plus not found. Proceeding without local proxy.")
-
-# Initialize WARP before any application logic to ensure it's ready for imports
-start_warp()
-
 from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
 from balethon import Client
 from balethon.objects import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboard
@@ -56,14 +18,6 @@ from services.membership_service import verify_all_memberships
 from services.registration_service import UserRegistrationService
 from services.direct_download_service import DirectDownloadService
 from services.odesli_service import OdesliService
-from services.auth_service import AuthService
-
-from services.error_notifier import BaleUploadErrorNotifier
-from services.download_service import DownloadService
-from services.membership_service import verify_all_memberships
-from services.registration_service import UserRegistrationService
-from services.direct_download_service import DirectDownloadService
-from services.odesli_service import OdesliService
 
 from bot.handlers.commands import start_command, help_command, about_command
 from bot.handlers.settings import settings_command, stats_command
@@ -74,6 +28,12 @@ from bot.handlers.details import show_track_page, show_collection_page, show_art
 from utils.parser import parse_search_query
 from utils.messages import send_message, edit_message, safe_delete
 from utils.validation import is_valid_message
+
+import asyncio
+import signal
+import sys
+import time
+import re
 
 # Initialize Services
 api_client = APIClient(API_BASE_URL, API_TOKEN)
@@ -87,7 +47,6 @@ tagging_service = TaggingService()
 error_notifier = BaleUploadErrorNotifier(api_client)
 
 bot = Client(token=BOT_TOKEN)
-asyncio.create_task(AuthService.run_setup_flow())
 download_service = DownloadService(bot, api_client, user_settings_service, artwork_service,
                                    tagging_service, error_notifier, album_tracker, download_rate_limiter)
 direct_download_service = DirectDownloadService(bot, tagging_service)
@@ -224,7 +183,7 @@ async def on_message(message: Message):
                     yt_url = resolved.get("youtube_url")
                     if yt_url:
                         # Extract video ID if possible for show_track_page
-                        m = re.search(r'(?:v=|\/)([a-zA-Z0-9_-]{11})(?:\u0026|\?|$)', yt_url)
+                        m = re.search(r'(?:v=|\/)([a-zA-Z0-9_-]{11})(?:&|\?|$)', yt_url)
                         if m:
                             await show_track_page(bot, chat_id, f"yt_{m.group(1)}", artwork_service, user_id, message_to_edit=status_msg)
                         else:
@@ -271,27 +230,9 @@ async def on_callback(callback_query: CallbackQuery):
 def signal_handler(sig, frame):
     sys.exit(0)
 
-
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-    def log_message(self, format, *args):
-        return
-
-def run_health_check_server():
-    port = int(os.getenv("PORT", "8080"))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    logger.info(f"Health check server started on port {port}")
-    server.serve_forever()
-
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    threading.Thread(target=run_health_check_server, daemon=True).start()
 
     logger.info("ABRAAVA bot is starting...")
     while True:
