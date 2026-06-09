@@ -167,8 +167,6 @@ async def lookup_itunes(id: Union[int, str], entity: Optional[str] = None, bypas
 
 async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, mirror_url: str,
                      quality: str = None) -> Optional[Dict[str, Any]]:
-    if str(entity_id).startswith(("yt_", "sc_", "sp_")):
-        return None
     payload = {"entityType": entity_type, "entityId": str(entity_id), "urlType": url_type, "mirrorUrl": mirror_url}
     if quality: payload["quality"] = quality
     logger.info(f"Setting mirror: {entity_type} {entity_id} {url_type} -> {mirror_url} ({quality})")
@@ -177,8 +175,6 @@ async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str
 
 async def get_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, quality: str = None) -> Optional[
     Dict[str, Any]]:
-    if str(entity_id).startswith(("yt_", "sc_", "sp_")):
-        return None
     params = {"entityType": entity_type, "entityId": str(entity_id), "urlType": url_type}
     if quality: params["quality"] = quality
     logger.info(f"Checking mirror for {entity_type} {entity_id} {url_type} ({quality})")
@@ -211,3 +207,16 @@ async def get_cached_preview(track_id: Union[int, str]) -> Optional[str]:
         url = data["mirrors"]['previewUrl']['url']
         return url.split('<token>/')[1] if '<token>' in url else url
     return None
+
+
+async def get_lyrics(track_id: Union[int, str]) -> Optional[Dict[str, Any]]:
+    logger.info(f"Checking lyrics for {track_id}")
+    data = await fetch_itunes("lyrics/get", params={"id": str(track_id)})
+    if data and data.get("success") and "lyrics" in data:
+        return data["lyrics"]
+    return None
+
+
+async def set_lyrics(track_id: Union[int, str], lyrics: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    logger.info(f"Setting lyrics for {track_id}")
+    return await fetch_itunes("lyrics/save", method="POST", payload={"id": str(track_id), "lyrics": lyrics})

@@ -60,6 +60,20 @@ $userAgents = [
 ];
 
 // ── Database & Statement helpers ──────────────────────────
+function normalizeId($id): string {
+    if (is_numeric($id) || (is_string($id) && ctype_digit($id))) {
+        return 'it_' . $id;
+    }
+    return (string)$id;
+}
+
+function denormalizeId($id): string {
+    if (is_string($id) && strpos($id, 'it_') === 0) {
+        return substr($id, 3);
+    }
+    return (string)$id;
+}
+
 function getDB(): SQLite3 {
     global $db;
     if ($db === null) {
@@ -89,13 +103,13 @@ function initDatabase(SQLite3 $db): void {
     static $initialized = false;
     if ($initialized) return;
 
-    $db->exec("CREATE TABLE IF NOT EXISTS artists (artistId INTEGER PRIMARY KEY)");
-    $db->exec("CREATE TABLE IF NOT EXISTS collections (collectionId INTEGER PRIMARY KEY)");
-    $db->exec("CREATE TABLE IF NOT EXISTS tracks (trackId INTEGER PRIMARY KEY)");
+    $db->exec("CREATE TABLE IF NOT EXISTS artists (artistId TEXT PRIMARY KEY)");
+    $db->exec("CREATE TABLE IF NOT EXISTS collections (collectionId TEXT PRIMARY KEY)");
+    $db->exec("CREATE TABLE IF NOT EXISTS tracks (trackId TEXT PRIMARY KEY)");
 
     $db->exec("CREATE TABLE IF NOT EXISTS entityMirrors (
         entityType TEXT NOT NULL,
-        entityId INTEGER NOT NULL,
+        entityId TEXT NOT NULL,
         urlType TEXT NOT NULL,
         mirrorUrl TEXT NOT NULL,
         quality TEXT,
@@ -161,7 +175,7 @@ function initDatabase(SQLite3 $db): void {
     $db->exec("CREATE TABLE IF NOT EXISTS offlineCache (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         entityType TEXT NOT NULL,
-        entityId INTEGER NOT NULL,
+        entityId TEXT NOT NULL,
         data TEXT NOT NULL,
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         expiresAt DATETIME,
@@ -428,13 +442,14 @@ function markProxyStatus(string $proxyUrl, bool $success): void {
 function ensureColumns(SQLite3 $db, string $table, array $data): void {
     static $existingColumns = [];
     if (!isset($existingColumns[$table])) {
-        $cols = [];
+        $existingCols = [];
         $res = $db->query("PRAGMA table_info($table)");
         while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
-            $cols[$row['name']] = true;
+            $existingCols[$row['name']] = true;
         }
-        $existingColumns[$table] = $cols;
+        $existingColumns[$table] = $existingCols;
     }
+
     foreach ($data as $col => $value) {
         if (!isset($existingColumns[$table][$col])) {
             $db->exec("ALTER TABLE $table ADD COLUMN `$col` TEXT");
@@ -448,6 +463,11 @@ function saveEntities(SQLite3 $db, string $table, array $entities): void {
     if (empty($entities)) return;
     $db->exec('BEGIN TRANSACTION');
     foreach ($entities as $entity) {
+        // Normalize IDs in entity data
+        foreach (['artistId', 'collectionId', 'trackId'] as $idKey) {
+            if (isset($entity[$idKey])) $entity[$idKey] = normalizeId($entity[$idKey]);
+        }
+
         ensureColumns($db, $table, $entity);
         $columns = array_keys($entity);
         $placeholders = array_map(fn($c) => ":$c", $columns);
@@ -599,23 +619,25 @@ function cleanExpiredCache(SQLite3 $db): void {
 }
 
 // ── Offline Cache Management ──────────────────────────────
-function saveToOfflineCache(string $entityType, int $entityId, array $data): void {
+function saveToOfflineCache(string $entityType, string $entityId, array $data): void {
     $db = getDB();
+    $entityId = normalizeId($entityId);
     $expiresAt = date('Y-m-d H:i:s', time() + CACHE_DURATION * 2);
     
     $stmt = getStatement("INSERT OR REPLACE INTO offlineCache (entityType, entityId, data, expiresAt) VALUES (:type, :id, :data, :expires)");
     $stmt->bindValue(':type', $entityType, SQLITE3_TEXT);
-    $stmt->bindValue(':id', $entityId, SQLITE3_INTEGER);
+    $stmt->bindValue(':id', $entityId, SQLITE3_TEXT);
     $stmt->bindValue(':data', json_encode($data), SQLITE3_TEXT);
     $stmt->bindValue(':expires', $expiresAt, SQLITE3_TEXT);
     $stmt->execute();
 }
 
-function getFromOfflineCache(string $entityType, int $entityId): ?array {
+function getFromOfflineCache(string $entityType, string $entityId): ?array {
     $db = getDB();
+    $entityId = normalizeId($entityId);
     $stmt = getStatement("SELECT data FROM offlineCache WHERE entityType=:type AND entityId=:id AND expiresAt > datetime('now')");
     $stmt->bindValue(':type', $entityType, SQLITE3_TEXT);
-    $stmt->bindValue(':id', $entityId, SQLITE3_INTEGER);
+    $stmt->bindValue(':id', $entityId, SQLITE3_TEXT);
     $result = $stmt->execute();
     $row = $result->fetchArray(SQLITE3_ASSOC);
     
@@ -700,15 +722,16 @@ function extractQualityFromUrlType(string $urlType): ?string {
  * Attach mirrors to entity with proper audioUrl handling
  * @param array &$entity Entity reference to attach mirrors to
  * @param string $type Entity type (artist, collection, track)
- * @param int $id Entity ID
+ * @param string $id Entity ID
  * @param string|null $requestedQuality Optional requested quality parameter
  */
-function attachMirrors(array &$entity, string $type, int $id, ?string $requestedQuality = null): void {
+function attachMirrors(array &$entity, string $type, string $id, ?string $requestedQuality = null): void {
     $db = getDB();
+    $id = normalizeId($id);
     
     $stmt = getStatement("SELECT urlType, mirrorUrl, quality FROM entityMirrors WHERE entityType=:t AND entityId=:id");
     $stmt->bindValue(':t', $type, SQLITE3_TEXT);
-    $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
+    $stmt->bindValue(':id', $id, SQLITE3_TEXT);
     $res = $stmt->execute();
     
     $mirrors = [];
@@ -760,17 +783,20 @@ function attachMirrors(array &$entity, string $type, int $id, ?string $requested
     }
 }
 
-function setMirrorUrl(SQLite3 $db, string $type, int $id, string $urlType, string $mirrorUrl, ?string $quality = null): array {
+function setMirrorUrl(SQLite3 $db, string $type, string $id, string $urlType, string $mirrorUrl, ?string $quality = null): array {
     if (!in_array($urlType, ['artworkUrl','previewUrl','audioUrl'])) return ['success' => false, 'error' => 'Invalid urlType'];
     if (!filter_var($mirrorUrl, FILTER_VALIDATE_URL)) return ['success' => false, 'error' => 'Invalid URL'];
     
+    $id = normalizeId($id);
+    ensureEntityExists($db, $type, $id);
+
     $actualUrlType = getAudioUrlTypeWithQuality($urlType, $quality);
     $qualityValue = ($urlType === 'audioUrl') ? $quality : null;
     
     $stmt = getStatement("INSERT OR REPLACE INTO entityMirrors (entityType, entityId, urlType, mirrorUrl, quality, updatedAt) 
                           VALUES (:t,:id,:ut,:url,:q, datetime('now'))");
     $stmt->bindValue(':t', $type, SQLITE3_TEXT);
-    $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
+    $stmt->bindValue(':id', $id, SQLITE3_TEXT);
     $stmt->bindValue(':ut', $actualUrlType, SQLITE3_TEXT);
     $stmt->bindValue(':url', $mirrorUrl, SQLITE3_TEXT);
     $stmt->bindValue(':q', $qualityValue, SQLITE3_TEXT);
@@ -779,11 +805,12 @@ function setMirrorUrl(SQLite3 $db, string $type, int $id, string $urlType, strin
     return ['success' => true, 'message' => "Mirror $urlType set" . ($quality ? " for quality $quality" : "")];
 }
 
-function getMirrorUrls(SQLite3 $db, string $type, int $id, ?string $urlType = null, ?string $quality = null): array {
+function getMirrorUrls(SQLite3 $db, string $type, string $id, ?string $urlType = null, ?string $quality = null): array {
+    $id = normalizeId($id);
     $sql = "SELECT urlType, mirrorUrl, quality FROM entityMirrors WHERE entityType=:t AND entityId=:id";
     $stmt = getStatement($sql);
     $stmt->bindValue(':t', $type, SQLITE3_TEXT);
-    $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
+    $stmt->bindValue(':id', $id, SQLITE3_TEXT);
     $res = $stmt->execute();
     
     $mirrors = [];
@@ -838,7 +865,8 @@ function getMirrorUrls(SQLite3 $db, string $type, int $id, ?string $urlType = nu
     ];
 }
 
-function deleteMirrorUrl(SQLite3 $db, string $type, int $id, ?string $urlType = null, ?string $quality = null): array {
+function deleteMirrorUrl(SQLite3 $db, string $type, string $id, ?string $urlType = null, ?string $quality = null): array {
+    $id = normalizeId($id);
     if ($urlType) {
         $actualUrlType = getAudioUrlTypeWithQuality($urlType, $quality);
         $stmt = getStatement("DELETE FROM entityMirrors WHERE entityType=:t AND entityId=:id AND urlType=:ut");
@@ -847,15 +875,50 @@ function deleteMirrorUrl(SQLite3 $db, string $type, int $id, ?string $urlType = 
         $stmt = getStatement("DELETE FROM entityMirrors WHERE entityType=:t AND entityId=:id");
     }
     $stmt->bindValue(':t', $type, SQLITE3_TEXT);
-    $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
+    $stmt->bindValue(':id', $id, SQLITE3_TEXT);
     $stmt->execute();
     
     $message = $urlType ? "Mirror '$urlType'" . ($quality ? " for quality $quality" : "") . " deleted" : 'All mirrors deleted';
     return ['success' => true, 'message' => $message];
 }
 
+function getLyrics(SQLite3 $db, string $trackId): array {
+    $trackId = normalizeId($trackId);
+    $stmt = getStatement("SELECT lyrics FROM tracks WHERE trackId = :id");
+    $stmt->bindValue(':id', $trackId, SQLITE3_TEXT);
+    $res = $stmt->execute();
+    $row = $res->fetchArray(SQLITE3_ASSOC);
+
+    if ($row && !empty($row['lyrics'])) {
+        return ['success' => true, 'trackId' => $trackId, 'lyrics' => json_decode($row['lyrics'], true)];
+    }
+    return ['success' => false, 'error' => 'Lyrics not found'];
+}
+
+function saveLyrics(SQLite3 $db, string $trackId, $lyrics): array {
+    $trackId = normalizeId($trackId);
+    ensureEntityExists($db, 'track', $trackId);
+
+    $lyricsJson = is_string($lyrics) ? $lyrics : json_encode($lyrics);
+
+    // Test if it's valid JSON
+    if (json_decode($lyricsJson) === null) {
+        return ['success' => false, 'error' => 'Invalid JSON for lyrics'];
+    }
+
+    ensureColumns($db, 'tracks', ['lyrics' => '']);
+
+    $stmt = getStatement("UPDATE tracks SET lyrics = :lyrics WHERE trackId = :id");
+    $stmt->bindValue(':lyrics', $lyricsJson, SQLITE3_TEXT);
+    $stmt->bindValue(':id', $trackId, SQLITE3_TEXT);
+    $stmt->execute();
+
+    return ['success' => true, 'message' => 'Lyrics saved successfully'];
+}
+
 // ── Fetch single entity from DB ───────────────────────────
-function fetchEntityById(SQLite3 $db, string $type, int $id, ?string $quality = null): ?array {
+function fetchEntityById(SQLite3 $db, string $type, string $id, ?string $quality = null): ?array {
+    $id = normalizeId($id);
     $table = match ($type) {
         'artist' => 'artists',
         'collection' => 'collections',
@@ -865,13 +928,29 @@ function fetchEntityById(SQLite3 $db, string $type, int $id, ?string $quality = 
     if (!$table) return null;
     $idCol = $type . 'Id';
     $stmt = getStatement("SELECT * FROM $table WHERE $idCol = :id");
-    $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
+    $stmt->bindValue(':id', $id, SQLITE3_TEXT);
     $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
     if ($row) {
         attachMirrors($row, $type, $id, $quality);
         return $row;
     }
     return null;
+}
+
+function ensureEntityExists(SQLite3 $db, string $type, string $id): void {
+    $id = normalizeId($id);
+    $table = match ($type) {
+        'artist' => 'artists',
+        'collection' => 'collections',
+        'track' => 'tracks',
+        default => null
+    };
+    if (!$table) return;
+
+    $idCol = $type . 'Id';
+    $stmt = $db->prepare("INSERT OR IGNORE INTO $table ($idCol) VALUES (:id)");
+    $stmt->bindValue(':id', $id, SQLITE3_TEXT);
+    $stmt->execute();
 }
 
 // ── iTunes API call with advanced rate limit handling ─────
@@ -1025,7 +1104,7 @@ function makeApiRequestWithFallback(string $url, array $params = [], int $retryC
         $results = [];
         
         foreach ($ids as $idStr) {
-            $id = intval(trim($idStr));
+            $id = normalizeId(trim($idStr));
             foreach (['artist', 'collection', 'track'] as $type) {
                 $cached = getFromOfflineCache($type, $id);
                 if ($cached) {
@@ -1088,7 +1167,7 @@ function searchLocalDatabase(array $params): array {
     } elseif (isset($params['id'])) {
         $ids = explode(',', $params['id']);
         foreach ($ids as $idStr) {
-            $id = intval(trim($idStr));
+            $id = normalizeId(trim($idStr));
             foreach (['artist', 'collection', 'track'] as $type) {
                 $entity = fetchEntityById($db, $type, $id);
                 if ($entity) {
@@ -1131,7 +1210,14 @@ function lookupiTunes(SQLite3 $db, array $params): array {
     $cached = getCachedResults($db, 'lookup', $params);
     if ($cached) return $cached;
     
-    $url = ITUNES_LOOKUP_API . '?' . http_build_query($params);
+    $apiParams = $params;
+    if (isset($apiParams['id'])) {
+        $ids = explode(',', $apiParams['id']);
+        $denormalizedIds = array_map('denormalizeId', array_map('trim', $ids));
+        $apiParams['id'] = implode(',', $denormalizedIds);
+    }
+
+    $url = ITUNES_LOOKUP_API . '?' . http_build_query($apiParams);
     $response = makeApiRequestWithFallback($url, $params);
     
     if ($response && isset($response['results']) && $response['resultCount'] > 0) {
@@ -1167,16 +1253,23 @@ function enableCompression(): void {
     }
 }
 
+function respond($data, int $statusCode = 200): void {
+    if (!headers_sent()) {
+        http_response_code($statusCode);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Access-Control-Allow-Origin: *');
+        header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
+        header('Access-Control-Allow-Headers: Content-Type, Quality');
+    }
+    echo json_encode($data, JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
 function handleRequest(): void {
     enableCompression();
-    header('Content-Type: application/json; charset=utf-8');
-    header('Access-Control-Allow-Origin: *');
-    header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, Quality');
     
     if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-        http_response_code(200);
-        exit;
+        respond([], 200);
     }
 
     $db = getDB();
@@ -1235,7 +1328,7 @@ function handleRequest(): void {
                 
             case '/artist':
                 if (empty($params['id'])) throw new Exception('Missing id', 400);
-                $id = intval($params['id']);
+                $id = normalizeId($params['id']);
                 $artist = fetchEntityById($db, 'artist', $id, $quality);
                 if (!$artist) {
                     $lookup = lookupiTunes($db, ['id' => $id, 'quality' => $quality]);
@@ -1248,7 +1341,7 @@ function handleRequest(): void {
                 
             case '/album':
                 if (empty($params['id'])) throw new Exception('Missing id', 400);
-                $id = intval($params['id']);
+                $id = normalizeId($params['id']);
                 $album = fetchEntityById($db, 'collection', $id, $quality);
                 if (!$album) {
                     $lookup = lookupiTunes($db, ['id' => $id, 'quality' => $quality]);
@@ -1261,7 +1354,7 @@ function handleRequest(): void {
                 
             case '/track':
                 if (empty($params['id'])) throw new Exception('Missing id', 400);
-                $id = intval($params['id']);
+                $id = normalizeId($params['id']);
                 $track = fetchEntityById($db, 'track', $id, $quality);
                 if (!$track) {
                     $lookup = lookupiTunes($db, ['id' => $id, 'quality' => $quality]);
@@ -1274,31 +1367,42 @@ function handleRequest(): void {
                 
             case '/mirror/set':
                 if ($method !== 'POST') throw new Exception('Method not allowed', 405);
-                $response = setMirrorUrl($db, $params['entityType'] ?? '', intval($params['entityId'] ?? 0), 
+                $response = setMirrorUrl($db, $params['entityType'] ?? '', $params['entityId'] ?? '',
                                          $params['urlType'] ?? '', $params['mirrorUrl'] ?? '', 
                                          $params['quality'] ?? null);
                 break;
                 
             case '/mirror/get':
-                $response = getMirrorUrls($db, $params['entityType'] ?? '', intval($params['entityId'] ?? 0), 
-                                         $params['url_type'] ?? null, $params['quality'] ?? null);
+                $response = getMirrorUrls($db, $params['entityType'] ?? '', $params['entityId'] ?? '',
+                                         $params['urlType'] ?? $params['url_type'] ?? null, $params['quality'] ?? null);
                 break;
                 
             case '/mirror/delete':
                 if (!in_array($method, ['POST', 'DELETE'])) throw new Exception('Method not allowed', 405);
-                $response = deleteMirrorUrl($db, $params['entityType'] ?? '', intval($params['entityId'] ?? 0), 
+                $response = deleteMirrorUrl($db, $params['entityType'] ?? '', $params['entityId'] ?? '',
                                            $params['urlType'] ?? null, $params['quality'] ?? null);
+                break;
+
+            case '/lyrics/get':
+                if (empty($params['id']) && empty($params['trackId'])) throw new Exception('Missing track id', 400);
+                $response = getLyrics($db, $params['id'] ?? $params['trackId']);
+                break;
+
+            case '/lyrics/save':
+            case '/lyrics/set':
+                if ($method !== 'POST') throw new Exception('Method not allowed', 405);
+                if ((empty($params['id']) && empty($params['trackId'])) || empty($params['lyrics'])) throw new Exception('Missing parameters', 400);
+                $response = saveLyrics($db, $params['id'] ?? $params['trackId'], $params['lyrics']);
                 break;
                 
             default:
                 throw new Exception('Endpoint not found', 404);
         }
     } catch (Exception $e) {
-        http_response_code($e->getCode() ?: 500);
-        $response = ['success' => false, 'error' => $e->getMessage()];
+        respond(['success' => false, 'error' => $e->getMessage()], $e->getCode() ?: 500);
     }
 
-    echo json_encode($response, JSON_UNESCAPED_SLASHES);
+    respond($response);
 }
 
 // ── Run ──────────────────────────────────────────────────
