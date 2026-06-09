@@ -192,8 +192,9 @@ class DirectDownloadService:
                 status_msg = await self._update_status(chat_id, status_msg, "☁️ *در حال آماده‌سازی فایل...*")
                 # For direct download, track_id is not available, using unique_id as fallback key
                 t_id = f"direct_{unique_id}"
-                lyrics = await lyrics_service.get_lyrics(t_id, track_data.get("trackName", ""), track_data.get("artistName", ""), track_data.get("collectionName"))
-                self.tagging_service.tag_mp3(mp3_path, track_data, lyrics=lyrics)
+                lyrics_dict = await lyrics_service.get_lyrics(t_id, track_data.get("trackName", ""), track_data.get("artistName", ""), track_data.get("collectionName"))
+                lyrics_to_tag = (lyrics_dict.get("synced") or lyrics_dict.get("plain")) if lyrics_dict else None
+                self.tagging_service.tag_mp3(mp3_path, track_data, lyrics=lyrics_to_tag)
 
                 track_name = track_data['trackName']
                 if url:

@@ -44,10 +44,20 @@ class LyricsService:
 
     async def init_db(self):
         async with aiosqlite.connect(self.db_path) as db:
+            # Check if synced_lyrics column exists (for migration)
+            cursor = await db.execute("PRAGMA table_info(lyrics)")
+            columns = await cursor.fetchall()
+            has_synced = any(col[1] == 'synced_lyrics' for col in columns)
+
+            if not has_synced and columns:
+                # Simple migration: drop and recreate since it's just a cache
+                await db.execute("DROP TABLE lyrics")
+
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS lyrics (
                     track_id TEXT PRIMARY KEY,
-                    lyrics TEXT,
+                    synced_lyrics TEXT,
+                    plain_lyrics TEXT,
                     title TEXT,
                     artist TEXT
                 )
@@ -64,29 +74,29 @@ class LyricsService:
             return cached_lyrics
 
         # 2. Fetch from LRCLIB
-        lyrics = await self._fetch_from_lrclib(title, artist, album)
+        lyrics_dict = await self._fetch_from_lrclib(title, artist, album)
 
         # 3. Fallback to YTMusic
-        if not lyrics:
-            lyrics = await self._fetch_from_ytmusic(track_id, title, artist)
+        if not lyrics_dict or (not lyrics_dict.get("synced") and not lyrics_dict.get("plain")):
+            lyrics_dict = await self._fetch_from_ytmusic(track_id, title, artist)
 
-        if lyrics:
+        if lyrics_dict and (lyrics_dict.get("synced") or lyrics_dict.get("plain")):
             # 4. Cache it
-            await self._cache_lyrics(track_id, lyrics, title, artist)
+            await self._cache_lyrics(track_id, lyrics_dict, title, artist)
 
-        return lyrics
+        return lyrics_dict
 
     async def _get_cached_lyrics(self, track_id):
         async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute("SELECT lyrics FROM lyrics WHERE track_id = ?", (str(track_id),)) as cursor:
+            async with db.execute("SELECT synced_lyrics, plain_lyrics FROM lyrics WHERE track_id = ?", (str(track_id),)) as cursor:
                 row = await cursor.fetchone()
-                return row[0] if row else None
+                return {"synced": row[0], "plain": row[1]} if row else None
 
-    async def _cache_lyrics(self, track_id, lyrics, title, artist):
+    async def _cache_lyrics(self, track_id, lyrics_dict, title, artist):
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
-                "INSERT OR REPLACE INTO lyrics (track_id, lyrics, title, artist) VALUES (?, ?, ?, ?)",
-                (str(track_id), lyrics, title, artist)
+                "INSERT OR REPLACE INTO lyrics (track_id, synced_lyrics, plain_lyrics, title, artist) VALUES (?, ?, ?, ?, ?)",
+                (str(track_id), lyrics_dict.get("synced"), lyrics_dict.get("plain"), title, artist)
             )
             await db.commit()
 
@@ -105,8 +115,7 @@ class LyricsService:
             async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    # Prioritize synced lyrics for better player experience
-                    return data.get("syncedLyrics") or data.get("plainLyrics")
+                    return {"synced": data.get("syncedLyrics"), "plain": data.get("plainLyrics")}
 
                 if resp.status == 404:
                     # Try search if direct get fails
@@ -116,11 +125,13 @@ class LyricsService:
                         if s_resp.status == 200:
                             results = await s_resp.json()
                             if results:
-                                # Return the first result's lyrics (prioritizing synced)
+                                # Return the first result's lyrics
+                                best_result = results[0]
                                 for res in results:
                                     if res.get("syncedLyrics"):
-                                        return res.get("syncedLyrics")
-                                return results[0].get("plainLyrics")
+                                        best_result = res
+                                        break
+                                return {"synced": best_result.get("syncedLyrics"), "plain": best_result.get("plainLyrics")}
             return None
         except Exception as e:
             logger.error(f"Error fetching lyrics from LRCLIB: {e}")
@@ -159,7 +170,7 @@ class LyricsService:
                 lambda: self.ytm.get_lyrics(lyrics_browse_id)
             )
 
-            return lyrics_data.get('lyrics')
+            return {"synced": None, "plain": lyrics_data.get('lyrics')}
 
         except Exception as e:
             logger.error(f"Error fetching lyrics from YTMusic: {e}")
