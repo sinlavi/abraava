@@ -170,12 +170,27 @@ async def get_mirror(entity_type: str, entity_id: Union[int, str], url_type: str
 
 
 async def get_cached_audio(track_id: Union[int, str], quality: str = None) -> Optional[str]:
-    data = await get_mirror('track', track_id, 'audioUrl', quality=quality or "192")
+    # Request without specific quality to get the best available from the API
+    data = await get_mirror('track', track_id, 'audioUrl')
     if data and data.get("mirrors", {}).get('audioUrl'):
-        url = data["mirrors"]['audioUrl']['url']
-        logger.info(f"Cached audio found for {track_id}: {url}")
+        mirror = data["mirrors"]['audioUrl']
+        url = mirror['url']
+        cached_quality = str(mirror.get('quality', '192'))
+        requested_quality = quality or "192"
+
+        # Compare qualities: 320 > 192 > 128
+        quality_map = {"128": 1, "192": 2, "320": 3}
+        cached_val = quality_map.get(cached_quality, 0)
+        requested_val = quality_map.get(requested_quality, 2)
+
+        if cached_val < requested_val:
+            logger.info(f"Cached audio quality ({cached_quality}kbps) is lower than requested ({requested_quality}kbps). Ignoring cache.")
+            return None
+
+        logger.info(f"Using cached audio for {track_id}: {url} ({cached_quality}kbps)")
         return url.split('<token>/')[1] if '<token>' in url else url
-    logger.info(f"No cached audio for {track_id} with quality {quality or '192'}")
+
+    logger.info(f"No cached audio found for {track_id}")
     return None
 
 
