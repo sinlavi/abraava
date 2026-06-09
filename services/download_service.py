@@ -130,8 +130,9 @@ class DownloadService:
 
                 temp_dir = os.path.dirname(mp3_path)
                 status_msg = await self._update_status(chat_id, status_msg, "🏷️ *در حال تگ‌گذاری فایل...*", status_prefix, reply_markup, is_batch)
-                lyrics = await lyrics_service.get_lyrics(track_id, track.get("trackName", ""), track.get("artistName", ""), track.get("collectionName"))
-                self.tagging_service.tag_mp3(Path(mp3_path), track, cover_bytes, lyrics=lyrics)
+                lyrics_dict = await lyrics_service.get_lyrics(track_id, track.get("trackName", ""), track.get("artistName", ""), track.get("collectionName"))
+                lyrics_to_tag = (lyrics_dict.get("synced") or lyrics_dict.get("plain")) if lyrics_dict else None
+                self.tagging_service.tag_mp3(Path(mp3_path), track, cover_bytes, lyrics=lyrics_to_tag)
 
                 status_msg = await self._update_status(chat_id, status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*", status_prefix, reply_markup, is_batch)
 

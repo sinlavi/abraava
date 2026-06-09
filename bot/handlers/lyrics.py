@@ -24,10 +24,11 @@ async def handle_lyrics_request(bot, chat_id, track_id, owner_id, message_to_edi
         title = track.get("trackName")
         artist = track.get("artistName")
 
-        lyrics = await lyrics_service.get_lyrics(track_id, title, artist)
+        lyrics_dict = await lyrics_service.get_lyrics(track_id, title, artist)
+        lyrics = lyrics_dict.get("plain") if lyrics_dict else None
 
         if not lyrics:
-            await edit_message(status_msg, "❌ متأسفانه متن این آهنگ در یوتیوب موزیک یافت نشد.")
+            await edit_message(status_msg, "❌ متأسفانه متن این آهنگ یافت نشد.")
             return
 
         # Clean lyrics
