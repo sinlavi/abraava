@@ -4,7 +4,7 @@ from bot.keyboards import create_pagination_row, create_close_button
 from utils.messages import send_message, edit_message
 from utils.helpers import generate_search_hash
 
-async def send_search_results(bot, chat_id, type_, term, results, page, search_cache_service, owner_id, message_to_edit=None):
+async def send_search_results(bot, chat_id, type_, term, results, page, search_cache_service, owner_id, message_to_edit=None, reply_to=None):
     results_list = results["results"]
     total_items = len(results_list)
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
@@ -55,9 +55,9 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
     if message_to_edit:
         return await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
     else:
-        return await send_message(bot, chat_id, header, reply_markup=markup_rows)
+        return await send_message(bot, chat_id, header, reply_markup=markup_rows, reply_to_message_id=reply_to)
 
-async def send_external_search_results(bot, chat_id, type_, term, results, page, search_cache_service, owner_id, message_to_edit=None):
+async def send_external_search_results(bot, chat_id, type_, term, results, page, search_cache_service, owner_id, message_to_edit=None, reply_to=None):
     total_items = len(results)
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     page = max(1, min(page, total_pages))
@@ -103,4 +103,4 @@ async def send_external_search_results(bot, chat_id, type_, term, results, page,
     if message_to_edit:
         return await edit_message(message_to_edit, header, reply_markup=markup_rows, force_edit=True)
     else:
-        return await send_message(bot, chat_id, header, reply_markup=markup_rows)
+        return await send_message(bot, chat_id, header, reply_markup=markup_rows, reply_to_message_id=reply_to)

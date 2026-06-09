@@ -103,6 +103,7 @@ class ArtworkService:
             markup = _prepare_markup(reply_markup, False)
 
             try:
+                await bot.send_chat_action(chat_id, "upload_photo")
                 if isinstance(artwork_data, str):
                     msg = await bot.send_photo(chat_id, photo=artwork_data, caption=f"{caption}{FOOTER}", reply_markup=markup)
                 else:

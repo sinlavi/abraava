@@ -16,8 +16,8 @@ async def _update_preview_status(bot, chat_id, msg, text):
     await safe_delete(msg)
     return await send_message(bot, chat_id, text, show_cancel=True)
 
-async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None):
-    status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*")
+async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None, reply_to=None):
+    status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*", reply_to_message_id=reply_to)
 
     try:
         track_data = await get_track(track_id)

@@ -75,6 +75,8 @@ class DownloadService:
             try:
                 status_msg = await self._update_status(chat_id, status_msg, "📤 *در حال ارسال فایل از حافظه کش...*", status_prefix, reply_markup, is_batch)
                 markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
+                await self.bot.send_chat_action(chat_id, "upload_voice")
+                logger.info(f"Sending cached audio: {track.get('trackName')} ({quality_value}kbps)")
                 await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=InlineKeyboard(*markup))
                 if not is_batch: await safe_delete(status_msg)
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
@@ -122,18 +124,21 @@ class DownloadService:
 
                 status_msg = await self._update_status(chat_id, status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*", status_prefix, reply_markup, is_batch)
                 logger.info(f"Downloading from YouTube: {video_url} with quality {quality_value}")
+                await self.bot.send_chat_action(chat_id, "record_voice")
                 mp3_path = await download_audio(video_url, quality=quality_value)
                 if not mp3_path: raise Exception("Download failed")
 
                 temp_dir = os.path.dirname(mp3_path)
                 status_msg = await self._update_status(chat_id, status_msg, "🏷️ *در حال تگ‌گذاری فایل...*", status_prefix, reply_markup, is_batch)
-                lyrics = await lyrics_service.get_lyrics(track_id, track.get("trackName", ""), track.get("artistName", ""))
+                lyrics = await lyrics_service.get_lyrics(track_id, track.get("trackName", ""), track.get("artistName", ""), track.get("collectionName"))
                 self.tagging_service.tag_mp3(Path(mp3_path), track, cover_bytes, lyrics=lyrics)
 
                 status_msg = await self._update_status(chat_id, status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*", status_prefix, reply_markup, is_batch)
 
                 markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
                 with open(mp3_path, 'rb') as f:
+                    await self.bot.send_chat_action(chat_id, "upload_voice")
+                    logger.info(f"Uploading fresh audio: {track.get('trackName')} ({quality_value}kbps)")
                     msg = await self.bot.send_audio(chat_id, audio=f, caption=caption, reply_markup=InlineKeyboard(*markup))
                     if msg and track_id and not str(track_id).startswith(("yt_", "sc_", "sp_", "it_")):
                         await set_mirror('track', str(track_id), 'audioUrl',

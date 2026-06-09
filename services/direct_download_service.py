@@ -101,10 +101,10 @@ class DirectDownloadService:
                 continue
         return None
 
-    async def ask_confirmation(self, chat_id, url, user_id=None):
+    async def ask_confirmation(self, chat_id, url, user_id=None, reply_to=None):
         # This method is now mostly a fallback for non-YouTube/non-SoundCloud direct links
         # that couldn't be parsed into IDs.
-        status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*")
+        status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*", reply_to_message_id=reply_to)
         meta = await self.get_metadata(url)
         if not meta:
             status_msg = await edit_message(status_msg, "❌ خطا در دریافت اطلاعات پیوند.")
@@ -139,6 +139,7 @@ class DirectDownloadService:
 
         if meta.get("thumbnail"):
             try:
+                await self.bot.send_chat_action(chat_id, "upload_photo")
                 await self.bot.send_photo(chat_id, photo=meta["thumbnail"], caption=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*markup))
                 await safe_delete(status_msg)
             except Exception as e:
@@ -167,6 +168,7 @@ class DirectDownloadService:
                 opts = self._build_opts(url, output_dir=temp_dir, quality=quality, method=method)
                 try:
                     loop = asyncio.get_event_loop()
+                    await self.bot.send_chat_action(chat_id, "record_voice")
                     with yt_dlp.YoutubeDL(opts) as ydl:
                         info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=True))
 
@@ -188,7 +190,9 @@ class DirectDownloadService:
 
             if success and mp3_path:
                 status_msg = await self._update_status(chat_id, status_msg, "☁️ *در حال آماده‌سازی فایل...*")
-                lyrics = await lyrics_service.get_lyrics(track_id, track_data.get("trackName", ""), track_data.get("artistName", ""))
+                # For direct download, track_id is not available, using unique_id as fallback key
+                t_id = f"direct_{unique_id}"
+                lyrics = await lyrics_service.get_lyrics(t_id, track_data.get("trackName", ""), track_data.get("artistName", ""), track_data.get("collectionName"))
                 self.tagging_service.tag_mp3(mp3_path, track_data, lyrics=lyrics)
 
                 track_name = track_data['trackName']
@@ -217,6 +221,8 @@ class DirectDownloadService:
                     markup = [[InlineKeyboardButton(text="📋 کپی پیوند", copy_text=url)],
                               [InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=url)],
                               [create_close_button(user_id)]]
+                    await self.bot.send_chat_action(chat_id, "upload_voice")
+                    logger.info(f"Direct uploading audio: {track_data.get('trackName')} ({quality}kbps)")
                     await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard(*markup))
                 await safe_delete(status_msg)
                 return status_msg, True

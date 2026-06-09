@@ -8,11 +8,11 @@ import re
 
 logger = logging.getLogger("ABRAAVA:LYRICS_HANDLER")
 
-async def handle_lyrics_request(bot, chat_id, track_id, owner_id, message_to_edit=None):
+async def handle_lyrics_request(bot, chat_id, track_id, owner_id, message_to_edit=None, reply_to=None):
     if message_to_edit:
-        status_msg = await edit_message(message_to_edit, "🔍 *در حال جستجوی متن آهنگ از یوتیوب...*")
+        status_msg = await edit_message(message_to_edit, "🔍 *در حال جستجوی متن آهنگ...*")
     else:
-        status_msg = await send_message(bot, chat_id, "🔍 *در حال جستجوی متن آهنگ از یوتیوب...*")
+        status_msg = await send_message(bot, chat_id, "🔍 *در حال جستجوی متن آهنگ...*", reply_to_message_id=reply_to)
 
     try:
         data = await get_track(track_id)

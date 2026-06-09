@@ -10,15 +10,15 @@ import asyncio
 music_adapter = MusicAdapter()
 
 async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, term: str,
-                        api_client, search_cache_service, offline_mode=False):
+                        api_client, search_cache_service, offline_mode=False, reply_to=None):
     if type_ in ["ytm", "sc", "sp", "itunes_official"]:
-        await handle_external_search(bot, chat_id, user_id, type_, term, search_cache_service)
+        await handle_external_search(bot, chat_id, user_id, type_, term, search_cache_service, reply_to=reply_to)
         return
 
     type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ", "collection": "آلبوم"}
     logger.info(f"Search: {type_} - {term}")
 
-    status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجوی {type_fa_map.get(type_, type_)}: {term}...*", show_cancel=True)
+    status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجوی {type_fa_map.get(type_, type_)}: {term}...*", show_cancel=True, reply_to_message_id=reply_to)
 
     try:
         results = {}
@@ -30,7 +30,7 @@ async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, ter
                 results = itunes_results
 
         if results and int(results.get("resultCount") or 0) > 0:
-            status_msg = await send_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg)
+            status_msg = await send_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg, reply_to=reply_to)
             await api_client.log_search(user_id, type_, term, int(results.get("resultCount") or 0))
         else:
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}:u{user_id}")]]
@@ -40,10 +40,10 @@ async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, ter
         retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}:u{user_id}")]]
         status_msg = await edit_message(status_msg, "خطا در جستجو.", reply_markup=retry_markup)
 
-async def handle_external_search(bot: Client, chat_id: int, user_id: int, type_: str, term: str, search_cache_service):
+async def handle_external_search(bot: Client, chat_id: int, user_id: int, type_: str, term: str, search_cache_service, reply_to=None):
     source_map = {"ytm": "یوتیوب موزیک", "sc": "ساندکلاد", "sp": "اسپاتیفای", "itunes_official": "آیتیونز"}
     source_name = source_map.get(type_, "منابع خارجی")
-    status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجو در {source_name}: {term}...*", show_cancel=True)
+    status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجو در {source_name}: {term}...*", show_cancel=True, reply_to_message_id=reply_to)
 
     try:
         results = []
@@ -57,7 +57,7 @@ async def handle_external_search(bot: Client, chat_id: int, user_id: int, type_:
             results = await music_adapter.search_itunes_official(term)
 
         if results:
-            status_msg = await send_external_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg)
+            status_msg = await send_external_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg, reply_to=reply_to)
         else:
             status_msg = await edit_message(status_msg, f"هیچ نتیجه‌ای در {source_name} یافت نشد.")
     except Exception as e:
@@ -65,8 +65,8 @@ async def handle_external_search(bot: Client, chat_id: int, user_id: int, type_:
         status_msg = await edit_message(status_msg, f"خطا در جستجو در {source_name}.")
 
 async def quick_search(bot: Client, chat_id: int, user_id: int, term: str,
-                       api_client, user_settings_service, download_service):
-    status_msg = await send_message(bot, chat_id, f"⚡ *جستجوی سریع {term}...*", show_cancel=True)
+                       api_client, user_settings_service, download_service, reply_to=None):
+    status_msg = await send_message(bot, chat_id, f"⚡ *جستجوی سریع {term}...*", show_cancel=True, reply_to_message_id=reply_to)
     try:
         results = await search_itunes(term, entity="musicTrack", limit=1)
         if results and int(results.get("resultCount") or 0) > 0:

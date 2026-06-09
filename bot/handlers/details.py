@@ -10,13 +10,13 @@ import asyncio
 
 logger = logging.getLogger("ABRAAVA:DETAILS")
 
-async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False):
+async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False, reply_to=None):
     if not is_pagination:
         if message_to_edit:
             status_msg = message_to_edit
             status_msg = await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات هنرمند...*")
         else:
-            status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*", show_cancel=True)
+            status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات هنرمند...*", show_cancel=True, reply_to_message_id=reply_to)
     else:
         status_msg = None
     try:
@@ -108,13 +108,13 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         if status_msg: status_msg = await edit_message(status_msg, f"خطا در نمایش صفحه هنرمند: {e}", reply_markup=retry_markup)
         else: await send_message(bot, chat_id, f"خطا در نمایش صفحه هنرمند: {e}", reply_markup=retry_markup)
 
-async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False):
+async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False, reply_to=None):
     if not is_pagination:
         if message_to_edit:
             status_msg = message_to_edit
             status_msg = await edit_message(status_msg, "🔄 *در حال پردازش اطلاعات آلبوم...*")
         else:
-            status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*", show_cancel=True)
+            status_msg = await send_message(bot, chat_id, "🔄 *در حال پردازش اطلاعات آلبوم...*", show_cancel=True, reply_to_message_id=reply_to)
     else:
         status_msg = None
     try:
@@ -209,9 +209,9 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         if status_msg: status_msg = await edit_message(status_msg, f"خطا در نمایش صفحه آلبوم: {e}", reply_markup=retry_markup)
         else: await send_message(bot, chat_id, f"خطا در نمایش صفحه آلبوم: {e}", reply_markup=retry_markup)
 
-async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, message_to_edit=None):
+async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, message_to_edit=None, reply_to=None):
     if not message_to_edit:
-        status_msg = await send_message(bot, chat_id, "🔄 *در حال بارگذاری اطلاعات آهنگ...*", show_cancel=True)
+        status_msg = await send_message(bot, chat_id, "🔄 *در حال بارگذاری اطلاعات آهنگ...*", show_cancel=True, reply_to_message_id=reply_to)
     else:
         status_msg = message_to_edit
         status_msg = await edit_message(status_msg, "🔄 *در حال بارگذاری اطلاعات آهنگ...*")
@@ -276,9 +276,6 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
             InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}track_{track_id}"),
             InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=itunes_url)
         ])
-
-        if is_external:
-            markup_rows.append([create_close_button(owner_id)])
 
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
 
