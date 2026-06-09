@@ -70,13 +70,16 @@ class iTunesSQLiteCache:
             await self._db.close()
             self._db = None
 
+
 _itunes_cache = iTunesSQLiteCache()
 
-ALTERNATIVE_ENDPOINTS = [ITUNES_BASE_URL, "https://itunes.apple.com", "https://ax.itunes.apple.com", "https://buy.itunes.apple.com"]
+ALTERNATIVE_ENDPOINTS = [ITUNES_BASE_URL, "https://itunes.apple.com", "https://ax.itunes.apple.com",
+                         "https://buy.itunes.apple.com"]
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 ]
+
 
 class iTunesEndpointManager:
     def __init__(self, endpoints: List[str]):
@@ -96,7 +99,9 @@ class iTunesEndpointManager:
     def report_success(self, endpoint: str):
         self.failures[endpoint] = 0
 
+
 endpoint_manager = iTunesEndpointManager(ALTERNATIVE_ENDPOINTS)
+
 
 async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = False,
                        method: Literal["GET", "POST", "PUT", "DELETE"] = "GET", payload: dict = None,
@@ -135,23 +140,33 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
                     else:
                         if not is_mirror: endpoint_manager.report_failure(base_url)
             else:
-                async with getattr(session, method.lower())(url, params=params, json=payload, headers=headers, ssl=False, proxy=PROXY, timeout=10) as resp:
+                async with getattr(session, method.lower())(url, params=params, json=payload, headers=headers,
+                                                            ssl=False, proxy=PROXY, timeout=10) as resp:
                     if resp.status == 200: return await resp.json()
         except Exception as e:
-            logger.error(f"iTunes fetch failed (attempt {attempt+1}): {e}")
+            logger.error(f"iTunes fetch failed (attempt {attempt + 1}): {e}")
             if not is_mirror: endpoint_manager.report_failure(base_url)
 
         if not is_mirror: await asyncio.sleep(0.5)
 
     return None
 
-async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50, official: bool = False) -> Optional[Dict[str, Any]]:
-    return await fetch_itunes("search", {"term": term, "media": "music", "limit": limit, "entity": entity} if entity else {"term": term, "media": "music", "limit": limit}, official=official)
 
-async def lookup_itunes(id: Union[int, str], entity: Optional[str] = None, bypass_cache: bool = False, official: bool = False) -> Optional[Dict[str, Any]]:
-    return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id}, bypass_cache=bypass_cache, official=official)
+async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50, official: bool = False) -> Optional[
+    Dict[str, Any]]:
+    return await fetch_itunes("search",
+                              {"term": term, "media": "music", "limit": limit, "entity": entity} if entity else {
+                                  "term": term, "media": "music", "limit": limit}, official=official)
 
-async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, mirror_url: str, quality: str = None) -> Optional[Dict[str, Any]]:
+
+async def lookup_itunes(id: Union[int, str], entity: Optional[str] = None, bypass_cache: bool = False,
+                        official: bool = False) -> Optional[Dict[str, Any]]:
+    return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id},
+                              bypass_cache=bypass_cache, official=official)
+
+
+async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, mirror_url: str,
+                     quality: str = None) -> Optional[Dict[str, Any]]:
     if str(entity_id).startswith(("yt_", "sc_", "sp_")):
         return None
     payload = {"entityType": entity_type, "entityId": str(entity_id), "urlType": url_type, "mirrorUrl": mirror_url}
@@ -160,7 +175,8 @@ async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str
     return await fetch_itunes("mirror/set", method="POST", payload=payload)
 
 
-async def get_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, quality: str = None) -> Optional[Dict[str, Any]]:
+async def get_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, quality: str = None) -> Optional[
+    Dict[str, Any]]:
     if str(entity_id).startswith(("yt_", "sc_", "sp_")):
         return None
     params = {"entityType": entity_type, "entityId": str(entity_id), "urlType": url_type}
@@ -172,6 +188,8 @@ async def get_mirror(entity_type: str, entity_id: Union[int, str], url_type: str
 async def get_cached_audio(track_id: Union[int, str], quality: str = None) -> Optional[str]:
     data = await get_mirror('track', track_id, 'audioUrl', quality=quality or "192")
     if data and data.get("mirrors", {}).get('audioUrl'):
+        if str(data["mirrors"]['audioUrl']['quality']) != str(quality or "192"):
+            return None
         url = data["mirrors"]['audioUrl']['url']
         logger.info(f"Cached audio found for {track_id}: {url}")
         return url.split('<token>/')[1] if '<token>' in url else url
