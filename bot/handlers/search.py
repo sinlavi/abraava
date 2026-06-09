@@ -30,7 +30,7 @@ async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, ter
                 results = itunes_results
 
         if results and int(results.get("resultCount") or 0) > 0:
-            status_msg = await send_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg)
+            status_msg = await send_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg, reply_to=reply_to)
             await api_client.log_search(user_id, type_, term, int(results.get("resultCount") or 0))
         else:
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}:u{user_id}")]]
@@ -57,7 +57,7 @@ async def handle_external_search(bot: Client, chat_id: int, user_id: int, type_:
             results = await music_adapter.search_itunes_official(term)
 
         if results:
-            status_msg = await send_external_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg)
+            status_msg = await send_external_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg, reply_to=reply_to)
         else:
             status_msg = await edit_message(status_msg, f"هیچ نتیجه‌ای در {source_name} یافت نشد.")
     except Exception as e:

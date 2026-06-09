@@ -6,9 +6,9 @@ def setup_logger(name: str = "ABRAAVA") -> logging.Logger:
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 
-    # Professional format
+    # Professional format with more details
     formatter = logging.Formatter(
-        '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        '%(asctime)s [%(levelname)s] [%(name)s] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 

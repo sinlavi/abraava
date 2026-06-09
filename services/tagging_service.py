@@ -107,7 +107,12 @@ class TaggingService:
 
             # Add lyrics
             if lyrics:
+                # Add standard USLT frame
                 audio.add(USLT(encoding=3, lang='eng', desc='Lyrics', text=lyrics))
+                # Add LYRICS frame for players that prefer it (often used for synced lyrics)
+                audio.add(TXXX(encoding=3, desc='LYRICS', text=lyrics))
+                if lyrics.startswith('['): # Potential LRC format
+                    audio.add(TXXX(encoding=3, desc='unsynced lyrics', text=lyrics))
 
             # Save with ID3 v2.3 for better compatibility
             audio.save(file_path, v2_version=3)

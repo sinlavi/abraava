@@ -101,10 +101,10 @@ class DirectDownloadService:
                 continue
         return None
 
-    async def ask_confirmation(self, chat_id, url, user_id=None):
+    async def ask_confirmation(self, chat_id, url, user_id=None, reply_to=None):
         # This method is now mostly a fallback for non-YouTube/non-SoundCloud direct links
         # that couldn't be parsed into IDs.
-        status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*")
+        status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*", reply_to_message_id=reply_to)
         meta = await self.get_metadata(url)
         if not meta:
             status_msg = await edit_message(status_msg, "❌ خطا در دریافت اطلاعات پیوند.")
@@ -190,10 +190,8 @@ class DirectDownloadService:
 
             if success and mp3_path:
                 status_msg = await self._update_status(chat_id, status_msg, "☁️ *در حال آماده‌سازی فایل...*")
-                # For direct download, track_id might not be available, using title-artist as fallback key if needed
-                # But here track_id is used from local scope which seems to be missing in some paths.
-                # Let's use a safe fallback.
-                t_id = locals().get('track_id', f"direct_{unique_id}")
+                # For direct download, track_id is not available, using unique_id as fallback key
+                t_id = f"direct_{unique_id}"
                 lyrics = await lyrics_service.get_lyrics(t_id, track_data.get("trackName", ""), track_data.get("artistName", ""), track_data.get("collectionName"))
                 self.tagging_service.tag_mp3(mp3_path, track_data, lyrics=lyrics)
 
@@ -224,6 +222,7 @@ class DirectDownloadService:
                               [InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=url)],
                               [create_close_button(user_id)]]
                     await self.bot.send_chat_action(chat_id, "upload_voice")
+                    logger.info(f"Direct uploading audio: {track_data.get('trackName')} ({quality}kbps)")
                     await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard(*markup))
                 await safe_delete(status_msg)
                 return status_msg, True

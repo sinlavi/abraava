@@ -277,9 +277,6 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
             InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=itunes_url)
         ])
 
-        if is_external:
-            markup_rows.append([create_close_button(owner_id)])
-
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
 
         if is_external:

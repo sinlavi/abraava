@@ -162,7 +162,7 @@ async def on_message(message: Message):
             elif type_ == "itunes_artist":
                 await show_artist_page(bot, chat_id, int(term), 1, artwork_service, user_id, reply_to=message.id)
             elif type_ == "music_link":
-                status_msg = await send_message(bot, chat_id, "🔍 *در حال بررسی پیوند...*")
+                status_msg = await send_message(bot, chat_id, "🔍 *در حال بررسی پیوند...*", reply_to_message_id=message.id)
                 resolved = await OdesliService.resolve_link(term)
                 if not resolved:
                     status_msg = await edit_message(status_msg, "❌ متأسفانه اطلاعاتی برای این پیوند یافت نشد.")
@@ -211,7 +211,7 @@ async def on_message(message: Message):
                 elif sc_m:
                     await show_track_page(bot, chat_id, f"sc_{sc_m.group(1)}", artwork_service, user_id, reply_to=message.id)
                 else:
-                    await direct_download_service.ask_confirmation(chat_id, term, user_id=user_id)
+                    await direct_download_service.ask_confirmation(chat_id, term, user_id=user_id, reply_to=message.id)
             elif type_ in ["track", "album", "artist", "ytm", "sc", "quick"]:
                 await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE, reply_to=message.id)
             else:
@@ -229,7 +229,7 @@ async def on_callback(callback_query: CallbackQuery):
                              rate_limiter, download_rate_limiter, direct_download_service)
     except Exception as e:
         if "query is too old" in str(e).lower():
-            await bot.answer_callback_query(callback_query.id, "⚠️ این جستجو منقضی شده است. لطفاً مجدداً جستجو کنید.", show_alert=True)
+            await bot.answer_callback_query(callback_query.id, text="⚠️ این جستجو منقضی شده است. لطفاً مجدداً جستجو کنید.", show_alert=True)
         else:
             logger.error(f"Callback error: {e}")
 

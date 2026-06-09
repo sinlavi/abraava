@@ -105,7 +105,8 @@ class LyricsService:
             async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    return data.get("plainLyrics") or data.get("syncedLyrics")
+                    # Prioritize synced lyrics for better player experience
+                    return data.get("syncedLyrics") or data.get("plainLyrics")
 
                 if resp.status == 404:
                     # Try search if direct get fails
@@ -115,8 +116,11 @@ class LyricsService:
                         if s_resp.status == 200:
                             results = await s_resp.json()
                             if results:
-                                # Return the first result's lyrics
-                                return results[0].get("plainLyrics") or results[0].get("syncedLyrics")
+                                # Return the first result's lyrics (prioritizing synced)
+                                for res in results:
+                                    if res.get("syncedLyrics"):
+                                        return res.get("syncedLyrics")
+                                return results[0].get("plainLyrics")
             return None
         except Exception as e:
             logger.error(f"Error fetching lyrics from LRCLIB: {e}")
