@@ -261,8 +261,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         markup_rows.append(dl_btns)
 
         # Lyrics button
-        if not is_sc:
-            markup_rows.append([InlineKeyboardButton(text="📜 متن آهنگ", callback_data=f"lyrics:{track_id}:u{owner_id}")])
+        markup_rows.append([InlineKeyboardButton(text="📜 متن آهنگ", callback_data=f"lyrics:{track_id}:u{owner_id}")])
 
         links = []
         if collection_id: links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{collection_id}:u{owner_id}"))
