@@ -54,7 +54,7 @@ class LyricsService:
             """)
             await db.commit()
 
-    async def get_lyrics(self, track_id, title, artist):
+    async def get_lyrics(self, track_id, title, artist, album=None):
         # Ensure track_id is a string
         track_id = str(track_id)
 
@@ -63,11 +63,15 @@ class LyricsService:
         if cached_lyrics:
             return cached_lyrics
 
-        # 2. Fetch from YTMusic
-        lyrics = await self._fetch_from_ytmusic(track_id, title, artist)
+        # 2. Fetch from LRCLIB
+        lyrics = await self._fetch_from_lrclib(title, artist, album)
+
+        # 3. Fallback to YTMusic
+        if not lyrics:
+            lyrics = await self._fetch_from_ytmusic(track_id, title, artist)
 
         if lyrics:
-            # 3. Cache it
+            # 4. Cache it
             await self._cache_lyrics(track_id, lyrics, title, artist)
 
         return lyrics
@@ -85,6 +89,38 @@ class LyricsService:
                 (str(track_id), lyrics, title, artist)
             )
             await db.commit()
+
+    async def _fetch_from_lrclib(self, title, artist, album=None):
+        try:
+            from core.http_client import HttpClient
+            session = await HttpClient.get_session()
+            params = {
+                "track_name": title,
+                "artist_name": artist,
+            }
+            if album:
+                params["album_name"] = album
+
+            url = "https://lrclib.net/api/get"
+            async with session.get(url, params=params, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("plainLyrics") or data.get("syncedLyrics")
+
+                if resp.status == 404:
+                    # Try search if direct get fails
+                    search_url = "https://lrclib.net/api/search"
+                    search_params = {"q": f"{artist} {title}"}
+                    async with session.get(search_url, params=search_params, timeout=10) as s_resp:
+                        if s_resp.status == 200:
+                            results = await s_resp.json()
+                            if results:
+                                # Return the first result's lyrics
+                                return results[0].get("plainLyrics") or results[0].get("syncedLyrics")
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching lyrics from LRCLIB: {e}")
+            return None
 
     async def _fetch_from_ytmusic(self, track_id, title, artist):
         try:

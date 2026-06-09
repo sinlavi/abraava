@@ -12,8 +12,10 @@ music_adapter = MusicAdapter()
 def format_artist_hashtag(artist_name: Optional[str]) -> str:
     if not artist_name:
         return ""
-    # Remove special characters and split by space/hyphen
-    words = re.split(r'[\s\-_]+', str(artist_name))
+    # Replace & with And (with spaces to ensure separate words for CamelCase)
+    name = str(artist_name).replace("&", " And ")
+    # Split by non-alphanumeric characters to ensure clean CamelCase
+    words = re.split(r'[^a-zA-Z0-9]+', name)
     # Capitalize each word and join (CamelCase)
     camel_case = "".join(word.capitalize() for word in words if word)
     return f"#{camel_case}" if camel_case else ""
