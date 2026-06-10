@@ -4,8 +4,9 @@ yt_dlp
 aiosqlite
 aiohttp
 mutagen
-dotenv
+python-dotenv
 rapidfuzz
 spotipy
 pillow
 beautifulsoup4
+requests

@@ -1,3 +1,6 @@
+import os
+from proxy_setup import setup_proxy
+setup_proxy()
 from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
 from balethon import Client
 from balethon.objects import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboard

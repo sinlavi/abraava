@@ -1,10 +1,12 @@
 services:
   - type: web
     name: abraava-bot
-    env: docker
+    runtime: python
     plan: free
-    region: ohio
+    region: oregon
     healthCheckPath: /
+    buildCommand: ./build.sh
+    startCommand: python main.py
     envVars:
       - key: BOT_TOKEN
         sync: false
