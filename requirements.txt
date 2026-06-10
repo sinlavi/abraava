@@ -3,6 +3,9 @@ ytmusicapi
 yt_dlp
 aiosqlite
 aiohttp
+aiohttp-socks
+httpx[socks]
+PySocks
 mutagen
 dotenv
 rapidfuzz

@@ -17,23 +17,13 @@ class OdesliService:
         session = await HttpClient.get_session()
 
         from core.config import PROXY
-        proxy_url = PROXY
-        if not proxy_url:
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            try:
-                if s.connect_ex(("127.0.0.1", 1080)) == 0:
-                    proxy_url = "socks5://127.0.0.1:1080"
-            except: pass
-            finally: s.close()
 
         for method in list(ODESLI_METHODS):
             try:
                 params = {"url": url}
-                # method 2 uses proxy if available
-                current_proxy = proxy_url if method == 2 else None
 
+                # Note: HttpClient session already uses ProxyConnector if PROXY is SOCKS
+                current_proxy = PROXY if PROXY and not PROXY.startswith("socks") else None
                 async with session.get(cls.BASE_URL, params=params, proxy=current_proxy, timeout=10) as resp:
                     if resp.status == 200:
                         data = await resp.json()
