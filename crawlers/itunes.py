@@ -129,8 +129,11 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         logger.info(f"iTunes/3rah Request [{method}]: {url} - Params: {params}")
         try:
+            # Note: HttpClient session already uses ProxyConnector if PROXY is SOCKS
+            # We only pass proxy to session call if it's an HTTP proxy
+            current_proxy = PROXY if PROXY and not PROXY.startswith("socks") else None
             if method == "GET":
-                async with session.get(url, params=params, headers=headers, ssl=False, proxy=PROXY, timeout=10) as resp:
+                async with session.get(url, params=params, headers=headers, ssl=False, proxy=current_proxy, timeout=10) as resp:
                     logger.info(f"iTunes/3rah Response [{resp.status}]: {url}")
                     if resp.status == 200:
                         try:
@@ -147,7 +150,7 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
                         if not is_mirror: endpoint_manager.report_failure(base_url)
             else:
                 async with getattr(session, method.lower())(url, params=params, json=payload, headers=headers,
-                                                            ssl=False, proxy=PROXY, timeout=10) as resp:
+                                                            ssl=False, proxy=current_proxy, timeout=10) as resp:
                     logger.info(f"iTunes/3rah Response [{resp.status}]: {url}")
                     if resp.status == 200: return await resp.json()
         except Exception as e:

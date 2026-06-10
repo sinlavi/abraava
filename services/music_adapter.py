@@ -4,7 +4,7 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from ytmusicapi import YTMusic
 import yt_dlp
-from core.config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET
+from core.config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, PROXY
 from core.logger import logger
 
 YT_METADATA_METHODS = [1, 2, 3]
@@ -15,12 +15,17 @@ class MusicAdapter:
         self.sp = None
         if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET:
             try:
-                auth_manager = SpotifyClientCredentials(client_id=SPOTIFY_CLIENT_ID, client_secret=SPOTIFY_CLIENT_SECRET)
-                self.sp = spotipy.Spotify(auth_manager=auth_manager)
+                proxies = {"http": PROXY, "https": PROXY}
+                auth_manager = SpotifyClientCredentials(
+                    client_id=SPOTIFY_CLIENT_ID,
+                    client_secret=SPOTIFY_CLIENT_SECRET,
+                    proxies=proxies
+                )
+                self.sp = spotipy.Spotify(auth_manager=auth_manager, proxies=proxies)
             except Exception as e:
                 logger.error(f"Failed to initialize Spotify: {e}")
 
-        self.ytm = YTMusic()
+        self.ytm = YTMusic(proxies={"https": PROXY, "http": PROXY})
 
     def _sp_to_itunes(self, sp_data: Dict[str, Any], entity_type: str) -> Dict[str, Any]:
         if entity_type == "track":
@@ -276,12 +281,9 @@ class MusicAdapter:
             return []
 
     def _get_ydl_opts(self, method, proxy=None):
-        opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': False}
-        if method == 2 and proxy:
-            opts['proxy'] = proxy
-        elif method == 3:
+        opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': False, 'proxy': PROXY}
+        if method == 3:
             opts['extractor_args'] = {"youtube": {"player_client": ["web", "mweb", "android_vr"]}}
-            if proxy: opts['proxy'] = proxy
         return opts
 
     async def get_yt_track(self, video_id: str) -> Optional[Dict[str, Any]]:
@@ -290,23 +292,11 @@ class MusicAdapter:
         if video_id.startswith("yt_"): video_id = video_id[3:]
         url = f"https://www.youtube.com/watch?v={video_id}"
 
-        from core.config import PROXY
-        proxy = PROXY
-        if not proxy:
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            try:
-                if s.connect_ex(("127.0.0.1", 1080)) == 0:
-                    proxy = "socks5://127.0.0.1:1080"
-            except: pass
-            finally: s.close()
-
         loop = asyncio.get_event_loop()
 
         for method in list(YT_METADATA_METHODS):
             try:
-                opts = self._get_ydl_opts(method, proxy)
+                opts = self._get_ydl_opts(method, PROXY)
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
                     if info:
@@ -364,25 +354,11 @@ class MusicAdapter:
         else:
             url = f"https://soundcloud.com/{sc_id}"
 
-        from core.config import PROXY
-        proxy = PROXY
-        if not proxy:
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            try:
-                if s.connect_ex(("127.0.0.1", 1080)) == 0:
-                    proxy = "socks5://127.0.0.1:1080"
-            except: pass
-            finally: s.close()
-
         loop = asyncio.get_event_loop()
 
         for method in list(SC_METADATA_METHODS):
             try:
-                opts = {'quiet': True, 'no_check_certificate': True}
-                if method == 2 and proxy:
-                    opts['proxy'] = proxy
+                opts = {'quiet': True, 'no_check_certificate': True, 'proxy': PROXY}
 
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))

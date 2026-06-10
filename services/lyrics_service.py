@@ -1,7 +1,7 @@
 import aiosqlite
 import asyncio
 from ytmusicapi import YTMusic
-from core.config import CACHE_DIR
+from core.config import CACHE_DIR, PROXY
 import os
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -32,7 +32,7 @@ class LyricsService:
         cookies_path = "cookies.txt"
         cookie_header = _load_cookies_as_header(cookies_path)
 
-        self.ytm = YTMusic()
+        self.ytm = YTMusic(proxies={"https": PROXY, "http": PROXY})
         if cookie_header:
             logger.info(f"Adding Cookie header from: {cookies_path}")
             self.ytm.headers["Cookie"] = cookie_header
