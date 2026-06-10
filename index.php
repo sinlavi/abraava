@@ -5,7 +5,7 @@ ini_set('display_errors', 0);
 ini_set('log_errors', 1);
 
 // ── Configuration ──────────────────────────────────────────
-define('DB_PATH', __DIR__ . '/database3.db');
+define('DB_PATH', __DIR__ . '/itunes.db');
 define('CACHE_DURATION', 21600);          // 6 hours
 define('ITUNES_SEARCH_API', 'https://itunes.apple.com/search');
 define('ITUNES_LOOKUP_API', 'https://itunes.apple.com/lookup');
@@ -727,6 +727,7 @@ function attachMirrors(array &$entity, string $type, int $id, ?string $requested
     }
     
     // Handle audioUrl based on requested quality parameter
+
     if ($requestedQuality && in_array($requestedQuality, SUPPORTED_AUDIO_QUALITIES)) {
         // Specific quality requested - must be equal to audioUrl with that quality if exists
         $specificAudio = getQualityAudioUrl($mirrors, $requestedQuality);
@@ -791,21 +792,26 @@ function getMirrorUrls(SQLite3 $db, string $type, int $id, ?string $urlType = nu
         
         if ($urlType && $quality) {
             $expectedUrlType = getAudioUrlTypeWithQuality($urlType, $quality);
+
             if ($rowUrlType !== $expectedUrlType) {
                 continue;
+            }else{
             }
         }
-        
         $displayUrlType = $rowUrlType;
         $mirrors[$displayUrlType] = ['url' => $row['mirrorUrl']];
         if ($row['quality']) {
+            if ($row['quality'] == $quality){
+                $mirrors['audioUrl'] = ['url' => $row['mirrorUrl']];
+                $mirrors['audioUrl']['quality'] = $row['quality'];
+            }
             $mirrors[$displayUrlType]['quality'] = $row['quality'];
         }
     }
     
     // CRITICAL FIX: ALWAYS add the highest quality audioUrl when requesting generic audioUrl
-    // This ensures audioUrl field is always present
-    if ($urlType === 'audioUrl' || $urlType === null) {
+    if(!$quality){
+    // This ensures audioUrl field is always present;
         $bestAudio = getBestAvailableQuality($mirrors);
         if ($bestAudio) {
             $mirrors['audioUrl'] = $bestAudio;
@@ -813,7 +819,7 @@ function getMirrorUrls(SQLite3 $db, string $type, int $id, ?string $urlType = nu
             // If no audio URLs exist at all, return empty but still include the field
             $mirrors['audioUrl'] = null;
         }
-    }
+    
     
     // Ensure audioUrl is always present even when not specifically requested
     if (!isset($mirrors['audioUrl']) && !$urlType) {
@@ -821,6 +827,7 @@ function getMirrorUrls(SQLite3 $db, string $type, int $id, ?string $urlType = nu
         if ($bestAudio) {
             $mirrors['audioUrl'] = $bestAudio;
         }
+    }
     }
     
     return [
