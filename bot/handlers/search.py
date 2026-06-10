@@ -15,7 +15,7 @@ async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, ter
         await handle_external_search(bot, chat_id, user_id, type_, term, search_cache_service, reply_to=reply_to)
         return
 
-    type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ", "collection": "آلبوم"}
+    type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ", "collection": "آلبوم","all":"آهنگ، آلبوم، هنرمند"}
     logger.info(f"Search: {type_} - {term}")
 
     status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجوی {type_fa_map.get(type_, type_)}: {term}...*", show_cancel=True, reply_to_message_id=reply_to)
@@ -23,7 +23,7 @@ async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, ter
     try:
         results = {}
         if not offline_mode:
-            entity_map = {"artist": "musicArtist", "album": "album", "track": "musicTrack", "collection": "album"}
+            entity_map = {"artist": "musicArtist", "album": "album", "track": "musicTrack", "collection": "album","all":"musicTrack,album,musicArtist"}
             entity = entity_map.get(type_)
             itunes_results = await search_itunes(term, entity=entity, limit=50)
             if itunes_results and int(itunes_results.get("resultCount") or 0) > 0:
