@@ -1,6 +1,4 @@
 import os
-from proxy_setup import setup_proxy
-setup_proxy()
 from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
 from balethon import Client
 from balethon.objects import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboard
@@ -13,90 +11,53 @@ from services.artwork_service import ArtworkService
 from services.search_cache_service import search_cache_service
 from services.rate_limiter import RateLimiter, DownloadRateLimiter
 from services.tracker import AlbumDownloadTracker
-from services.tagging_service import TaggingService
-from services.error_notifier import BaleUploadErrorNotifier
 from services.download_service import DownloadService
-from services.lyrics_service import lyrics_service
-from services.membership_service import verify_all_memberships
-from services.registration_service import UserRegistrationService
 from services.direct_download_service import DirectDownloadService
+from services.lyrics_service import LyricsService
+from services.membership_service import verify_all_memberships
+from services.message_owner_service import message_owner_service
 from services.odesli_service import OdesliService
 
-from bot.handlers.commands import start_command, help_command, about_command
-from bot.handlers.settings import settings_command, stats_command
+from bot.handlers.commands import start_command, help_command, settings_command, about_command, stats_command
 from bot.handlers.search import handle_search, quick_search
+from bot.handlers.details import show_artist_page, show_collection_page, show_track_page
 from bot.handlers.callbacks import handle_callback
-from bot.handlers.broadcast import process_broadcast_message
-from bot.handlers.details import show_track_page, show_collection_page, show_artist_page
 from utils.parser import parse_search_query
-from utils.messages import send_message, edit_message, safe_delete
-from utils.validation import is_valid_message
+from utils.helpers import safe_delete
+from utils.messages import send_message, edit_message
 
 import asyncio
+import re
 import signal
 import sys
-import time
-import re
-import os
 import threading
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Initialize Services
-api_client = APIClient(API_BASE_URL, API_TOKEN)
-user_settings_service = UserSettingsService(api_client)
-registration_service = UserRegistrationService(api_client, user_settings_service)
-artwork_service = ArtworkService(api_client, user_settings_service)
-rate_limiter = RateLimiter()
-download_rate_limiter = DownloadRateLimiter()
-album_tracker = AlbumDownloadTracker(api_client)
-tagging_service = TaggingService()
-error_notifier = BaleUploadErrorNotifier(api_client)
-
-bot = Client(token=BOT_TOKEN)
-download_service = DownloadService(bot, api_client, user_settings_service, artwork_service,
-                                   tagging_service, error_notifier, album_tracker, download_rate_limiter)
-direct_download_service = DirectDownloadService(bot, tagging_service)
-
-@bot.on_initialize()
-async def on_init():
-    await lyrics_service.init_db()
-    logger.info(f"Bot initialized. Offline Mode: {OFFLINE_MODE}")
-
-@bot.on_shutdown()
-async def on_shutdown():
-    await HttpClient.close()
-    logger.info("Bot shutting down...")
+# Bot instance
+bot = Client(BOT_TOKEN)
 
 @bot.on_message()
 async def on_message(message: Message):
-    if not message.author or message.author.is_bot: return
+    if not message.text: return
 
-    # Broadcast forward handling
-    if message.chat.type == "channel" and str(message.chat.id) == str(INFO_CHANNEL_ID):
-        await process_broadcast_message(bot, message, api_client)
-        return
-
-    user_id = message.author.id
     chat_id = message.chat.id
-    text = message.content or ""
-
-    # Register user
-    await registration_service.register_user(message)
-
-    if message.chat.type == "channel": return
-
+    user_id = message.author.id
+    text = message.text
     is_group = message.chat.type in ["group", "supergroup"]
-    if is_group:
-        bot_username = bot.user.username
-        is_reply_to_bot = message.reply_to_message and message.reply_to_message.author.id == bot.user.id
-        is_mentioned = f"@{bot_username}" in text
 
-        if not (is_mentioned or is_reply_to_bot):
-            return
+    # Initialize services
+    async with HttpClient() as http_client:
+        api_client = APIClient(http_client, API_BASE_URL, API_TOKEN)
+        user_settings_service = UserSettingsService(api_client)
+        artwork_service = ArtworkService(http_client)
+        lyrics_service = LyricsService(http_client, api_client)
+        download_service = DownloadService(http_client, api_client, lyrics_service)
+        rate_limiter = RateLimiter(api_client)
+        download_rate_limiter = DownloadRateLimiter(api_client)
+        direct_download_service = DirectDownloadService(http_client, api_client, download_service)
 
-        if not is_valid_message(message): return
-        text = re.sub(rf"@{re.escape(bot_username)}\s*", "", text).strip()
-
+        # Track handling
         if len(text) > 100:
             await message.reply("⚠️ *متن پیام خیلی طولانی است*\n\nحداکثر ۱۰۰ کاراکتر مجاز است.")
             return
@@ -261,8 +222,13 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    # Start health check server first to satisfy Render
     health_thread = threading.Thread(target=run_health_check_server, daemon=True)
     health_thread.start()
+
+    # Start proxy setup in background
+    from proxy_setup import setup_proxy
+    threading.Thread(target=setup_proxy, daemon=True).start()
 
     logger.info("ABRAAVA bot is starting...")
     while True:

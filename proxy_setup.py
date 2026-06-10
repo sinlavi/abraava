@@ -2,6 +2,7 @@ import os
 import subprocess
 import time
 import requests
+import re
 
 def is_proxy_working():
     proxies = {
@@ -62,19 +63,29 @@ def setup_proxy():
             return
 
         with open(conf_path, "r") as f:
-            lines = f.readlines()
+            content = f.read()
 
         def get_val(key):
-            for line in lines:
-                if line.strip().startswith(key):
-                    return line.split("=")[1].strip()
-            return ""
+            m = re.search(fr"^{key}\s*=\s*(.*)$", content, re.MULTILINE)
+            return m.group(1).strip() if m else ""
+
+        address = get_val("Address")
+        ipv4, ipv6 = "", ""
+        if address:
+            parts = [p.strip() for p in address.split(",")]
+            for p in parts:
+                if ":" in p: ipv6 = p
+                else: ipv4 = p
 
         wire_conf = f"""[WG]
 PrivateKey = {get_val("PrivateKey")}
-Address = {get_val("Address")}
+IPv4 = {ipv4}
+IPv6 = {ipv6}
+
+[Peer]
 PublicKey = {get_val("PublicKey")}
 Endpoint = {get_val("Endpoint")}
+AllowedIPs = 0.0.0.0/0, ::/0
 
 [Socks5]
 BindAddress = 127.0.0.1:1080
@@ -87,7 +98,8 @@ BindAddress = 127.0.0.1:1080
         print("❌ wireproxy binary not found.")
         return
     subprocess.run(["chmod", "+x", wireproxy_path])
-    subprocess.Popen([wireproxy_path, "-c", wire_conf_path])
+    # Run wireproxy in background and don't block
+    subprocess.Popen([wireproxy_path, "-c", wire_conf_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     print("⏳ Waiting for wireproxy...")
     for i in range(1, 31):
