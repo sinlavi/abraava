@@ -1,22 +1,19 @@
 import asyncio
 import io
 from typing import Optional
-from balethon import Client
-from balethon.objects import Message
 from core.logger import logger
 from crawlers.utils import get_track
 from crawlers.itunes import get_cached_preview, set_mirror
 from utils.messages import send_message, edit_message, safe_delete
 from core.http_client import HttpClient
-from core.config import FOOTER
+from core.config import FOOTER, PLATFORM
 from bot.keyboards import create_close_button
-from balethon.objects import InlineKeyboard, InlineKeyboardButton
 
 async def _update_preview_status(bot, chat_id, msg, text):
     await safe_delete(msg)
     return await send_message(bot, chat_id, text, show_cancel=True)
 
-async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None, reply_to=None):
+async def send_voice_preview(bot, chat_id: int, track_id: int, user_id: int = None, reply_to=None):
     status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*", reply_to_message_id=reply_to)
 
     try:
@@ -37,12 +34,12 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
         markup = []
         source_url = track.get("trackViewUrl") or track.get("previewUrl")
         if track_id:
-            markup.append([InlineKeyboardButton(text="📋 کپی پیوند", copy_text=generate_deep_link("track", track_id))])
+            markup.append([{"text": "📋 کپی پیوند", "copy_text": generate_deep_link("track", track_id)}])
         if source_url:
-            markup.append([InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=source_url)])
+            markup.append([{"text": "🌐 اطلاعات بیشتر", "url": source_url}])
         markup.append([create_close_button(user_id)])
 
-        reply_markup = InlineKeyboard(*markup)
+        reply_markup = markup
 
         # Attempt 1: From Cache (mirror)
         preview_cache = await get_cached_preview(track_id)
@@ -62,7 +59,13 @@ async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: 
                 preview_data.name = f"preview_{track_id}.mp3"
                 msg = await bot.send_voice(chat_id, voice=preview_data, caption=caption, reply_markup=reply_markup)
                 if msg and track_id:
-                    await set_mirror('track', str(track_id), 'previewUrl', f'https://tapi.bale.ai/file/bot<token>/{msg.voice.id}')
+                    file_id = getattr(getattr(msg, 'voice', None), 'id', None) or getattr(getattr(msg, 'media', None), 'id', None)
+                    if file_id:
+                        if PLATFORM == "telegram":
+                            mirror_url = f'tg://file/{file_id}'
+                        else:
+                            mirror_url = f'https://tapi.bale.ai/file/bot<token>/{file_id}'
+                        await set_mirror('track', str(track_id), 'previewUrl', mirror_url)
                 await safe_delete(status_msg)
             else:
                 status_msg = await _update_preview_status(bot, chat_id, status_msg, "دریافت پیش‌نمایش با خطا مواجه شد.")

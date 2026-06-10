@@ -9,18 +9,20 @@ class UserRegistrationService:
         self.user_settings_service = user_settings_service
 
     async def register_user(self, message):
-        user = message.author
+        user = getattr(message, 'author', getattr(message, 'sender', None))
+        if not user: return
+
         settings = await self.user_settings_service.get_settings(user.id)
 
         user_data = {
             'user_id': user.id,
-            'username': user.username or '',
-            'first_name': user.first_name or '',
-            'last_name': user.last_name or '',
+            'username': getattr(user, 'username', '') or '',
+            'first_name': getattr(user, 'first_name', '') or '',
+            'last_name': getattr(user, 'last_name', '') or '',
             'language_code': getattr(user, 'language_code', 'en'),
             'is_premium': getattr(user, 'is_premium', False),
             'is_bot': getattr(user, 'is_bot', False),
-            'user_agent': message.content or '',
+            'user_agent': getattr(message, 'content', getattr(message, 'text', '')) or '',
             'ip_address': '',
             'quick_mode': settings.quick_mode,
             'download_quality': settings.download_quality.value,

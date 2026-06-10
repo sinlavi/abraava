@@ -1,5 +1,3 @@
-from balethon import Client
-from balethon.objects import Message
 from core.config import INFO_CHANNEL_ID, FOOTER
 from services.api_client import APIClient
 import asyncio
@@ -9,7 +7,7 @@ logger = logging.getLogger("ABRAAVA:BROADCAST")
 
 _broadcast_cache = {"channels": None, "users": None, "expire": 0}
 
-async def process_broadcast_message(bot: Client, message: Message, api_client: APIClient):
+async def process_broadcast_message(bot, message, api_client: APIClient):
     if message.chat.type != "channel": return
 
     chat_id = str(message.chat.id)

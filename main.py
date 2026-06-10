@@ -1,4 +1,7 @@
-from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN, PROXY
+from core.config import (
+    BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN, PROXY,
+    PLATFORM, TELEGRAM_API_ID, TELEGRAM_API_HASH
+)
 import os
 
 # Set global proxy environment variables
@@ -6,10 +9,9 @@ if PROXY:
     os.environ["HTTP_PROXY"] = PROXY
     os.environ["HTTPS_PROXY"] = PROXY
 
-from balethon import Client
-from balethon.objects import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboard
 from core.logger import logger
 from core.http_client import HttpClient
+from core.bot_client import BaleClient, TelegramClient
 
 from services.api_client import APIClient
 from services.user_settings_service import UserSettingsService
@@ -53,43 +55,67 @@ album_tracker = AlbumDownloadTracker(api_client)
 tagging_service = TaggingService()
 error_notifier = BaleUploadErrorNotifier(api_client)
 
-bot = Client(token=BOT_TOKEN, proxy=PROXY)
+if PLATFORM == "telegram":
+    bot = TelegramClient(BOT_TOKEN, int(TELEGRAM_API_ID), TELEGRAM_API_HASH, proxy=PROXY)
+else:
+    bot = BaleClient(BOT_TOKEN, proxy=PROXY)
+
 download_service = DownloadService(bot, api_client, user_settings_service, artwork_service,
                                    tagging_service, error_notifier, album_tracker, download_rate_limiter)
 direct_download_service = DirectDownloadService(bot, tagging_service)
 
-@bot.on_initialize()
-async def on_init():
-    await lyrics_service.init_db()
-    logger.info(f"Bot initialized. Offline Mode: {OFFLINE_MODE}")
+async def handle_message(message):
+    author = getattr(message, 'author', getattr(message, 'sender', None))
+    if not author: return
 
-@bot.on_shutdown()
-async def on_shutdown():
-    await HttpClient.close()
-    logger.info("Bot shutting down...")
+    # Check for bot author
+    is_bot = getattr(author, 'is_bot', getattr(author, 'bot', False))
+    if is_bot: return
 
-@bot.on_message()
-async def on_message(message: Message):
-    if not message.author or message.author.is_bot: return
+    chat = message.chat
+    chat_id = chat.id
 
-    # Broadcast forward handling
-    if message.chat.type == "channel" and str(message.chat.id) == str(INFO_CHANNEL_ID):
+    # Compatibility for chat type
+    chat_type = getattr(chat, 'type', None)
+    if chat_type is None:
+        if getattr(chat, 'is_group', False) or getattr(chat, 'is_channel', False):
+            chat_type = "group" if chat.is_group else "channel"
+        else:
+            chat_type = "private"
+
+    # Broadcast forward handling (mostly for Bale channel integration)
+    if chat_type == "channel" and str(chat_id) == str(INFO_CHANNEL_ID):
         await process_broadcast_message(bot, message, api_client)
         return
 
-    user_id = message.author.id
-    chat_id = message.chat.id
-    text = message.content or ""
+    user_id = author.id
+    text = getattr(message, 'content', getattr(message, 'text', "")) or ""
 
     # Register user
     await registration_service.register_user(message)
 
-    if message.chat.type == "channel": return
+    if chat_type == "channel": return
 
-    is_group = message.chat.type in ["group", "supergroup"]
+    is_group = chat_type in ["group", "supergroup"]
     if is_group:
         bot_username = bot.user.username
-        is_reply_to_bot = message.reply_to_message and message.reply_to_message.author.id == bot.user.id
+
+        # Determine if it's a reply to bot or mention
+        is_reply_to_bot = False
+
+        # Telethon reply handling
+        if hasattr(message, 'get_reply_message'):
+            reply = await message.get_reply_message()
+            if reply and reply.sender_id == bot.user.id:
+                is_reply_to_bot = True
+        else:
+            # Balethon reply handling
+            reply_to = getattr(message, 'reply_to_message', None)
+            if reply_to:
+                reply_author_id = getattr(reply_to.author, 'id', None)
+                if reply_author_id == bot.user.id:
+                    is_reply_to_bot = True
+
         is_mentioned = f"@{bot_username}" in text
 
         if not (is_mentioned or is_reply_to_bot):
@@ -99,7 +125,7 @@ async def on_message(message: Message):
         text = re.sub(rf"@{re.escape(bot_username)}\s*", "", text).strip()
 
         if len(text) > 100:
-            await message.reply("⚠️ *متن پیام خیلی طولانی است*\n\nحداکثر ۱۰۰ کاراکتر مجاز است.")
+            await bot.send_message(chat_id, "⚠️ *متن پیام خیلی طولانی است*\n\nحداکثر ۱۰۰ کاراکتر مجاز است.", reply_to_message_id=message.id)
             return
 
     # Membership check
@@ -113,11 +139,11 @@ async def on_message(message: Message):
                 name = ch.get('channel_name', ch.get('channel_username', ch.get('channel_id')))
                 link = ch.get('invite_link', '')
                 if link:
-                    markup_rows.append([InlineKeyboardButton(text=f"📢 عضویت در {name}", url=link)])
+                    markup_rows.append([{"text": f"📢 عضویت در {name}", "url": link}])
                 else:
                     channels_text += f"\n\n🔸 {name}"
             markup_rows.append([create_close_button(user_id)])
-            await send_message(bot, chat_id, channels_text, reply_markup=InlineKeyboard(*markup_rows))
+            await send_message(bot, chat_id, channels_text, reply_markup=markup_rows)
             return
 
     if text.startswith("/start"):
@@ -126,7 +152,7 @@ async def on_message(message: Message):
             start_param = text.split()[1]
             if "_" in start_param:
                 type_, item_id = start_param.split("_", 1)
-                if item_id.isdigit(): item_id = int(item_id)
+                # item_id might be string for YT/SC
                 if type_ == "artist": await show_artist_page(bot, chat_id, item_id, 1, artwork_service, user_id, reply_to=message.id)
                 elif type_ == "collection": await show_collection_page(bot, chat_id, item_id, 1, artwork_service, user_id, reply_to=message.id)
                 elif type_ == "track": await show_track_page(bot, chat_id, item_id, artwork_service, user_id, reply_to=message.id)
@@ -135,10 +161,10 @@ async def on_message(message: Message):
     elif text.startswith("/help"):
         await help_command(bot, message)
     elif text.startswith("/settings"):
-        if is_group: await message.reply("⚙️ تنظیمات فقط در پیوی در دسترس است.")
+        if is_group: await bot.send_message(chat_id, "⚙️ تنظیمات فقط در پیوی در دسترس است.", reply_to_message_id=message.id)
         else: await settings_command(bot, message, user_settings_service)
     elif text.startswith("/stats"):
-        if is_group: await message.reply("📊 آمار فقط در پیوی در دسترس است.")
+        if is_group: await bot.send_message(chat_id, "📊 آمار فقط در پیوی در دسترس است.", reply_to_message_id=message.id)
         else: await stats_command(bot, message, api_client, rate_limiter, download_rate_limiter)
     elif text.startswith("/about"):
         await about_command(bot, message)
@@ -163,11 +189,11 @@ async def on_message(message: Message):
             if type_ == "quick" or settings.quick_mode:
                 await quick_search(bot, chat_id, user_id, term, api_client, user_settings_service, download_service, reply_to=message.id)
             elif type_ == "itunes_track":
-                await show_track_page(bot, chat_id, int(term), artwork_service, user_id, reply_to=message.id)
+                await show_track_page(bot, chat_id, term, artwork_service, user_id, reply_to=message.id)
             elif type_ == "itunes_album":
-                await show_collection_page(bot, chat_id, int(term), 1, artwork_service, user_id, reply_to=message.id)
+                await show_collection_page(bot, chat_id, term, 1, artwork_service, user_id, reply_to=message.id)
             elif type_ == "itunes_artist":
-                await show_artist_page(bot, chat_id, int(term), 1, artwork_service, user_id, reply_to=message.id)
+                await show_artist_page(bot, chat_id, term, 1, artwork_service, user_id, reply_to=message.id)
             elif type_ == "music_link":
                 status_msg = await send_message(bot, chat_id, "🔍 *در حال بررسی پیوند...*", reply_to_message_id=message.id)
                 resolved = await OdesliService.resolve_link(term)
@@ -228,17 +254,56 @@ async def on_message(message: Message):
                     # Generic search fallback
                     await handle_search(bot, chat_id, user_id, "track", text, api_client, search_cache_service, OFFLINE_MODE, reply_to=message.id)
 
-@bot.on_callback_query()
-async def on_callback(callback_query: CallbackQuery):
-    try:
-        await handle_callback(bot, callback_query, api_client, user_settings_service,
-                             artwork_service, search_cache_service, download_service,
-                             rate_limiter, download_rate_limiter, direct_download_service)
-    except Exception as e:
-        if "query is too old" in str(e).lower():
-            await bot.answer_callback_query(callback_query.id, text="⚠️ این جستجو منقضی شده است. لطفاً مجدداً جستجو کنید.", show_alert=True)
-        else:
-            logger.error(f"Callback error: {e}")
+async def main():
+    await lyrics_service.init_db()
+    logger.info(f"Bot starting on {PLATFORM}. Offline Mode: {OFFLINE_MODE}")
+
+    await bot.start()
+
+    if PLATFORM == "bale":
+        @bot.client.on_message()
+        async def on_bale_message(message):
+            await handle_message(message)
+
+        @bot.client.on_callback_query()
+        async def on_bale_callback(callback_query):
+            try:
+                await handle_callback(bot, callback_query, api_client, user_settings_service,
+                                     artwork_service, search_cache_service, download_service,
+                                     rate_limiter, download_rate_limiter, direct_download_service)
+            except Exception as e:
+                if "query is too old" in str(e).lower():
+                    await bot.answer_callback_query(callback_query.id, text="⚠️ این جستجو منقضی شده است. لطفاً مجدداً جستجو کنید.", show_alert=True)
+                else:
+                    logger.error(f"Callback error: {e}")
+
+    elif PLATFORM == "telegram":
+        from telethon import events
+        @bot.client.on(events.NewMessage)
+        async def on_tg_message(event):
+            # Adapt event to a message-like object if needed or just pass event
+            await handle_message(event)
+
+        @bot.client.on(events.CallbackQuery)
+        async def on_tg_callback(event):
+            try:
+                # Telethon event has 'data' and 'answer'
+                await handle_callback(bot, event, api_client, user_settings_service,
+                                     artwork_service, search_cache_service, download_service,
+                                     rate_limiter, download_rate_limiter, direct_download_service)
+            except Exception as e:
+                logger.error(f"TG Callback error: {e}")
+
+    logger.info("Bot is running...")
+
+    # Keep running
+    if PLATFORM == "telegram":
+        await bot.client.run_until_disconnected()
+    else:
+        # Bale run loop (balethon Client.run() is blocking, but we can use something else or just call it)
+        # Since we use bot.start() which is async, we need a way to keep it alive.
+        while True:
+            await asyncio.sleep(3600)
 
 def signal_handler(sig, frame):
     sys.exit(0)
@@ -247,11 +312,11 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    logger.info("ABRAAVA bot is starting...")
-    while True:
-        try:
-            bot.run()
-        except KeyboardInterrupt: break
-        except Exception as e:
-            logger.exception(f"Bot crashed: {e}")
-            time.sleep(60)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        logger.exception(f"Bot crashed: {e}")
+        time.sleep(60)
+        # We might want a real restart logic here

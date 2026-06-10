@@ -7,10 +7,9 @@ from typing import Optional, Dict, Any, Literal, List, Union, Tuple
 from pathlib import Path
 import aiosqlite
 
-from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY, FOOTER
+from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY, FOOTER, PLATFORM
 from core.logger import logger
 from core.http_client import HttpClient
-from balethon.objects import Message
 from utils.messages import edit_message
 
 
@@ -107,6 +106,8 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
                        method: Literal["GET", "POST", "PUT", "DELETE"] = "GET", payload: dict = None,
                        official: bool = False) -> Optional[Dict[str, Any]]:
     params = params or {}
+    if not official:
+        params["platform"] = PLATFORM
     if method == "GET" and not bypass_cache and not OFFLINE_MODE:
         cached = await _itunes_cache.get(endpoint, params)
         if cached: return cached
@@ -177,9 +178,9 @@ async def lookup_itunes(id: Union[int, str], entity: Optional[str] = None, bypas
 
 async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, mirror_url: str,
                      quality: str = None) -> Optional[Dict[str, Any]]:
-    payload = {"entityType": entity_type, "entityId": str(entity_id), "urlType": url_type, "mirrorUrl": mirror_url}
+    payload = {"entityType": entity_type, "entityId": str(entity_id), "urlType": url_type, "mirrorUrl": mirror_url, "platform": PLATFORM}
     if quality: payload["quality"] = quality
-    logger.info(f"Setting mirror: {entity_type} {entity_id} {url_type} -> {mirror_url} ({quality})")
+    logger.info(f"Setting mirror: {entity_type} {entity_id} {url_type} -> {mirror_url} ({quality}) for {PLATFORM}")
     return await fetch_itunes("mirror/set", method="POST", payload=payload)
 
 
@@ -198,7 +199,11 @@ async def get_cached_audio(track_id: Union[int, str], quality: str = None) -> Op
             return None
         url = data["mirrors"]['audioUrl']['url']
         logger.info(f"Cached audio found for {track_id}: {url}")
-        return url.split('<token>/')[1] if '<token>' in url else url
+        if '<token>' in url:
+            return url.split('<token>/')[1]
+        if url.startswith('tg://file/'):
+            return url[10:]
+        return url
     logger.info(f"No cached audio for {track_id} with quality {quality or '192'}")
     return None
 
@@ -207,7 +212,11 @@ async def get_cached_artwork(entity_type: str, entity_id: Union[int, str]) -> Op
     data = await get_mirror(entity_type, entity_id, 'artworkUrl')
     if data and data.get("mirrors", {}).get('artworkUrl'):
         url = data["mirrors"]['artworkUrl']['url']
-        return url.split('<token>/')[1] if '<token>' in url else url
+        if '<token>' in url:
+            return url.split('<token>/')[1]
+        if url.startswith('tg://file/'):
+            return url[10:]
+        return url
     return None
 
 
@@ -215,7 +224,11 @@ async def get_cached_preview(track_id: Union[int, str]) -> Optional[str]:
     data = await get_mirror('track', track_id, 'previewUrl')
     if data and data.get("mirrors", {}).get('previewUrl'):
         url = data["mirrors"]['previewUrl']['url']
-        return url.split('<token>/')[1] if '<token>' in url else url
+        if '<token>' in url:
+            return url.split('<token>/')[1]
+        if url.startswith('tg://file/'):
+            return url[10:]
+        return url
     return None
 
 

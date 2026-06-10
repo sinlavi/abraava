@@ -3,10 +3,9 @@ import io
 import logging
 import asyncio
 from typing import Optional, Union, Dict, Any, List, Tuple
-from balethon import Client
-from balethon.objects import Message, InlineKeyboard, InlineKeyboardButton
 from core.logger import logger
 from core.http_client import HttpClient
+from core.config import PLATFORM
 from services.api_client import APIClient
 from crawlers.itunes import set_mirror, get_mirror
 from crawlers.youtube import get_artist_image
@@ -39,9 +38,12 @@ class ArtworkService:
 
                 if artwork_data:
                     cached_url = artwork_data.get('url') if isinstance(artwork_data, dict) else artwork_data
-                    if cached_url and '<token>' in cached_url:
-                        return cached_url.split('<token>/')[-1]
-                    return cached_url
+                    if cached_url:
+                        if '<token>' in cached_url:
+                            return cached_url.split('<token>/')[-1]
+                        if cached_url.startswith('tg://file/'):
+                            return cached_url[10:]
+                        return cached_url
             return None
         except Exception as e:
             logger.error(f"Error getting cached artwork: {e}")
@@ -54,7 +56,10 @@ class ArtworkService:
             if isinstance(entity_id, str) and entity_id.startswith(("yt_", "sc_", "sp_")):
                 return False
 
-            artwork_url = f'https://tapi.bale.ai/file/bot<token>/{file_id}'
+            if PLATFORM == "telegram":
+                artwork_url = f'tg://file/{file_id}'
+            else:
+                artwork_url = f'https://tapi.bale.ai/file/bot<token>/{file_id}'
             result = await set_mirror(entity_type, str(entity_id), 'artworkUrl', artwork_url)
             return bool(result)
         except Exception as e:
@@ -122,7 +127,7 @@ class ArtworkService:
                     self.auto_download_mode[user_id] = time.time() + 900 # 15 mins
                     text = f"⚠️ *خطا در نمایش کاور*\nآیا مایلید مجدداً تلاش شود؟ (در صورت تایید کاور مستقیماً دانلود و آپلود می‌شود)"
                     retry_markup = [
-                        [InlineKeyboardButton(text="✅ بله، تلاش مجدد", callback_data=f"force_artwork:{entity_type}:{entity_id}:{caption[:30]}:u{user_id}")],
+                        [{"text": "✅ بله، تلاش مجدد", "callback_data": f"force_artwork:{entity_type}:{entity_id}:{caption[:30]}:u{user_id}"}],
                         [create_close_button(user_id)]
                     ]
                     await send_message(bot, chat_id, text, reply_markup=retry_markup)

@@ -1,4 +1,3 @@
-from balethon.objects import InlineKeyboard, Message, InlineKeyboardButton
 from core.config import FOOTER
 from bot.keyboards import create_close_button, create_info_channel_button, create_cancel_button
 import logging
@@ -15,7 +14,7 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
 
         # Flatten and check for close button in all nested lists
         has_close = any(
-            getattr(btn, 'callback_data', '') == 'close'
+            (btn.get('callback_data') if isinstance(btn, dict) else getattr(btn, 'callback_data', '')) == 'close'
             for row in markup
             if isinstance(row, list)
             for btn in row
@@ -25,13 +24,13 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
             if task_id:
                 markup.append([create_cancel_button(task_id)])
             elif show_cancel:
-                markup.append([InlineKeyboardButton(text="⏹️ لغو عملیات", callback_data="close")])
+                markup.append([{"text": "⏹️ لغو عملیات", "callback_data": "close"}])
             elif show_info:
                 markup.append([create_info_channel_button()])
 
             # Final check just in case something was added but not 'close'
             has_close_now = any(
-                getattr(btn, 'callback_data', '') == 'close'
+                (btn.get('callback_data') if isinstance(btn, dict) else getattr(btn, 'callback_data', '')) == 'close'
                 for row in markup
                 if isinstance(row, list)
                 for btn in row
@@ -39,13 +38,17 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
             if not has_close_now:
                 markup.append([create_close_button()])
 
-        return InlineKeyboard(*markup)
+        return markup
     return reply_markup
 
 async def safe_delete(message, attempt=1):
     if not message: return
     try:
-        await message.delete()
+        # Assuming message has a delete method or we need to use bot.delete_message
+        if hasattr(message, "delete"):
+            await message.delete()
+        elif hasattr(message, "client") and hasattr(message, "id") and hasattr(message, "chat"):
+             await message.client.delete_message(message.chat.id, message.id)
     except Exception as e:
         err = str(e).lower()
         if "message not found" in err: return
@@ -67,11 +70,22 @@ async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, sh
 
 async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False, show_cancel=False, attempt=1):
     if not message: return None
+
+    # Extract bot and IDs
+    if hasattr(message, "client"):
+        bot = message.client
+    else:
+        # Fallback if it's already a BotClient or something else
+        return message
+
     chat_id = message.chat.id
+    message_id = message.id
+
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
 
     try:
-        return await message.edit(text=f"{text}{FOOTER}", reply_markup=markup)
+        # Use BotClient.edit_message instead of direct message.edit to ensure compatibility
+        return await bot.edit_message(chat_id, message_id, text=f"{text}{FOOTER}", reply_markup=markup)
     except Exception as e:
         err_msg = str(e).lower()
 
@@ -79,7 +93,7 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
             return message
 
         if "message not found" in err_msg:
-            return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
+            return await send_message(bot, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
         max_attempts = 10 if force_edit else 3
         if ("rate limit" in err_msg or "too many" in err_msg) and attempt < max_attempts:
@@ -96,9 +110,12 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
         except Exception:
             pass
 
-        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
+        return await send_message(bot, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
-async def reply_message(message: Message, text: str, reply_markup=None, show_info=False):
+async def reply_message(message, text: str, reply_markup=None, show_info=False):
     markup = _prepare_markup(reply_markup, False, show_info)
-    await message.client.send_chat_action(message.chat.id, "typing")
-    return await message.reply(text=f"{text}{FOOTER}", reply_markup=markup)
+    bot = message.client
+    await bot.send_chat_action(message.chat.id, "typing")
+    # Bale and Telethon Message objects usually have a reply method,
+    # but for abstraction we use bot.send_message with reply_to
+    return await bot.send_message(message.chat.id, text=f"{text}{FOOTER}", reply_markup=markup, reply_to_message_id=message.id)

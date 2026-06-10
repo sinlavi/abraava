@@ -2,8 +2,6 @@ import time
 from typing import Optional, List, Dict
 from core.logger import logger
 from services.api_client import APIClient
-from balethon import Client
-from balethon.objects import Message
 from core.config import INFO_CHANNEL_ID
 
 class BaleUploadErrorNotifier:
@@ -14,7 +12,7 @@ class BaleUploadErrorNotifier:
         self.last_error_time = 0
         self.error_cooldown = 300
 
-    async def notify_upload_error(self, bot: Client, error_message: str = "", album_download_callback: callable = None):
+    async def notify_upload_error(self, bot, error_message: str = "", album_download_callback: callable = None):
         if not INFO_CHANNEL_ID:
             return
 
@@ -64,7 +62,7 @@ class BaleUploadErrorNotifier:
         except Exception as e:
             logger.error(f"Failed to send upload error notification: {e}")
 
-    async def clear_upload_error_notification(self, bot: Client):
+    async def clear_upload_error_notification(self, bot):
         if not INFO_CHANNEL_ID or not self.error_active:
             return
 
@@ -78,6 +76,6 @@ class BaleUploadErrorNotifier:
             self.error_active = False
             self.notification_message_id = None
 
-    async def check_and_clear_if_resolved(self, bot: Client, test_success: bool = False):
+    async def check_and_clear_if_resolved(self, bot, test_success: bool = False):
         if self.error_active and test_success:
             await self.clear_upload_error_notification(bot)
