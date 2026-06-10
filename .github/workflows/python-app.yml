@@ -11,7 +11,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  clear-history:
+    permissions:
+      actions: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete all workflow runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🗑️ Clearing workflow run history..."
+          
+          # Get all workflow run IDs
+          RUN_IDS=$(gh run list --limit 1000 --json databaseId --jq '.[].databaseId')
+          
+          if [ -z "$RUN_IDS" ]; then
+            echo "✅ No workflow runs to delete"
+          else
+            COUNT=$(echo "$RUN_IDS" | wc -w)
+            echo "Found $COUNT workflow runs to delete"
+            
+            # Delete each run
+            for RUN_ID in $RUN_IDS; do
+              echo "Deleting run ID: $RUN_ID"
+              gh run delete $RUN_ID --yes || echo "Failed to delete $RUN_ID"
+            done
+            
+            echo "✅ Deletion complete"
+          fi
+
   run-bot:
+    needs: clear-history
     permissions:
       contents: write
       actions: write
@@ -44,7 +75,6 @@ jobs:
           cd ~/ffmpeg-bin
           
           echo "📥 Downloading FFmpeg from GitHub releases..."
-          # Using BtbN's FFmpeg builds (official GitHub releases, very reliable)
           wget --timeout=60 --tries=3 --retry-connrefused --progress=dot:giga \
             https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
           
@@ -62,7 +92,6 @@ jobs:
           sudo cp ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/
           sudo chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
           
-          # Cleanup
           rm -rf ffmpeg-master-latest-linux64-gpl*
           echo "✅ FFmpeg installed to /usr/local/bin"
 
@@ -75,7 +104,6 @@ jobs:
             echo "✅ FFprobe version: $(ffprobe -version | head -n1)"
             echo "📍 FFprobe path: $(which ffprobe)"
             
-            # Test FFmpeg functionality
             ffmpeg -f lavfi -i nullsrc=s=100x100:d=1 -f null - 2>&1 | grep -q "filter" && echo "✅ FFmpeg working correctly"
           else
             echo "❌ FFmpeg installation failed"
@@ -174,10 +202,6 @@ jobs:
           OFFLINE_MODE: ${{ secrets.OFFLINE_MODE }}
           DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
           INFO_CHANNEL_ID: ${{ secrets.INFO_CHANNEL_ID }}
-          # Proxy configuration (uncomment if your bot needs to use WARP)
-          # ALL_PROXY: socks5://127.0.0.1:1080
-          # HTTP_PROXY: socks5://127.0.0.1:1080
-          # HTTPS_PROXY: socks5://127.0.0.1:1080
         run: |
           echo "🚀 Starting bot..."
           python main.py
