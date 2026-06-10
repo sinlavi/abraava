@@ -53,4 +53,4 @@ async def parse_search_query(text: str) -> Optional[Tuple[str, str]]:
     elif text.startswith("/sp"): return "sp", text[3:].strip() or None
     elif text.startswith("/itunes"): return "itunes_official", text[7:].strip() or None
 
-    return "track", text
+    return "all", text
