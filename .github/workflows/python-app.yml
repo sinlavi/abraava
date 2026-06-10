@@ -32,22 +32,33 @@ jobs:
           REPO="${{ github.repository }}"
           echo "Repository: $REPO"
           
-          # Get all workflow run IDs
+          # Get all workflow run IDs (excluding current run)
+          CURRENT_RUN="${{ github.run_id }}"
+          echo "Current run ID: $CURRENT_RUN (will be preserved)"
+          
           RUN_IDS=$(gh run list --repo $REPO --limit 1000 --json databaseId --jq '.[].databaseId')
           
           if [ -z "$RUN_IDS" ]; then
             echo "✅ No workflow runs to delete"
           else
-            COUNT=$(echo "$RUN_IDS" | wc -w)
-            echo "Found $COUNT workflow runs to delete"
-            
-            # Delete each run
+            COUNT=0
             for RUN_ID in $RUN_IDS; do
+              # Skip current run
+              if [ "$RUN_ID" = "$CURRENT_RUN" ]; then
+                echo "Skipping current run: $RUN_ID"
+                continue
+              fi
+              
               echo "Deleting run ID: $RUN_ID"
-              gh run delete $RUN_ID --repo $REPO --yes || echo "Failed to delete $RUN_ID"
+              if gh run delete $RUN_ID --repo $REPO --confirm 2>/dev/null; then
+                echo "✅ Deleted run $RUN_ID"
+                COUNT=$((COUNT + 1))
+              else
+                echo "⚠️ Failed to delete run $RUN_ID (might be protected or already deleted)"
+              fi
             done
             
-            echo "✅ Deletion complete"
+            echo "✅ Deletion complete. Deleted $COUNT runs."
           fi
 
   run-bot:
