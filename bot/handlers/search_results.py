@@ -14,7 +14,7 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
     end_idx = start_idx + ITEMS_PER_PAGE
     page_items = results_list[start_idx:end_idx]
 
-    type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ","all":""}
+    type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ","all":"آهنگ، آلبوم، هنرمند"}
 
     header = (
         f"🔍 *نتایج جستجو برای {type_fa_map.get(type_, type_)}:*\n"
