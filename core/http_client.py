@@ -8,7 +8,7 @@ class HttpClient:
     async def get_session(cls) -> aiohttp.ClientSession:
         if cls._session is None or cls._session.closed:
             connector = aiohttp.TCPConnector(ssl=False)
-            cls._session = aiohttp.ClientSession(connector=connector)
+            cls._session = aiohttp.ClientSession(connector=connector, trust_env=True)
         return cls._session
 
     @classmethod

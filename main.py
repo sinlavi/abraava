@@ -1,4 +1,4 @@
-from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN
+from core.config import BOT_TOKEN, INFO_CHANNEL_ID, PROXY, OFFLINE_MODE, API_BASE_URL, API_TOKEN
 from balethon import Client
 from balethon.objects import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboard
 from core.logger import logger
@@ -49,7 +49,7 @@ album_tracker = AlbumDownloadTracker(api_client)
 tagging_service = TaggingService()
 error_notifier = BaleUploadErrorNotifier(api_client)
 
-bot = Client(token=BOT_TOKEN)
+bot = Client(token=BOT_TOKEN, proxy=PROXY)
 download_service = DownloadService(bot, api_client, user_settings_service, artwork_service,
                                    tagging_service, error_notifier, album_tracker, download_rate_limiter)
 direct_download_service = DirectDownloadService(bot, tagging_service)

@@ -11,12 +11,12 @@ FOOTER = f'\n\n{INFO_CHANNEL_USERNAME}\n{BOT_USERNAME}'
 DEEP_LINK_BASE = f"https://ble.ir/{BOT_USERNAME.lstrip('@')}?start="
 
 # Connection Settings
-PROXY = os.getenv("proxy")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+PROXY = os.getenv("proxy", "socks5h://127.0.0.1:1080")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "1011430416:Ur740PtSXvB3cIiA6ZfRzQLKPYLnBnYhy8w")
 
 # Database and Channel IDs
-DB_CHANNEL_ID = os.getenv("DB_CHANNEL_ID")
-INFO_CHANNEL_ID = os.getenv("INFO_CHANNEL_ID", "5524168471")
+DB_CHANNEL_ID = os.getenv("DB_CHANNEL_ID", "")
+INFO_CHANNEL_ID = os.getenv("INFO_CHANNEL_ID", "abraava")
 ADMIN_IDS = [234591600]
 
 # API Settings
