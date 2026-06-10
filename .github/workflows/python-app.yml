@@ -17,14 +17,23 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          
       - name: Delete all workflow runs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "🗑️ Clearing workflow run history..."
           
+          # Set repository explicitly
+          REPO="${{ github.repository }}"
+          echo "Repository: $REPO"
+          
           # Get all workflow run IDs
-          RUN_IDS=$(gh run list --limit 1000 --json databaseId --jq '.[].databaseId')
+          RUN_IDS=$(gh run list --repo $REPO --limit 1000 --json databaseId --jq '.[].databaseId')
           
           if [ -z "$RUN_IDS" ]; then
             echo "✅ No workflow runs to delete"
@@ -35,7 +44,7 @@ jobs:
             # Delete each run
             for RUN_ID in $RUN_IDS; do
               echo "Deleting run ID: $RUN_ID"
-              gh run delete $RUN_ID --yes || echo "Failed to delete $RUN_ID"
+              gh run delete $RUN_ID --repo $REPO --yes || echo "Failed to delete $RUN_ID"
             done
             
             echo "✅ Deletion complete"
@@ -219,7 +228,7 @@ jobs:
           
           sleep 10
           
-          gh workflow run "${{ github.workflow }}" --ref "${{ github.ref_name }}"
+          gh workflow run "${{ github.workflow }}" --ref "${{ github.ref_name }}" --repo "${{ github.repository }}"
           
           echo "✅ Restart triggered successfully"
           exit 1
