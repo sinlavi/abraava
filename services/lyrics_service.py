@@ -68,16 +68,20 @@ class LyricsService:
     async def get_lyrics(self, track_id, title, artist, album=None):
         # Ensure track_id is a string
         track_id = str(track_id)
+        logger.info(f"Retrieving lyrics for: {title} - {artist} (ID: {track_id})")
 
         # 1. Check Local Cache
         cached_lyrics = await self._get_cached_lyrics(track_id)
         if cached_lyrics:
+            logger.info(f"Lyrics found in local cache for {track_id}")
             return cached_lyrics
 
         # 2. Check 3rah API (Central Cache)
         try:
+            logger.info(f"Checking 3rah central API for lyrics (ID: {track_id})")
             central_lyrics = await get_3rah_lyrics(track_id)
             if central_lyrics and (central_lyrics.get("synced") or central_lyrics.get("plain")):
+                logger.info(f"Lyrics found in 3rah API for {track_id}")
                 # Cache locally for faster subsequent access
                 await self._cache_lyrics(track_id, central_lyrics, title, artist, push_to_central=False)
                 return central_lyrics
@@ -85,15 +89,20 @@ class LyricsService:
             logger.error(f"Error fetching lyrics from 3rah API: {e}")
 
         # 3. Fetch from LRCLIB
+        logger.info(f"Crawling LRCLIB for lyrics: {title} - {artist}")
         lyrics_dict = await self._fetch_from_lrclib(title, artist, album)
 
         # 4. Fallback to YTMusic
         if not lyrics_dict or (not lyrics_dict.get("synced") and not lyrics_dict.get("plain")):
+            logger.info(f"LRCLIB failed, falling back to YTMusic: {title} - {artist}")
             lyrics_dict = await self._fetch_from_ytmusic(track_id, title, artist)
 
         if lyrics_dict and (lyrics_dict.get("synced") or lyrics_dict.get("plain")):
+            logger.info(f"Lyrics successfully crawled for {track_id}")
             # 5. Cache it (both locally and on 3rah API)
             await self._cache_lyrics(track_id, lyrics_dict, title, artist)
+        else:
+            logger.warning(f"No lyrics found for {track_id} from any source")
 
         return lyrics_dict
 
@@ -113,7 +122,12 @@ class LyricsService:
 
         if push_to_central:
             try:
-                await set_3rah_lyrics(track_id, lyrics_dict)
+                logger.info(f"Pushing lyrics for {track_id} to 3rah central API")
+                result = await set_3rah_lyrics(track_id, lyrics_dict)
+                if result and result.get("success"):
+                    logger.info(f"Successfully synced lyrics for {track_id} to 3rah API")
+                else:
+                    logger.warning(f"Failed to sync lyrics for {track_id} to 3rah API: {result}")
             except Exception as e:
                 logger.error(f"Error pushing lyrics to 3rah API: {e}")
 

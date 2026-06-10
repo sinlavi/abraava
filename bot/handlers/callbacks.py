@@ -217,18 +217,20 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         else:
             await bot.answer_callback_query(callback_query.id, text="⏳ در حال آماده‌سازی...")
             status_msg = await send_message(bot, chat_id, "⏳ *در حال آماده‌سازی دانلود...*", show_cancel=True)
-            status_msg, result = await download_service.download_and_send_track(chat_id, track_id, user_id, status_msg=status_msg)
-            if isinstance(result, tuple) and result[0] == "size_limit":
-                await _handle_size_limit(bot, chat_id, track_id, result[1], user_id, status_msg)
+            status_msg, _ = await download_service.download_and_send_track(chat_id, track_id, user_id, status_msg=status_msg)
 
     elif data.startswith("dl_q:"):
         quality, track_id = parts[1], parts[2]
         if track_id.isdigit(): track_id = int(track_id)
         await bot.answer_callback_query(callback_query.id, text=f"⏳ دانلود با کیفیت {quality}...")
         # Don't delete, reuse the message as status_msg
-        status_msg, result = await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality, status_msg=callback_query.message)
-        if isinstance(result, tuple) and result[0] == "size_limit":
-            await _handle_size_limit(bot, chat_id, track_id, result[1], user_id, status_msg)
+        status_msg, _ = await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality, status_msg=callback_query.message)
+
+    elif data.startswith("dl_fb:"):
+        quality, track_id = parts[1], parts[2]
+        if track_id.isdigit(): track_id = int(track_id)
+        await bot.answer_callback_query(callback_query.id, text=f"⏳ دانلود با کیفیت {quality}...")
+        status_msg, _ = await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality, status_msg=callback_query.message, skip_size_check=True)
 
     elif data.startswith("preview:"):
         track_id = parts[1]
@@ -260,26 +262,13 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service, quality=quality, status_msg=callback_query.message))
 
     elif data.startswith("retry_failed:"):
-        coll_id, failed_ids_str = parts[1], parts[2]
-        failed_ids = failed_ids_str.split(",")
+        failed_ids = parts[1].split(",")
         await bot.answer_callback_query(callback_query.id, text="🔄 تلاش مجدد برای قطعات ناموفق...")
-
-        # Sequentially download failed tracks
         settings = await user_settings_service.get_settings(user_id)
         quality_value = settings.download_quality.value
         if quality_value == "ask": quality_value = "192"
-
-        retry_tracks_info = []
-        for tid in failed_ids:
-            if tid:
-                track_data = await crawlers.utils.get_track(tid)
-                if track_data and track_data.get("results"):
-                    retry_tracks_info.append(track_data["results"][0])
-
-        if retry_tracks_info:
-            asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service, quality=quality_value, status_msg=callback_query.message, retry_tracks_info=retry_tracks_info))
-        else:
-            await bot.answer_callback_query(callback_query.id, text="❌ اطلاعات آهنگ‌ها یافت نشد", show_alert=True)
+        # Call download_album with retry_ids for systematic batch retry
+        asyncio.create_task(download_album(bot, chat_id, None, user_id, download_service, quality=quality_value, status_msg=callback_query.message, retry_ids=failed_ids))
 
     elif data.startswith("cancel_album:"):
         coll_id = parts[1]
@@ -296,12 +285,6 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         await safe_delete(callback_query.message)
 
     # Retry logic
-    elif data.startswith("dl_low_q:"):
-        quality, track_id = parts[1], parts[2]
-        if track_id.isdigit(): track_id = int(track_id)
-        await bot.answer_callback_query(callback_query.id, text=f"⏳ دانلود با کیفیت {quality}...")
-        await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality, status_msg=callback_query.message)
-
     elif data.startswith("retry:"):
         retry_data = data[6:]
         if retry_data.startswith("search_retry:"):
@@ -315,17 +298,6 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             if quality_value == "ask": quality_value = "192"
             status_msg, _ = await download_service.download_and_send_track(chat_id, tid, user_id, selected_quality=quality_value)
         await safe_delete(callback_query.message)
-
-async def _handle_size_limit(bot, chat_id, track_id, best_q, user_id, status_msg):
-    if best_q:
-        text = f"⚠️ *حجم فایل با کیفیت انتخابی بیش از ۲۰ مگابایت است.*\n\nآیا مایلید با کیفیت پایین‌تر ({best_q} kbps) که محدودیت بله را رعایت می‌کند دانلود کنید؟"
-        markup = [
-            [InlineKeyboardButton(text=f"✅ بله، دانلود با کیفیت {best_q}", callback_data=f"dl_low_q:{best_q}:{track_id}:u{user_id}")],
-            [create_close_button(user_id)]
-        ]
-        await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
-    else:
-        await edit_message(status_msg, "❌ *حجم این آهنگ حتی با پایین‌ترین کیفیت هم بیش از ۲۰ مگابایت است و قابل ارسال در بله نیست.*", reply_markup=InlineKeyboard(*[[create_close_button(user_id)]]))
 
 async def update_settings_msg(bot, message, user_id, user_settings_service):
     settings = await user_settings_service.get_settings(user_id)

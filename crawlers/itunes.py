@@ -127,12 +127,18 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
         url = f"{base_url}{api_path}"
 
         headers = {"User-Agent": random.choice(USER_AGENTS)}
-        logger.info(f"iTunes Request [{method}]: {url} - Params: {params}")
+        logger.info(f"iTunes/3rah Request [{method}]: {url} - Params: {params}")
         try:
             if method == "GET":
                 async with session.get(url, params=params, headers=headers, ssl=False, proxy=PROXY, timeout=10) as resp:
+                    logger.info(f"iTunes/3rah Response [{resp.status}]: {url}")
                     if resp.status == 200:
-                        data = await resp.json()
+                        try:
+                            data = await resp.json()
+                        except:
+                            text = await resp.text()
+                            data = json.loads(text)
+
                         if not is_mirror:
                             await _itunes_cache.set(endpoint, params, data)
                             endpoint_manager.report_success(base_url)
@@ -142,6 +148,7 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
             else:
                 async with getattr(session, method.lower())(url, params=params, json=payload, headers=headers,
                                                             ssl=False, proxy=PROXY, timeout=10) as resp:
+                    logger.info(f"iTunes/3rah Response [{resp.status}]: {url}")
                     if resp.status == 200: return await resp.json()
         except Exception as e:
             logger.error(f"iTunes fetch failed (attempt {attempt + 1}): {e}")
@@ -220,3 +227,9 @@ async def get_lyrics(track_id: Union[int, str]) -> Optional[Dict[str, Any]]:
 async def set_lyrics(track_id: Union[int, str], lyrics: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     logger.info(f"Setting lyrics for {track_id}")
     return await fetch_itunes("lyrics/save", method="POST", payload={"id": str(track_id), "lyrics": lyrics})
+
+
+async def save_metadata(entity_type: str, data: Union[Dict, List]) -> Optional[Dict[str, Any]]:
+    endpoint = f"{entity_type}/save"
+    logger.info(f"Syncing {entity_type} metadata to 3rah API")
+    return await fetch_itunes(endpoint, method="POST", payload=data)

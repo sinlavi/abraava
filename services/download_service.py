@@ -9,7 +9,7 @@ from balethon.objects import Message, InlineKeyboardButton, InlineKeyboard
 from core.logger import logger
 from core.config import OFFLINE_MODE, DEFAULT_QUALITY, FOOTER
 from core.http_client import HttpClient
-from models.schemas import DownloadQuality, estimate_size_mb, get_best_quality_for_size
+from models.schemas import DownloadQuality
 from crawlers.utils import get_track, get_or_crawl_collection, get_or_crawl_collection_tracks
 from crawlers.youtube import search_youtube_track, download_audio
 from crawlers.itunes import get_cached_audio, set_mirror, get_cached_artwork, get_mirror
@@ -42,10 +42,32 @@ class DownloadService:
             return status_msg
         return await send_message(self.bot, chat_id, full_text, reply_markup=reply_markup, show_cancel=not is_batch)
 
+    @staticmethod
+    def estimate_mp3_size(duration_ms: int, bitrate_kbps: str) -> float:
+        try:
+            bitrate = int(bitrate_kbps)
+            duration_sec = duration_ms / 1000
+            # bitrate (kbps) * duration (s) / 8 = Size (KB)
+            size_mb = (bitrate * duration_sec) / (8 * 1024)
+            return round(size_mb, 2)
+        except:
+            return 0.0
+
+    def get_safe_quality(self, duration_ms: int, preferred_quality: str) -> Optional[str]:
+        qualities = ["320", "192", "128"]
+        if preferred_quality not in qualities:
+            preferred_quality = "192"
+
+        idx = qualities.index(preferred_quality)
+        for q in qualities[idx:]:
+            if self.estimate_mp3_size(duration_ms, q) < 19.5: # Stay safely under 20MB
+                return q
+        return None
+
     async def download_and_send_track(self, chat_id, track_id, user_id, status_msg=None,
                                       is_batch=False, album_cover_bytes=None, collection_id=None,
                                       selected_quality=None, track_name_hint=None, track_index=None,
-                                      status_prefix="", reply_markup=None):
+                                      status_prefix="", reply_markup=None, skip_size_check=False):
 
         # If no status_msg provided, use the first update to create it to avoid redundant send/delete
         if status_msg is None:
@@ -79,14 +101,34 @@ class DownloadService:
         quality_value = selected_quality or settings.download_quality.value
         if quality_value == "ask": quality_value = "192"
 
-        # Size limit check (20MB)
+        # 20MB Size Check
         duration_ms = int(track.get('trackTimeMillis') or 0)
-        if duration_ms > 0:
-            estimated_size = estimate_size_mb(duration_ms, quality_value)
-            if estimated_size > 20:
-                logger.warning(f"Track {track_id} estimated size {estimated_size:.2f}MB exceeds 20MB limit at {quality_value}kbps")
-                best_q = get_best_quality_for_size(duration_ms, 20)
-                return status_msg, ("size_limit", best_q)
+        if not skip_size_check and duration_ms > 0:
+            est_size = self.estimate_mp3_size(duration_ms, quality_value)
+            if est_size >= 19.5:
+                safe_q = self.get_safe_quality(duration_ms, quality_value)
+                if is_batch:
+                    if safe_q:
+                        logger.info(f"Auto-falling back to {safe_q}kbps for track {track_id} (est: {est_size}MB)")
+                        quality_value = safe_q
+                        status_prefix = f"⚠️ کاهش کیفیت به {safe_q} جهت رعایت محدودیت حجم\n{status_prefix}"
+                    else:
+                        status_msg = await self._update_status(chat_id, status_msg, "❌ حجم آهنگ بیش از حد مجاز است.", status_prefix, reply_markup, is_batch)
+                        return status_msg, False
+                else:
+                    if safe_q:
+                        text = (f"⚠️ *محدودیت حجم بله (۲۰ مگابایت)*\n\n"
+                                f"حجم تخمینی این آهنگ با کیفیت {quality_value}kbps حدود {est_size} مگابایت است که بیش از حد مجاز می‌باشد.\n"
+                                f"آیا مایلید با کیفیت {safe_q}kbps دانلود شود؟")
+                        markup = [
+                            [InlineKeyboardButton(text=f"✅ بله ({safe_q} kbps)", callback_data=f"dl_fb:{safe_q}:{track_id}:u{user_id}")],
+                            [InlineKeyboardButton(text="❌ لغو", callback_data="close")]
+                        ]
+                        await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
+                        return status_msg, False
+                    else:
+                        status_msg = await self._update_status(chat_id, status_msg, "❌ متأسفانه حجم این آهنگ حتی با کمترین کیفیت بیش از ۲۰ مگابایت است و امکان ارسال در بله وجود ندارد.", status_prefix, reply_markup, is_batch)
+                        return status_msg, False
 
         caption = self._build_caption(track, quality_value)
 
