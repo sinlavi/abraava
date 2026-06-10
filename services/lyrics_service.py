@@ -6,6 +6,7 @@ import os
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from crawlers.youtube import search_youtube_track
+from crawlers.itunes import get_lyrics as get_3rah_lyrics, set_lyrics as set_3rah_lyrics
 from pathlib import Path
 import http.cookiejar
 
@@ -68,20 +69,30 @@ class LyricsService:
         # Ensure track_id is a string
         track_id = str(track_id)
 
-        # 1. Check Cache
+        # 1. Check Local Cache
         cached_lyrics = await self._get_cached_lyrics(track_id)
         if cached_lyrics:
             return cached_lyrics
 
-        # 2. Fetch from LRCLIB
+        # 2. Check 3rah API (Central Cache)
+        try:
+            central_lyrics = await get_3rah_lyrics(track_id)
+            if central_lyrics and (central_lyrics.get("synced") or central_lyrics.get("plain")):
+                # Cache locally for faster subsequent access
+                await self._cache_lyrics(track_id, central_lyrics, title, artist, push_to_central=False)
+                return central_lyrics
+        except Exception as e:
+            logger.error(f"Error fetching lyrics from 3rah API: {e}")
+
+        # 3. Fetch from LRCLIB
         lyrics_dict = await self._fetch_from_lrclib(title, artist, album)
 
-        # 3. Fallback to YTMusic
+        # 4. Fallback to YTMusic
         if not lyrics_dict or (not lyrics_dict.get("synced") and not lyrics_dict.get("plain")):
             lyrics_dict = await self._fetch_from_ytmusic(track_id, title, artist)
 
         if lyrics_dict and (lyrics_dict.get("synced") or lyrics_dict.get("plain")):
-            # 4. Cache it
+            # 5. Cache it (both locally and on 3rah API)
             await self._cache_lyrics(track_id, lyrics_dict, title, artist)
 
         return lyrics_dict
@@ -92,13 +103,19 @@ class LyricsService:
                 row = await cursor.fetchone()
                 return {"synced": row[0], "plain": row[1]} if row else None
 
-    async def _cache_lyrics(self, track_id, lyrics_dict, title, artist):
+    async def _cache_lyrics(self, track_id, lyrics_dict, title, artist, push_to_central=True):
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 "INSERT OR REPLACE INTO lyrics (track_id, synced_lyrics, plain_lyrics, title, artist) VALUES (?, ?, ?, ?, ?)",
                 (str(track_id), lyrics_dict.get("synced"), lyrics_dict.get("plain"), title, artist)
             )
             await db.commit()
+
+        if push_to_central:
+            try:
+                await set_3rah_lyrics(track_id, lyrics_dict)
+            except Exception as e:
+                logger.error(f"Error pushing lyrics to 3rah API: {e}")
 
     async def _fetch_from_lrclib(self, title, artist, album=None):
         try:
