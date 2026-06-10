@@ -99,7 +99,7 @@ class ArtworkService:
                 logger.error(f"Error downloading artwork: {e}")
         return None
 
-    async def send_artwork_photo(self, bot: Client, chat_id: int, artwork_data: Union[str, bytes],
+    async def send_artwork_photo(self, bot, chat_id: int, artwork_data: Union[str, bytes],
                                   caption: str, reply_markup=None,
                                   entity_type: str = None, entity_id: int = None,
                                   user_id: int = None):
@@ -151,7 +151,7 @@ class ArtworkService:
                 except: pass
         return None
 
-    async def force_manual_artwork(self, bot: Client, chat_id: int, entity_type: str, entity_id: int, caption: str, user_id: int):
+    async def force_manual_artwork(self, bot, chat_id: int, entity_type: str, entity_id: int, caption: str, user_id: int):
         """Attempts to recovery artwork by direct download and upload when mirrors fail."""
         try:
             # 1. Get metadata to find the official URL if not provided
