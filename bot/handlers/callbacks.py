@@ -226,6 +226,12 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         # Don't delete, reuse the message as status_msg
         status_msg, _ = await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality, status_msg=callback_query.message)
 
+    elif data.startswith("dl_fb:"):
+        quality, track_id = parts[1], parts[2]
+        if track_id.isdigit(): track_id = int(track_id)
+        await bot.answer_callback_query(callback_query.id, text=f"⏳ دانلود با کیفیت {quality}...")
+        status_msg, _ = await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality, status_msg=callback_query.message, skip_size_check=True)
+
     elif data.startswith("preview:"):
         track_id = parts[1]
         if track_id.isdigit(): track_id = int(track_id)
@@ -258,14 +264,11 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     elif data.startswith("retry_failed:"):
         failed_ids = parts[1].split(",")
         await bot.answer_callback_query(callback_query.id, text="🔄 تلاش مجدد برای قطعات ناموفق...")
-        await safe_delete(callback_query.message)
         settings = await user_settings_service.get_settings(user_id)
         quality_value = settings.download_quality.value
         if quality_value == "ask": quality_value = "192"
-        for tid in failed_ids:
-            if tid:
-                asyncio.create_task(download_service.download_and_send_track(chat_id, tid, user_id, selected_quality=quality_value))
-                await asyncio.sleep(0.5)
+        # Call download_album with retry_ids for systematic batch retry
+        asyncio.create_task(download_album(bot, chat_id, None, user_id, download_service, quality=quality_value, status_msg=callback_query.message, retry_ids=failed_ids))
 
     elif data.startswith("cancel_album:"):
         coll_id = parts[1]

@@ -151,7 +151,11 @@ class MusicAdapter:
             elif entity_type == "album": items = results.get("albums", {}).get("items", [])
             elif entity_type == "artist": items = results.get("artists", {}).get("items", [])
 
-            return [self._sp_to_itunes(item, entity_type) for item in items]
+            results = [self._sp_to_itunes(item, entity_type) for item in items]
+            if results:
+                from crawlers.itunes import save_metadata
+                asyncio.create_task(save_metadata(entity_type, results))
+            return results
         except Exception as e:
             logger.error(f"Spotify search error: {e}")
             return []
@@ -170,7 +174,11 @@ class MusicAdapter:
                 results = await loop.run_in_executor(None, lambda: self.ytm.search(term, limit=limit))
                 results = [r for r in results if r.get('resultType') in ['video', 'song']] if entity_type == 'track' else results
 
-            return [self._ytm_to_itunes(item, entity_type) for item in results]
+            results = [self._ytm_to_itunes(item, entity_type) for item in results]
+            if results:
+                from crawlers.itunes import save_metadata
+                asyncio.create_task(save_metadata(entity_type, results))
+            return results
         except Exception as e:
             logger.error(f"YTM search error: {e}")
             return []
@@ -183,7 +191,11 @@ class MusicAdapter:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = await loop.run_in_executor(None, lambda: ydl.extract_info(f"scsearch{limit}:{term}", download=False))
                 if info and 'entries' in info:
-                    return [self._sc_to_itunes(entry) for entry in info['entries']]
+                    results = [self._sc_to_itunes(entry) for entry in info['entries']]
+                    if results:
+                        from crawlers.itunes import save_metadata
+                        asyncio.create_task(save_metadata('track', results))
+                    return results
         except Exception as e:
             logger.error(f"SoundCloud search error: {e}")
         return []
@@ -196,7 +208,11 @@ class MusicAdapter:
             # Strip prefix if present
             if track_id.startswith("sp_"): track_id = track_id[3:]
             track = await loop.run_in_executor(None, lambda: self.sp.track(track_id))
-            return self._sp_to_itunes(track, "track")
+            result = self._sp_to_itunes(track, "track")
+            if result:
+                from crawlers.itunes import save_metadata
+                asyncio.create_task(save_metadata('track', result))
+            return result
         except Exception as e:
             logger.error(f"Spotify get track error: {e}")
             return None
@@ -208,7 +224,11 @@ class MusicAdapter:
         try:
             if album_id.startswith("sp_"): album_id = album_id[3:]
             album = await loop.run_in_executor(None, lambda: self.sp.album(album_id))
-            return self._sp_to_itunes(album, "album")
+            result = self._sp_to_itunes(album, "album")
+            if result:
+                from crawlers.itunes import save_metadata
+                asyncio.create_task(save_metadata('album', result))
+            return result
         except Exception as e:
             logger.error(f"Spotify get album error: {e}")
             return None
@@ -294,7 +314,7 @@ class MusicAdapter:
                             YT_METADATA_METHODS.remove(method)
                             YT_METADATA_METHODS.insert(0, method)
 
-                        return {
+                        result = {
                             "wrapperType": "track",
                             "trackId": f"yt_{video_id}",
                             "trackName": info.get("title", "Unknown"),
@@ -305,6 +325,10 @@ class MusicAdapter:
                             "releaseDate": info.get("upload_date", "")[:4],
                             "trackViewUrl": url
                         }
+                        if result:
+                            from crawlers.itunes import save_metadata
+                            asyncio.create_task(save_metadata('track', result))
+                        return result
             except Exception as e:
                 logger.debug(f"YT Metadata method {method} failed: {e}")
                 if method in YT_METADATA_METHODS:
@@ -366,7 +390,11 @@ class MusicAdapter:
                         if method in SC_METADATA_METHODS:
                             SC_METADATA_METHODS.remove(method)
                             SC_METADATA_METHODS.insert(0, method)
-                        return self._sc_to_itunes(info)
+                        result = self._sc_to_itunes(info)
+                        if result:
+                            from crawlers.itunes import save_metadata
+                            asyncio.create_task(save_metadata('track', result))
+                        return result
             except Exception as e:
                 logger.debug(f"SC Metadata method {method} failed: {e}")
                 if method in SC_METADATA_METHODS:
@@ -379,7 +407,11 @@ class MusicAdapter:
         try:
             if browse_id.startswith("yt_"): browse_id = browse_id[3:]
             album = await loop.run_in_executor(None, lambda: self.ytm.get_album(browse_id))
-            return self._ytm_to_itunes(album, "album")
+            result = self._ytm_to_itunes(album, "album")
+            if result:
+                from crawlers.itunes import save_metadata
+                asyncio.create_task(save_metadata('album', result))
+            return result
         except Exception as e:
             logger.error(f"YTM get album error: {e}")
             return None

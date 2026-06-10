@@ -79,6 +79,7 @@ function getDB(): SQLite3 {
     if ($db === null) {
         $db = new SQLite3(DB_PATH);
         $db->enableExceptions(true);
+        $db->busyTimeout(5000);
         $db->exec('PRAGMA journal_mode=WAL');
         $db->exec('PRAGMA synchronous=NORMAL');
         $db->exec('PRAGMA cache_size=-65536');
@@ -197,6 +198,7 @@ function initDatabase(SQLite3 $db): void {
             break;
         }
     }
+    $result->finalize();
 
     if (!$hasLastAccessed) {
         try {
@@ -206,14 +208,142 @@ function initDatabase(SQLite3 $db): void {
             // Column may have been added already
         }
     }
+
+    migrateSchemaToTextPK($db);
     migrateMirrorQualitySupport($db);
     $initialized = true;
+}
+
+function migrateSchemaToTextPK(SQLite3 $db): void {
+    $tables = [
+        'artists' => 'artistId',
+        'collections' => 'collectionId',
+        'tracks' => 'trackId'
+    ];
+
+    foreach ($tables as $table => $idCol) {
+        $result = $db->query("PRAGMA table_info($table)");
+        $idType = '';
+        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+            if ($row['name'] === $idCol) {
+                $idType = strtoupper($row['type']);
+                break;
+            }
+        }
+
+        if ($idType === 'INTEGER') {
+            error_log("Migrating $table PK to TEXT");
+
+            // Get other columns first to avoid locking issues while reading during transaction
+            $res = $db->query("PRAGMA table_info($table)");
+            $cols = [];
+            while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+                if ($row['name'] !== $idCol) {
+                    $cols[] = $row['name'];
+                }
+            }
+            $res->finalize();
+
+            $db->exec("BEGIN IMMEDIATE TRANSACTION");
+            try {
+                $db->exec("CREATE TABLE {$table}_new ($idCol TEXT PRIMARY KEY)");
+                foreach ($cols as $col) {
+                    $db->exec("ALTER TABLE {$table}_new ADD COLUMN `$col` TEXT");
+                }
+
+                $colList = implode(', ', array_merge([$idCol], $cols));
+                $selectCols = implode(', ', $cols);
+                $db->exec("INSERT INTO {$table}_new ($colList) SELECT 'it_' || $idCol" . ($selectCols ? ", $selectCols" : "") . " FROM $table");
+
+                $db->exec("DROP TABLE $table");
+                $db->exec("ALTER TABLE {$table}_new RENAME TO $table");
+                $db->exec("COMMIT");
+            } catch (Exception $e) {
+                $db->exec("ROLLBACK");
+                error_log("Migration failed for $table: " . $e->getMessage());
+            }
+        }
+    }
+
+    // Also migrate entityMirrors entityId
+    $result = $db->query("PRAGMA table_info(entityMirrors)");
+    $idType = '';
+    while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+        if ($row['name'] === 'entityId') {
+            $idType = strtoupper($row['type']);
+            break;
+        }
+    }
+    $result->finalize();
+    if ($idType === 'INTEGER') {
+        error_log("Migrating entityMirrors entityId to TEXT");
+        $db->exec("BEGIN IMMEDIATE TRANSACTION");
+        try {
+            $db->exec("CREATE TABLE entityMirrors_new (
+                entityType TEXT NOT NULL,
+                entityId TEXT NOT NULL,
+                urlType TEXT NOT NULL,
+                mirrorUrl TEXT NOT NULL,
+                quality TEXT,
+                updatedAt TEXT,
+                PRIMARY KEY (entityType, entityId, urlType, quality)
+            )");
+            $db->exec("INSERT INTO entityMirrors_new (entityType, entityId, urlType, mirrorUrl, quality, updatedAt)
+                       SELECT entityType, 'it_' || entityId, urlType, mirrorUrl, quality, updatedAt FROM entityMirrors");
+            $db->exec("DROP TABLE entityMirrors");
+            $db->exec("ALTER TABLE entityMirrors_new RENAME TO entityMirrors");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_mirrors_quality ON entityMirrors(entityType, entityId, urlType, quality)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_mirrors_lookup ON entityMirrors(entityType, entityId)");
+            $db->exec("COMMIT");
+        } catch (Exception $e) {
+            $db->exec("ROLLBACK");
+            error_log("Migration failed for entityMirrors: " . $e->getMessage());
+        }
+    }
+
+    // Offline Cache migration
+    $result = $db->query("PRAGMA table_info(offlineCache)");
+    $idType = '';
+    while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+        if ($row['name'] === 'entityId') {
+            $idType = strtoupper($row['type']);
+            break;
+        }
+    }
+    $result->finalize();
+
+    if ($idType === 'INTEGER') {
+        error_log("Migrating offlineCache entityId to TEXT");
+        $db->exec("BEGIN IMMEDIATE TRANSACTION");
+        try {
+            $db->exec("CREATE TABLE offlineCache_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entityType TEXT NOT NULL,
+                entityId TEXT NOT NULL,
+                data TEXT NOT NULL,
+                createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                expiresAt DATETIME,
+                UNIQUE(entityType, entityId)
+            )");
+            $db->exec("INSERT INTO offlineCache_new (entityType, entityId, data, createdAt, expiresAt)
+                       SELECT entityType, 'it_' || entityId, data, createdAt, expiresAt FROM offlineCache");
+            $db->exec("DROP TABLE offlineCache");
+            $db->exec("ALTER TABLE offlineCache_new RENAME TO offlineCache");
+            $db->exec('CREATE INDEX IF NOT EXISTS idx_offline_expires ON offlineCache(expiresAt)');
+            $db->exec('CREATE INDEX IF NOT EXISTS idx_offline_entity ON offlineCache(entityType, entityId)');
+            $db->exec("COMMIT");
+        } catch (Exception $e) {
+            $db->exec("ROLLBACK");
+            error_log("Migration failed for offlineCache: " . $e->getMessage());
+        }
+    }
 }
 
 function migrateMirrorQualitySupport(SQLite3 $db): void {
     $stmt = $db->prepare("SELECT COUNT(*) as count FROM entityMirrors WHERE urlType = 'audioUrl' AND quality IS NULL");
     $result = $stmt->execute();
     $row = $result->fetchArray(SQLITE3_ASSOC);
+    $result->finalize();
     
     if ($row && $row['count'] > 0) {
         $stmt = $db->prepare("UPDATE entityMirrors SET quality = :quality WHERE urlType = 'audioUrl' AND quality IS NULL");
@@ -441,19 +571,30 @@ function markProxyStatus(string $proxyUrl, bool $success): void {
 // ── Dynamic column addition ──────────────────────────────
 function ensureColumns(SQLite3 $db, string $table, array $data): void {
     static $existingColumns = [];
+
+    // Whitelist for table names
+    $allowedTables = ['artists', 'collections', 'tracks', 'entityMirrors', 'requestCache', 'rateLimitLog', 'requestHistory', 'proxyStatus', 'requestPattern', 'offlineCache'];
+    if (!in_array($table, $allowedTables)) {
+        return;
+    }
+
     if (!isset($existingColumns[$table])) {
         $existingCols = [];
         $res = $db->query("PRAGMA table_info($table)");
         while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
             $existingCols[$row['name']] = true;
         }
+        $res->finalize();
         $existingColumns[$table] = $existingCols;
     }
 
     foreach ($data as $col => $value) {
         if (!isset($existingColumns[$table][$col])) {
-            $db->exec("ALTER TABLE $table ADD COLUMN `$col` TEXT");
-            $existingColumns[$table][$col] = true;
+            // Validate column name (alphanumeric and underscores only)
+            if (preg_match('/^[a-zA-Z0-9_]+$/', $col)) {
+                $db->exec("ALTER TABLE $table ADD COLUMN `$col` TEXT");
+                $existingColumns[$table][$col] = true;
+            }
         }
     }
 }
@@ -461,19 +602,37 @@ function ensureColumns(SQLite3 $db, string $table, array $data): void {
 // ── Save entities ─────────────────────────────────────────
 function saveEntities(SQLite3 $db, string $table, array $entities): void {
     if (empty($entities)) return;
+
+    // Support single entity object
+    if (isset($entities['wrapperType']) || isset($entities['artistId']) || isset($entities['collectionId']) || isset($entities['trackId'])) {
+        if (!isset($entities[0])) $entities = [$entities];
+    }
+
     $db->exec('BEGIN TRANSACTION');
     foreach ($entities as $entity) {
+        if (!is_array($entity)) continue;
+
         // Normalize IDs in entity data
         foreach (['artistId', 'collectionId', 'trackId'] as $idKey) {
             if (isset($entity[$idKey])) $entity[$idKey] = normalizeId($entity[$idKey]);
         }
 
         ensureColumns($db, $table, $entity);
-        $columns = array_keys($entity);
+
+        $columns = [];
+        foreach (array_keys($entity) as $col) {
+             if (preg_match('/^[a-zA-Z0-9_]+$/', $col)) {
+                 $columns[] = $col;
+             }
+        }
+
+        if (empty($columns)) continue;
+
         $placeholders = array_map(fn($c) => ":$c", $columns);
-        $sql = "INSERT OR REPLACE INTO $table (" . implode(',', $columns) . ") VALUES (" . implode(',', $placeholders) . ")";
+        $sql = "INSERT OR REPLACE INTO $table (`" . implode('`,`', $columns) . "`) VALUES (" . implode(',', $placeholders) . ")";
         $stmt = $db->prepare($sql);
-        foreach ($entity as $col => $val) {
+        foreach ($columns as $col) {
+            $val = $entity[$col];
             $type = is_int($val) ? SQLITE3_INTEGER : (is_float($val) ? SQLITE3_FLOAT : SQLITE3_TEXT);
             $stmt->bindValue(":$col", $val, $type);
         }
@@ -1381,6 +1540,29 @@ function handleRequest(): void {
                 if (!in_array($method, ['POST', 'DELETE'])) throw new Exception('Method not allowed', 405);
                 $response = deleteMirrorUrl($db, $params['entityType'] ?? '', $params['entityId'] ?? '',
                                            $params['urlType'] ?? null, $params['quality'] ?? null);
+                break;
+
+            case '/artist/save':
+            case '/artist/set':
+                if ($method !== 'POST') throw new Exception('Method not allowed', 405);
+                saveEntities($db, 'artists', $params);
+                $response = ['success' => true, 'message' => 'Artist(s) saved'];
+                break;
+
+            case '/album/save':
+            case '/album/set':
+            case '/collection/save':
+            case '/collection/set':
+                if ($method !== 'POST') throw new Exception('Method not allowed', 405);
+                saveEntities($db, 'collections', $params);
+                $response = ['success' => true, 'message' => 'Album(s) saved'];
+                break;
+
+            case '/track/save':
+            case '/track/set':
+                if ($method !== 'POST') throw new Exception('Method not allowed', 405);
+                saveEntities($db, 'tracks', $params);
+                $response = ['success' => true, 'message' => 'Track(s) saved'];
                 break;
 
             case '/lyrics/get':
