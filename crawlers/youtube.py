@@ -112,14 +112,16 @@ def _check_deno() -> bool:
 
 
 def _check_proxy() -> Optional[str]:
-    """Return SOCKS5 proxy URL if WARP/Dante/etc. is listening on 1080."""
+    """Return proxy URL from config, falling back to local WARP check."""
+    from core.config import PROXY
+    if PROXY:
+        return PROXY
     import socket
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(1)
     try:
         if s.connect_ex(("127.0.0.1", 1080)) == 0:
-            s.close()
-            return "socks5://127.0.0.1:1080"
+            return "socks5h://127.0.0.1:1080"
     except Exception:
         pass
     finally:

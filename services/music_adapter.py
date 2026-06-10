@@ -291,19 +291,8 @@ class MusicAdapter:
         url = f"https://www.youtube.com/watch?v={video_id}"
 
         from core.config import PROXY
-        proxy = PROXY
-        if not proxy:
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            try:
-                if s.connect_ex(("127.0.0.1", 1080)) == 0:
-                    proxy = "socks5://127.0.0.1:1080"
-            except: pass
-            finally: s.close()
-
-        loop = asyncio.get_event_loop()
-
+        from core.config import PROXY
+        proxy = PROXY or "socks5h://127.0.0.1:1080"
         for method in list(YT_METADATA_METHODS):
             try:
                 opts = self._get_ydl_opts(method, proxy)
@@ -365,19 +354,8 @@ class MusicAdapter:
             url = f"https://soundcloud.com/{sc_id}"
 
         from core.config import PROXY
-        proxy = PROXY
-        if not proxy:
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            try:
-                if s.connect_ex(("127.0.0.1", 1080)) == 0:
-                    proxy = "socks5://127.0.0.1:1080"
-            except: pass
-            finally: s.close()
-
-        loop = asyncio.get_event_loop()
-
+        from core.config import PROXY
+        proxy = PROXY or "socks5h://127.0.0.1:1080"
         for method in list(SC_METADATA_METHODS):
             try:
                 opts = {'quiet': True, 'no_check_certificate': True}

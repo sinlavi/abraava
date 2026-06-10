@@ -17,17 +17,7 @@ class OdesliService:
         session = await HttpClient.get_session()
 
         from core.config import PROXY
-        proxy_url = PROXY
-        if not proxy_url:
-            import socket
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            try:
-                if s.connect_ex(("127.0.0.1", 1080)) == 0:
-                    proxy_url = "socks5://127.0.0.1:1080"
-            except: pass
-            finally: s.close()
-
+        proxy_url = PROXY or "socks5h://127.0.0.1:1080"
         for method in list(ODESLI_METHODS):
             try:
                 params = {"url": url}
