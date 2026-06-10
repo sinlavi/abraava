@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install Cloudflare WARP
 RUN curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] bookworm main" | tee /etc/apt/sources.list.d/cloudflare-warp.list \
+    && echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ bookworm main" | tee /etc/apt/sources.list.d/cloudflare-warp.list \
     && apt-get update && apt-get install -y cloudflare-warp \
     && rm -rf /var/lib/apt/lists/*
 
