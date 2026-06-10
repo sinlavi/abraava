@@ -216,6 +216,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         status_msg = message_to_edit
         status_msg = await edit_message(status_msg, "🔄 *در حال بارگذاری اطلاعات آهنگ...*")
     try:
+        is_sc = str(track_id).startswith("sc_")
         data = await get_track(track_id)
         if not data or not data.get("results"):
             status_msg = await edit_message(status_msg, "آهنگ مورد نظر یافت نشد.")
@@ -229,8 +230,6 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         collection_id = track.get('collectionId')
         collection_name = track.get('collectionName', 'نامشخص')
         track_name = track.get('trackName', 'نامشخص')
-
-        is_sc = str(track_id).startswith("sc_")
 
         text = f"🎵 *نام آهنگ:* [{track_name}]({generate_deep_link('track', track_id)})\n"
 
@@ -261,7 +260,8 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         markup_rows.append(dl_btns)
 
         # Lyrics button
-        markup_rows.append([InlineKeyboardButton(text="📜 متن آهنگ", callback_data=f"lyrics:{track_id}:u{owner_id}")])
+        if not is_sc:
+            markup_rows.append([InlineKeyboardButton(text="📜 متن آهنگ", callback_data=f"lyrics:{track_id}:u{owner_id}")])
 
         links = []
         if collection_id: links.append(InlineKeyboardButton(text="📀 مشاهده آلبوم", callback_data=f"collection:{collection_id}:u{owner_id}"))

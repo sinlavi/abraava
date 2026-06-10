@@ -17,6 +17,24 @@ QUALITY_MULTIPLIER = {
 SUPPORTED_QUALITIES = ["320", "192", "128"]
 DEFAULT_QUALITY = "192"
 
+def estimate_size_mb(duration_ms: int, quality_kbps: str) -> float:
+    """Estimate MP3 file size in MB based on duration and quality."""
+    try:
+        q = int(quality_kbps)
+        duration_s = duration_ms / 1000
+        # bitrate (kbps) * seconds / 8 = KB
+        size_kb = (q * duration_s) / 8
+        return size_kb / 1024
+    except (ValueError, TypeError):
+        return 0.0
+
+def get_best_quality_for_size(duration_ms: int, limit_mb: int = 20) -> Optional[str]:
+    """Return the highest supported quality that fits within the size limit."""
+    for q in SUPPORTED_QUALITIES:
+        if estimate_size_mb(duration_ms, q) <= limit_mb:
+            return q
+    return None
+
 @dataclass
 class UserSettings:
     user_id: int
