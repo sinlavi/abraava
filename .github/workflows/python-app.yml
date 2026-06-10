@@ -28,38 +28,79 @@ jobs:
         run: |
           echo "🗑️ Clearing workflow run history..."
           
-          # Set repository explicitly
           REPO="${{ github.repository }}"
-          echo "Repository: $REPO"
-          
-          # Get all workflow run IDs (excluding current run)
           CURRENT_RUN="${{ github.run_id }}"
+          echo "Repository: $REPO"
           echo "Current run ID: $CURRENT_RUN (will be preserved)"
           
-          RUN_IDS=$(gh run list --repo $REPO --limit 1000 --json databaseId --jq '.[].databaseId')
+          # Try to delete runs using different methods
+          DELETED_COUNT=0
+          FAILED_COUNT=0
           
-          if [ -z "$RUN_IDS" ]; then
-            echo "✅ No workflow runs to delete"
-          else
-            COUNT=0
+          # Method 1: Try to delete using gh CLI
+          echo "📋 Method 1: Using gh CLI..."
+          RUN_IDS=$(gh run list --repo $REPO --limit 1000 --json databaseId --jq '.[].databaseId' 2>/dev/null || echo "")
+          
+          if [ -n "$RUN_IDS" ]; then
             for RUN_ID in $RUN_IDS; do
-              # Skip current run
               if [ "$RUN_ID" = "$CURRENT_RUN" ]; then
-                echo "Skipping current run: $RUN_ID"
+                echo "⏭️ Skipping current run: $RUN_ID"
                 continue
               fi
               
-              echo "Deleting run ID: $RUN_ID"
+              echo "Attempting to delete run ID: $RUN_ID"
+              
+              # Try with --confirm flag
               if gh run delete $RUN_ID --repo $REPO --confirm 2>/dev/null; then
-                echo "✅ Deleted run $RUN_ID"
-                COUNT=$((COUNT + 1))
+                echo "✅ Successfully deleted run $RUN_ID"
+                DELETED_COUNT=$((DELETED_COUNT + 1))
               else
-                echo "⚠️ Failed to delete run $RUN_ID (might be protected or already deleted)"
+                echo "⚠️ Could not delete run $RUN_ID via gh CLI"
+                FAILED_COUNT=$((FAILED_COUNT + 1))
               fi
             done
-            
-            echo "✅ Deletion complete. Deleted $COUNT runs."
           fi
+          
+          # Method 2: Try using GitHub API directly (more powerful)
+          echo ""
+          echo "📋 Method 2: Using GitHub API directly..."
+          API_URL="https://api.github.com/repos/$REPO/actions/runs"
+          
+          # Get all runs via API
+          RUNS=$(curl -s -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "$API_URL?per_page=100" | jq -r '.workflow_runs[]?.id' 2>/dev/null || echo "")
+          
+          if [ -n "$RUNS" ]; then
+            for RUN_ID in $RUNS; do
+              if [ "$RUN_ID" = "$CURRENT_RUN" ]; then
+                echo "⏭️ Skipping current run: $RUN_ID"
+                continue
+              fi
+              
+              echo "Attempting API delete for run ID: $RUN_ID"
+              
+              # Delete via API
+              RESPONSE=$(curl -s -X DELETE \
+                -H "Authorization: token $GH_TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "$API_URL/$RUN_ID" \
+                -w "%{http_code}" -o /dev/null)
+              
+              if [ "$RESPONSE" = "204" ]; then
+                echo "✅ Successfully deleted run $RUN_ID via API"
+                DELETED_COUNT=$((DELETED_COUNT + 1))
+              else
+                echo "⚠️ API delete failed for run $RUN_ID (HTTP $RESPONSE)"
+              fi
+            done
+          fi
+          
+          echo ""
+          echo "📊 Summary:"
+          echo "✅ Successfully deleted: $DELETED_COUNT runs"
+          echo "⚠️ Failed to delete: $FAILED_COUNT runs"
+          echo "💡 Note: Some runs may be protected or already deleted"
 
   run-bot:
     needs: clear-history
