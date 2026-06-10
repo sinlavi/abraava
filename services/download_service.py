@@ -17,6 +17,7 @@ from utils.helpers import get_high_res_artwork, format_duration, generate_deep_l
 from utils.messages import send_message, edit_message, safe_delete
 from bot.keyboards import create_close_button
 
+
 class DownloadService:
     def __init__(self, bot, api_client, user_settings_service, artwork_service,
                  tagging_service, error_notifier, album_tracker, download_rate_limiter):
@@ -36,31 +37,43 @@ class DownloadService:
         else:
             full_text = text
 
-        # We always delete and re-send to ensure consistent behavior across single and album downloads
-        # as requested by the user. This avoids "message not modified" errors and provides a fresh UI state.
         if status_msg:
-            await safe_delete(status_msg)
+            await edit_message(status_msg, full_text, reply_markup=reply_markup, show_cancel=not is_batch)
+            return status_msg
         return await send_message(self.bot, chat_id, full_text, reply_markup=reply_markup, show_cancel=not is_batch)
 
     async def download_and_send_track(self, chat_id, track_id, user_id, status_msg=None,
-                                     is_batch=False, album_cover_bytes=None, collection_id=None,
-                                     selected_quality=None, track_name_hint=None, track_index=None,
-                                     status_prefix="", reply_markup=None):
+                                      is_batch=False, album_cover_bytes=None, collection_id=None,
+                                      selected_quality=None, track_name_hint=None, track_index=None,
+                                      status_prefix="", reply_markup=None):
 
         # If no status_msg provided, use the first update to create it to avoid redundant send/delete
         if status_msg is None:
             prefix = f"({track_index}) " if track_index else ""
             hint = f" {track_name_hint}" if track_name_hint else ""
             initial_text = f"🔍 *{prefix}در حال دریافت اطلاعات آهنگ{hint}...*"
-            status_msg = await self._update_status(chat_id, status_msg, initial_text, status_prefix, reply_markup, is_batch)
+            status_msg = await self._update_status(chat_id, status_msg, initial_text, status_prefix, reply_markup,
+                                                   is_batch)
         else:
-            status_msg = await self._update_status(chat_id, status_msg, "🔍 *در حال دریافت اطلاعات آهنگ...*", status_prefix, reply_markup, is_batch)
+            status_msg = await self._update_status(chat_id, status_msg, "🔍 *در حال دریافت اطلاعات آهنگ...*",
+                                                   status_prefix, reply_markup, is_batch)
         track_data = await get_track(track_id)
         if not track_data or not track_data.get("results"):
-            status_msg = await self._update_status(chat_id, status_msg, "خطا در دریافت اطلاعات آهنگ.", status_prefix, reply_markup, is_batch)
+            status_msg = await self._update_status(chat_id, status_msg, "خطا در دریافت اطلاعات آهنگ.", status_prefix,
+                                                   reply_markup, is_batch)
             return status_msg, False
 
         track = track_data["results"][0]
+
+        if not is_batch:
+            track_name = track.get("trackName", "Unknown")
+            artist_name = track.get("artistName", "Unknown")
+            album_name = track.get("collectionName")
+
+            status_prefix = f"🎵 *آهنگ:* {track_name}\n🎤 *هنرمند:* {artist_name}"
+            if album_name:
+                status_prefix += f"\n💿 *آلبوم:* {album_name}"
+
         settings = await self.user_settings_service.get_settings(user_id)
 
         quality_value = selected_quality or settings.download_quality.value
@@ -73,32 +86,35 @@ class DownloadService:
         if audio_cache:
             logger.info(f"Using cached audio for track {track_id} (quality: {quality_value}) -> {audio_cache}")
             try:
-                status_msg = await self._update_status(chat_id, status_msg, "📤 *در حال ارسال فایل از حافظه کش...*", status_prefix, reply_markup, is_batch)
+                status_msg = await self._update_status(chat_id, status_msg, "📤 *در حال ارسال فایل از حافظه کش...*",
+                                                       status_prefix, reply_markup, is_batch)
                 markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
                 await self.bot.send_chat_action(chat_id, "upload_voice")
                 logger.info(f"Sending cached audio: {track.get('trackName')} ({quality_value}kbps)")
-                await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption, reply_markup=InlineKeyboard(*markup))
+                await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption,
+                                          reply_markup=InlineKeyboard(*markup))
                 if not is_batch: await safe_delete(status_msg)
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
-                                                 track.get('artistName', ''), track.get('collectionName', ''),
-                                                 0, 'cache', quality_value)
+                                                   track.get('artistName', ''), track.get('collectionName', ''),
+                                                   0, 'cache', quality_value)
                 await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
                 return status_msg, True
             except Exception as e:
                 logger.error(f"Cache send failed: {e}")
-                if collection_id:
-                    async def cancel_album(): self.album_tracker.cancel_download(user_id, collection_id)
-                    await self.error_notifier.notify_upload_error(self.bot, str(e), cancel_album)
+                await self.error_notifier.notify_upload_error(self.bot, str(e))
 
         if OFFLINE_MODE:
-            status_msg = await self._update_status(chat_id, status_msg, "بات در حالت آفلاین است.", status_prefix, reply_markup, is_batch)
+            status_msg = await self._update_status(chat_id, status_msg, "بات در حالت آفلاین است.", status_prefix,
+                                                   reply_markup, is_batch)
             return status_msg, False
 
         # Download from YouTube
         cover_bytes = album_cover_bytes
         if settings.show_artwork and cover_bytes is None:
-            status_msg = await self._update_status(chat_id, status_msg, "🖼️ *در حال دریافت کاور آهنگ...*", status_prefix, reply_markup, is_batch)
-            cover_bytes = await self.artwork_service.get_artwork_bytes(track.get('collectionId') or track_id, track.get('artworkUrl100'))
+            status_msg = await self._update_status(chat_id, status_msg, "🖼️ *در حال دریافت کاور آهنگ...*",
+                                                   status_prefix, reply_markup, is_batch)
+            cover_bytes = await self.artwork_service.get_artwork_bytes(track.get('collectionId') or track_id,
+                                                                       track.get('artworkUrl100'))
 
         video_url = None
         if isinstance(track_id, str) and track_id.startswith(("yt_", "sc_")):
@@ -106,13 +122,15 @@ class DownloadService:
             logger.info(f"Using direct URL for external track {track_id}: {video_url}")
 
         if not video_url:
-            status_msg = await self._update_status(chat_id, status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*", status_prefix, reply_markup, is_batch)
+            status_msg = await self._update_status(chat_id, status_msg, "🔍 *در حال جستجوی منبع با کیفیت...*",
+                                                   status_prefix, reply_markup, is_batch)
             logger.info(f"Searching YouTube for track {track_id}: {track.get('trackName')} - {track.get('artistName')}")
             video_id = await search_youtube_track(track.get("trackName", ""), track.get("artistName", ""),
-                                                track.get("collectionName", ""), track.get("releaseDate", "")[:4])
+                                                  track.get("collectionName", ""), track.get("releaseDate", "")[:4])
 
             if not video_id:
-                status_msg = await self._update_status(chat_id, status_msg, "لینک مناسبی یافت نشد.", status_prefix, reply_markup, is_batch)
+                status_msg = await self._update_status(chat_id, status_msg, "لینک مناسبی یافت نشد.", status_prefix,
+                                                       reply_markup, is_batch)
                 return status_msg, False
 
             video_url = f"https://music.youtube.com/watch?v={video_id}"
@@ -122,25 +140,31 @@ class DownloadService:
                 if collection_id:
                     self.album_tracker.start_track(user_id, collection_id, track.get("trackName", ""))
 
-                status_msg = await self._update_status(chat_id, status_msg, f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*", status_prefix, reply_markup, is_batch)
+                status_msg = await self._update_status(chat_id, status_msg,
+                                                       f"⏳ *در حال دانلود با کیفیت {quality_value}kbps...*",
+                                                       status_prefix, reply_markup, is_batch)
                 logger.info(f"Downloading from YouTube: {video_url} with quality {quality_value}")
                 await self.bot.send_chat_action(chat_id, "record_voice")
                 mp3_path = await download_audio(video_url, quality=quality_value)
                 if not mp3_path: raise Exception("Download failed")
 
                 temp_dir = os.path.dirname(mp3_path)
-                status_msg = await self._update_status(chat_id, status_msg, "🏷️ *در حال تگ‌گذاری فایل...*", status_prefix, reply_markup, is_batch)
-                lyrics_dict = await lyrics_service.get_lyrics(track_id, track.get("trackName", ""), track.get("artistName", ""), track.get("collectionName"))
+                status_msg = await self._update_status(chat_id, status_msg, "🏷️ *در حال تگ‌گذاری فایل...*",
+                                                       status_prefix, reply_markup, is_batch)
+                lyrics_dict = await lyrics_service.get_lyrics(track_id, track.get("trackName", ""),
+                                                              track.get("artistName", ""), track.get("collectionName"))
                 lyrics_to_tag = (lyrics_dict.get("synced") or lyrics_dict.get("plain")) if lyrics_dict else None
                 self.tagging_service.tag_mp3(Path(mp3_path), track, cover_bytes, lyrics=lyrics_to_tag)
 
-                status_msg = await self._update_status(chat_id, status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*", status_prefix, reply_markup, is_batch)
+                status_msg = await self._update_status(chat_id, status_msg, "☁️ *در حال آپلود روی سرورهای ابری...*",
+                                                       status_prefix, reply_markup, is_batch)
 
                 markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
                 with open(mp3_path, 'rb') as f:
                     await self.bot.send_chat_action(chat_id, "upload_voice")
                     logger.info(f"Uploading fresh audio: {track.get('trackName')} ({quality_value}kbps)")
-                    msg = await self.bot.send_audio(chat_id, audio=f, caption=caption, reply_markup=InlineKeyboard(*markup))
+                    msg = await self.bot.send_audio(chat_id, audio=f, caption=caption,
+                                                    reply_markup=InlineKeyboard(*markup))
                     if msg and track_id and not str(track_id).startswith(("yt_", "sc_", "sp_", "it_")):
                         await set_mirror('track', str(track_id), 'audioUrl',
                                          f'https://tapi.bale.ai/file/bot<token>/{msg.audio.id}',
@@ -148,22 +172,20 @@ class DownloadService:
 
                 file_size = os.path.getsize(mp3_path)
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
-                                                 track.get('artistName', ''), track.get('collectionName', ''),
-                                                 file_size, 'youtube', quality_value)
+                                                   track.get('artistName', ''), track.get('collectionName', ''),
+                                                   file_size, 'youtube', quality_value)
                 self.download_rate_limiter.record_download(user_id, quality_value)
                 await self.error_notifier.check_and_clear_if_resolved(self.bot, test_success=True)
                 if not is_batch: await safe_delete(status_msg)
                 return status_msg, True
         except Exception as e:
             logger.error(f"Download error: {e}")
-            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}:u{user_id}")]]
+            retry_markup = [
+                [InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}:u{user_id}")]]
             # But since _update_status supports custom reply_markup
-            status_msg = await self._update_status(chat_id, status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}", status_prefix, InlineKeyboard(*retry_markup), is_batch)
-            cancel_cb = None
-            if collection_id:
-                async def cancel_album(): self.album_tracker.cancel_download(user_id, collection_id)
-                cancel_cb = cancel_album
-            await self.error_notifier.notify_upload_error(self.bot, str(e), cancel_cb)
+            status_msg = await self._update_status(chat_id, status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}",
+                                                   status_prefix, InlineKeyboard(*retry_markup), is_batch)
+            await self.error_notifier.notify_upload_error(self.bot, str(e))
             return status_msg, False
         finally:
             if temp_dir: shutil.rmtree(temp_dir, ignore_errors=True)
@@ -222,7 +244,8 @@ class DownloadService:
 
         markup = []
         if not is_external:
-            markup.append([InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://player.abraava.ir?id={track_id}")])
+            markup.append(
+                [InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://player.abraava.ir?id={track_id}")])
 
         markup.append([InlineKeyboardButton(text="📋 کپی پیوند", copy_text=generate_deep_link("track", track_id))])
         markup.append([InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=source_url)])
