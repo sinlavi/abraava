@@ -61,6 +61,16 @@ class DownloadService:
             return status_msg, False
 
         track = track_data["results"][0]
+
+        if not is_batch:
+            track_name = track.get("trackName", "Unknown")
+            artist_name = track.get("artistName", "Unknown")
+            album_name = track.get("collectionName")
+
+            status_prefix = f"🎵 *آهنگ:* {track_name}\n🎤 *هنرمند:* {artist_name}"
+            if album_name:
+                status_prefix += f"\n💿 *آلبوم:* {album_name}"
+
         settings = await self.user_settings_service.get_settings(user_id)
 
         quality_value = selected_quality or settings.download_quality.value
@@ -86,9 +96,7 @@ class DownloadService:
                 return status_msg, True
             except Exception as e:
                 logger.error(f"Cache send failed: {e}")
-                if collection_id:
-                    async def cancel_album(): self.album_tracker.cancel_download(user_id, collection_id)
-                    await self.error_notifier.notify_upload_error(self.bot, str(e), cancel_album)
+                await self.error_notifier.notify_upload_error(self.bot, str(e))
 
         if OFFLINE_MODE:
             status_msg = await self._update_status(chat_id, status_msg, "بات در حالت آفلاین است.", status_prefix, reply_markup, is_batch)
@@ -159,11 +167,7 @@ class DownloadService:
             retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}:u{user_id}")]]
             # But since _update_status supports custom reply_markup
             status_msg = await self._update_status(chat_id, status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}", status_prefix, InlineKeyboard(*retry_markup), is_batch)
-            cancel_cb = None
-            if collection_id:
-                async def cancel_album(): self.album_tracker.cancel_download(user_id, collection_id)
-                cancel_cb = cancel_album
-            await self.error_notifier.notify_upload_error(self.bot, str(e), cancel_cb)
+            await self.error_notifier.notify_upload_error(self.bot, str(e))
             return status_msg, False
         finally:
             if temp_dir: shutil.rmtree(temp_dir, ignore_errors=True)
