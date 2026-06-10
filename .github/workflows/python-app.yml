@@ -3,8 +3,8 @@ name: Test Deploy
 on:
   workflow_dispatch:
   push:
-  schedule:
-    - cron: "0 */3 * * *"
+    schedule:
+      - cron: "0 */3 * * *"
 
 concurrency:
   group: test-deploy
@@ -22,85 +22,183 @@ jobs:
         with:
           fetch-depth: 1
           
-      - name: Delete all workflow runs
+      - name: Delete all workflow runs via API with retry logic
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "🗑️ Clearing workflow run history..."
+          echo "🗑️ Clearing workflow run history via GitHub API..."
           
           REPO="${{ github.repository }}"
           CURRENT_RUN="${{ github.run_id }}"
           echo "Repository: $REPO"
           echo "Current run ID: $CURRENT_RUN (will be preserved)"
           
-          # Try to delete runs using different methods
           DELETED_COUNT=0
           FAILED_COUNT=0
+          SKIPPED_COUNT=0
+          RATE_LIMITED=0
           
-          # Method 1: Try to delete using gh CLI
-          echo "📋 Method 1: Using gh CLI..."
-          RUN_IDS=$(gh run list --repo $REPO --limit 1000 --json databaseId --jq '.[].databaseId' 2>/dev/null || echo "")
-          
-          if [ -n "$RUN_IDS" ]; then
-            for RUN_ID in $RUN_IDS; do
-              if [ "$RUN_ID" = "$CURRENT_RUN" ]; then
-                echo "⏭️ Skipping current run: $RUN_ID"
-                continue
-              fi
-              
-              echo "Attempting to delete run ID: $RUN_ID"
-              
-              # Try with --confirm flag
-              if gh run delete $RUN_ID --repo $REPO --confirm 2>/dev/null; then
-                echo "✅ Successfully deleted run $RUN_ID"
-                DELETED_COUNT=$((DELETED_COUNT + 1))
-              else
-                echo "⚠️ Could not delete run $RUN_ID via gh CLI"
-                FAILED_COUNT=$((FAILED_COUNT + 1))
-              fi
-            done
-          fi
-          
-          # Method 2: Try using GitHub API directly (more powerful)
-          echo ""
-          echo "📋 Method 2: Using GitHub API directly..."
+          # GitHub API endpoint for workflow runs
           API_URL="https://api.github.com/repos/$REPO/actions/runs"
           
-          # Get all runs via API
-          RUNS=$(curl -s -H "Authorization: token $GH_TOKEN" \
+          # Get total count first
+          TOTAL_RUNS=$(curl -s -H "Authorization: token $GH_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
-            "$API_URL?per_page=100" | jq -r '.workflow_runs[]?.id' 2>/dev/null || echo "")
+            "$API_URL?per_page=1" | jq -r '.total_count' 2>/dev/null)
           
-          if [ -n "$RUNS" ]; then
-            for RUN_ID in $RUNS; do
-              if [ "$RUN_ID" = "$CURRENT_RUN" ]; then
-                echo "⏭️ Skipping current run: $RUN_ID"
-                continue
-              fi
-              
-              echo "Attempting API delete for run ID: $RUN_ID"
-              
-              # Delete via API
-              RESPONSE=$(curl -s -X DELETE \
+          echo "📊 Total workflow runs found: $TOTAL_RUNS"
+          echo ""
+          
+          # Function to delete with retry
+          delete_run() {
+            local RUN_ID=$1
+            local MAX_RETRIES=3
+            local RETRY=0
+            
+            while [ $RETRY -lt $MAX_RETRIES ]; do
+              HTTP_STATUS=$(curl -s -X DELETE \
                 -H "Authorization: token $GH_TOKEN" \
                 -H "Accept: application/vnd.github.v3+json" \
                 "$API_URL/$RUN_ID" \
                 -w "%{http_code}" -o /dev/null)
               
-              if [ "$RESPONSE" = "204" ]; then
-                echo "✅ Successfully deleted run $RUN_ID via API"
-                DELETED_COUNT=$((DELETED_COUNT + 1))
+              if [ "$HTTP_STATUS" = "204" ]; then
+                return 0
+              elif [ "$HTTP_STATUS" = "403" ]; then
+                # Check if it's rate limiting
+                REMAINING=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  "https://api.github.com/rate_limit" | jq -r '.resources.actions.remaining')
+                
+                if [ "$REMAINING" -lt 10 ]; then
+                  echo "⚠️ Rate limit almost exhausted ($REMAINING remaining)"
+                  echo "⏳ Waiting 60 seconds before retry..."
+                  sleep 60
+                  RETRY=$((RETRY + 1))
+                  continue
+                fi
+                return 1
+              elif [ "$HTTP_STATUS" = "404" ]; then
+                return 2
               else
-                echo "⚠️ API delete failed for run $RUN_ID (HTTP $RESPONSE)"
+                RETRY=$((RETRY + 1))
+                if [ $RETRY -lt $MAX_RETRIES ]; then
+                  echo "⏳ Retry $RETRY/$MAX_RETRIES for run $RUN_ID (HTTP $HTTP_STATUS)"
+                  sleep 2
+                fi
               fi
             done
-          fi
+            return 3
+          }
+          
+          # Process runs in batches
+          PAGE=1
+          while [ $PAGE -le 10 ]; do  # Limit to 10 pages (1000 runs) to avoid timeout
+            echo "📥 Fetching page $PAGE..."
+            
+            RESPONSE=$(curl -s -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "$API_URL?per_page=100&page=$PAGE&status=completed")
+            
+            # Extract run IDs from response
+            RUN_IDS=$(echo "$RESPONSE" | jq -r '.workflow_runs[]?.id' 2>/dev/null)
+            
+            if [ -z "$RUN_IDS" ] || [ "$RUN_IDS" = "null" ]; then
+              echo "✅ No more runs found"
+              break
+            fi
+            
+            BATCH_COUNT=0
+            for RUN_ID in $RUN_IDS; do
+              if [ "$RUN_ID" = "$CURRENT_RUN" ]; then
+                echo "⏭️ Skipping current run: $RUN_ID"
+                SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+                continue
+              fi
+              
+              # Get run status
+              RUN_STATUS=$(echo "$RESPONSE" | jq -r --arg id "$RUN_ID" '.workflow_runs[] | select(.id == ($id | tonumber)) | .status' 2>/dev/null)
+              
+              if [ "$RUN_STATUS" = "in_progress" ] || [ "$RUN_STATUS" = "queued" ]; then
+                echo "⏸️ Skipping active run $RUN_ID (status: $RUN_STATUS)"
+                SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+                continue
+              fi
+              
+              echo "🗑️ Deleting run ID: $RUN_ID (status: $RUN_STATUS)"
+              
+              delete_run $RUN_ID
+              RESULT=$?
+              
+              case $RESULT in
+                0)
+                  echo "✅ Successfully deleted run $RUN_ID"
+                  DELETED_COUNT=$((DELETED_COUNT + 1))
+                  BATCH_COUNT=$((BATCH_COUNT + 1))
+                  ;;
+                1)
+                  echo "⚠️ Permission denied for run $RUN_ID"
+                  FAILED_COUNT=$((FAILED_COUNT + 1))
+                  ;;
+                2)
+                  echo "⚠️ Run $RUN_ID not found (already deleted)"
+                  FAILED_COUNT=$((FAILED_COUNT + 1))
+                  ;;
+                3)
+                  echo "❌ Failed to delete run $RUN_ID after retries"
+                  FAILED_COUNT=$((FAILED_COUNT + 1))
+                  ;;
+              esac
+              
+              # Small delay to avoid rate limiting
+              sleep 0.3
+            done
+            
+            echo "📊 Page $PAGE completed: Deleted $BATCH_COUNT runs in this batch"
+            echo ""
+            
+            # Check rate limit status
+            REMAINING=$(curl -s -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/rate_limit" | jq -r '.resources.actions.remaining')
+            
+            echo "💳 Rate limit remaining: $REMAINING"
+            
+            if [ "$REMAINING" -lt 50 ]; then
+              echo "⚠️ Rate limit getting low, waiting 30 seconds..."
+              sleep 30
+            fi
+            
+            # Check if there's a next page
+            NEXT_PAGE=$(echo "$RESPONSE" | jq -r '.links.next' 2>/dev/null)
+            if [ "$NEXT_PAGE" = "null" ] || [ -z "$NEXT_PAGE" ]; then
+              break
+            fi
+            
+            PAGE=$((PAGE + 1))
+          done
           
           echo ""
-          echo "📊 Summary:"
+          echo "════════════════════════════════════════"
+          echo "📊 FINAL SUMMARY:"
+          echo "════════════════════════════════════════"
           echo "✅ Successfully deleted: $DELETED_COUNT runs"
           echo "⚠️ Failed to delete: $FAILED_COUNT runs"
-          echo "💡 Note: Some runs may be protected or already deleted"
+          echo "⏭️ Skipped: $SKIPPED_COUNT runs"
+          echo "────────────────────────────────────────"
+          echo "💡 Note:"
+          echo "   - Failed runs may be protected or require admin permissions"
+          echo "   - Some runs might have been deleted by GitHub automatically"
+          echo "   - In-progress runs cannot be deleted"
+          echo "════════════════════════════════════════"
+          
+          # Try one more time with different approach for failed runs if any
+          if [ $FAILED_COUNT -gt 0 ]; then
+            echo ""
+            echo "🔄 Attempting to delete failed runs with personal access token method..."
+            echo "⚠️ This step requires a personal access token with workflow scope"
+            echo "⚠️ Skipping due to token limitations..."
+          fi
 
   run-bot:
     needs: clear-history
