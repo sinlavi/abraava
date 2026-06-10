@@ -18,7 +18,7 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
 
     header = (
         f"🔍 *نتایج جستجو برای {type_fa_map.get(type_, type_)}:*\n"
-        f"📝 *عبارت:* `{term}`\n"
+        f"📝 *عبارت:* ```{term}```\n"
         f"📊 *تعداد کل:* {total_items} مورد\n"
         f"📄 *صفحه:* {page} از {total_pages}"
     )
