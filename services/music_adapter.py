@@ -140,6 +140,7 @@ class MusicAdapter:
         if not self.sp:
             logger.warning("Spotify not initialized")
             return []
+        logger.info(f"Searching Spotify for {entity_type}: {term}")
         loop = asyncio.get_event_loop()
         try:
             type_map = {"track": "track", "album": "album", "artist": "artist"}
@@ -156,6 +157,7 @@ class MusicAdapter:
             return []
 
     async def search_ytm(self, term: str, entity_type: str = "track", limit: int = 20) -> List[Dict[str, Any]]:
+        logger.info(f"Searching YouTube Music for {entity_type}: {term}")
         loop = asyncio.get_event_loop()
         try:
             filter_map = {"track": "songs", "album": "albums", "artist": "artists"}
@@ -174,6 +176,7 @@ class MusicAdapter:
             return []
 
     async def search_sc(self, term: str, limit: int = 20) -> List[Dict[str, Any]]:
+        logger.info(f"Searching SoundCloud for: {term}")
         ydl_opts = {'quiet': True, 'extract_flat': True}
         loop = asyncio.get_event_loop()
         try:
@@ -187,6 +190,7 @@ class MusicAdapter:
 
     async def get_sp_track(self, track_id: str) -> Optional[Dict[str, Any]]:
         if not self.sp: return None
+        logger.info(f"Fetching Spotify track: {track_id}")
         loop = asyncio.get_event_loop()
         try:
             # Strip prefix if present
@@ -199,6 +203,7 @@ class MusicAdapter:
 
     async def get_sp_album(self, album_id: str) -> Optional[Dict[str, Any]]:
         if not self.sp: return None
+        logger.info(f"Fetching Spotify album: {album_id}")
         loop = asyncio.get_event_loop()
         try:
             if album_id.startswith("sp_"): album_id = album_id[3:]
@@ -261,6 +266,7 @@ class MusicAdapter:
 
     async def get_yt_track(self, video_id: str) -> Optional[Dict[str, Any]]:
         global YT_METADATA_METHODS
+        logger.info(f"Fetching YouTube metadata for: {video_id}")
         if video_id.startswith("yt_"): video_id = video_id[3:]
         url = f"https://www.youtube.com/watch?v={video_id}"
 
@@ -324,6 +330,7 @@ class MusicAdapter:
 
     async def get_sc_track(self, sc_id: str) -> Optional[Dict[str, Any]]:
         global SC_METADATA_METHODS
+        logger.info(f"Fetching SoundCloud metadata for: {sc_id}")
         if sc_id.startswith("sc_"): sc_id = sc_id[3:]
 
         if sc_id.isdigit():
@@ -404,6 +411,7 @@ class MusicAdapter:
         return it_data
 
     async def search_itunes_official(self, term: str, entity_type: str = "track", limit: int = 20) -> List[Dict[str, Any]]:
+        logger.info(f"Searching Official iTunes for {entity_type}: {term}")
         from crawlers.itunes import search_itunes
         type_map = {"track": "musicTrack", "album": "album", "artist": "musicArtist"}
         entity = type_map.get(entity_type, "musicTrack")

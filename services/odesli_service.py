@@ -13,6 +13,7 @@ class OdesliService:
     @classmethod
     async def resolve_link(cls, url: str) -> Optional[Dict[str, Any]]:
         global ODESLI_METHODS
+        logger.info(f"Resolving link via Odesli: {url}")
         session = await HttpClient.get_session()
 
         from core.config import PROXY
