@@ -14,7 +14,7 @@ define('ENABLE_GZIP', true);
 define('RATE_LIMIT_MAX_RETRIES', 5);
 define('RATE_LIMIT_BASE_DELAY', 0.5);
 define('RATE_LIMIT_MAX_DELAY', 30);
-define('ITUNES_RATE_LIMIT_PER_MINUTE', 20);
+define('ITUNES_RATE_LIMIT_PER_MINUTE', 50);
 define('USE_PROXY_ROTATION', true);
 define('PROXY_LIST_FILE', __DIR__ . '/proxies.txt');
 define('ENABLE_REQUEST_THROTTLING', true);
