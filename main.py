@@ -34,6 +34,9 @@ import signal
 import sys
 import time
 import re
+import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Initialize Services
 api_client = APIClient(API_BASE_URL, API_TOKEN)
@@ -233,12 +236,30 @@ async def on_callback(callback_query: CallbackQuery):
         else:
             logger.error(f"Callback error: {e}")
 
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, format, *args):
+        return
+
+def run_health_check_server():
+    port = int(os.getenv("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    logger.info(f"Health check server started on port {port}")
+    server.serve_forever()
+
 def signal_handler(sig, frame):
     sys.exit(0)
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
+    health_thread = threading.Thread(target=run_health_check_server, daemon=True)
+    health_thread.start()
 
     logger.info("ABRAAVA bot is starting...")
     while True:
