@@ -36,10 +36,8 @@ class DownloadService:
         else:
             full_text = text
 
-        # We always delete and re-send to ensure consistent behavior across single and album downloads
-        # as requested by the user. This avoids "message not modified" errors and provides a fresh UI state.
         if status_msg:
-            await safe_delete(status_msg)
+            return await edit_message(status_msg, full_text, reply_markup=reply_markup, show_cancel=not is_batch)
         return await send_message(self.bot, chat_id, full_text, reply_markup=reply_markup, show_cancel=not is_batch)
 
     async def download_and_send_track(self, chat_id, track_id, user_id, status_msg=None,
