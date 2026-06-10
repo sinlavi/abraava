@@ -9,7 +9,7 @@ from balethon.objects import Message, InlineKeyboardButton, InlineKeyboard
 from core.logger import logger
 from core.config import OFFLINE_MODE, DEFAULT_QUALITY, FOOTER
 from core.http_client import HttpClient
-from models.schemas import DownloadQuality
+from models.schemas import DownloadQuality, estimate_size_mb, get_best_quality_for_size
 from crawlers.utils import get_track, get_or_crawl_collection, get_or_crawl_collection_tracks
 from crawlers.youtube import search_youtube_track, download_audio
 from crawlers.itunes import get_cached_audio, set_mirror, get_cached_artwork, get_mirror
@@ -78,6 +78,15 @@ class DownloadService:
 
         quality_value = selected_quality or settings.download_quality.value
         if quality_value == "ask": quality_value = "192"
+
+        # Size limit check (20MB)
+        duration_ms = int(track.get('trackTimeMillis') or 0)
+        if duration_ms > 0:
+            estimated_size = estimate_size_mb(duration_ms, quality_value)
+            if estimated_size > 20:
+                logger.warning(f"Track {track_id} estimated size {estimated_size:.2f}MB exceeds 20MB limit at {quality_value}kbps")
+                best_q = get_best_quality_for_size(duration_ms, 20)
+                return status_msg, ("size_limit", best_q)
 
         caption = self._build_caption(track, quality_value)
 
