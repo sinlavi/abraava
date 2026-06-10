@@ -1,4 +1,3 @@
-from balethon.objects import InlineKeyboard, Message, InlineKeyboardButton
 from core.config import FOOTER
 from bot.keyboards import create_close_button, create_info_channel_button, create_cancel_button
 import logging
@@ -14,32 +13,39 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
         markup = copy.deepcopy(reply_markup)
 
         # Flatten and check for close button in all nested lists
-        has_close = any(
-            getattr(btn, 'callback_data', '') == 'close'
-            for row in markup
-            if isinstance(row, list)
-            for btn in row
-        )
+        has_close = False
+        for row in markup:
+            if isinstance(row, list):
+                for btn in row:
+                    cb = getattr(btn, 'callback_data', '') if not isinstance(btn, dict) else btn.get('callback_data', '')
+                    if cb and cb.startswith('close'):
+                        has_close = True
+                        break
+            if has_close: break
 
         if not no_close and not has_close:
             if task_id:
                 markup.append([create_cancel_button(task_id)])
             elif show_cancel:
-                markup.append([InlineKeyboardButton(text="⏹️ لغو عملیات", callback_data="close")])
+                markup.append([{'text': "⏹️ لغو عملیات", 'callback_data': "close"}])
             elif show_info:
                 markup.append([create_info_channel_button()])
 
             # Final check just in case something was added but not 'close'
-            has_close_now = any(
-                getattr(btn, 'callback_data', '') == 'close'
-                for row in markup
-                if isinstance(row, list)
-                for btn in row
-            )
+            has_close_now = False
+            for row in markup:
+                if isinstance(row, list):
+                    for btn in row:
+                        cb = getattr(btn, 'callback_data', '') if not isinstance(btn, dict) else btn.get('callback_data', '')
+                        if cb and cb.startswith('close'):
+                            has_close_now = True
+                            break
+                if has_close_now: break
+
             if not has_close_now:
                 markup.append([create_close_button()])
 
-        return InlineKeyboard(*markup)
+        return markup
     return reply_markup
 
 async def safe_delete(message, attempt=1):
@@ -57,21 +63,44 @@ async def safe_delete(message, attempt=1):
 async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None, show_cancel=False, reply_to_message_id=None):
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
     try:
-        await bot.send_chat_action(chat_id, "typing")
-        return await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup, reply_to_message_id=reply_to_message_id)
+        from core.bot_client import BotClient, get_bot_client
+
+        if isinstance(bot, BotClient):
+            await bot.send_chat_action(chat_id, "typing")
+            return await bot.send_message(chat_id, text, markup, reply_to_message_id, no_footer=True)
+
+        if hasattr(bot, "send_chat_action"):
+            await bot.send_chat_action(chat_id, "typing")
+
+        if hasattr(bot, "send_message"):
+            return await bot.send_message(chat_id, text=text, reply_markup=markup, reply_to_message_id=reply_to_message_id)
+        else:
+            client = get_bot_client()
+            await client.send_chat_action(chat_id, "typing")
+            return await client.send_message(chat_id, text, markup, reply_to_message_id, no_footer=True)
     except Exception as e:
         if "too many" in str(e).lower():
             await asyncio.sleep(1)
-            return await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
+            return await send_message(bot, chat_id, text, reply_markup, no_close, show_info, task_id, show_cancel, reply_to_message_id)
         raise
 
 async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False, show_cancel=False, attempt=1):
     if not message: return None
-    chat_id = message.chat.id
+
+    from core.bot_client import get_bot_client
+    client = get_bot_client()
+
+    # Check if message is Balethon object or Telethon object or custom object
+    chat_id = getattr(getattr(message, "chat", None), "id", None)
+    message_id = getattr(message, "id", None)
+
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
 
     try:
-        return await message.edit(text=f"{text}{FOOTER}", reply_markup=markup)
+        if hasattr(message, "edit"):
+            return await message.edit(text=f"{text}{FOOTER}", reply_markup=markup)
+        else:
+            return await client.edit_message(chat_id, message_id, text, markup, no_footer=True)
     except Exception as e:
         err_msg = str(e).lower()
 
@@ -79,7 +108,9 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
             return message
 
         if "message not found" in err_msg:
-            return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
+            # Fallback depends on having access to client
+            client = getattr(message, "client", None) or get_bot_client()
+            return await send_message(client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
         max_attempts = 10 if force_edit else 3
         if ("rate limit" in err_msg or "too many" in err_msg) and attempt < max_attempts:
@@ -96,9 +127,18 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
         except Exception:
             pass
 
-        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
+        client = getattr(message, "client", None) or get_bot_client()
+        return await send_message(client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
-async def reply_message(message: Message, text: str, reply_markup=None, show_info=False):
+async def reply_message(message, text: str, reply_markup=None, show_info=False):
     markup = _prepare_markup(reply_markup, False, show_info)
-    await message.client.send_chat_action(message.chat.id, "typing")
-    return await message.reply(text=f"{text}{FOOTER}", reply_markup=markup)
+    chat_id = message.chat.id
+
+    if hasattr(message, "client") and hasattr(message, "reply"):
+        await message.client.send_chat_action(chat_id, "typing")
+        return await message.reply(text=f"{text}{FOOTER}", reply_markup=markup)
+    else:
+        from core.bot_client import get_bot_client
+        client = get_bot_client()
+        await client.send_chat_action(chat_id, "typing")
+        return await client.send_message(chat_id, text, markup, reply_to_message_id=message.id, no_footer=True)

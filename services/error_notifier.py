@@ -2,9 +2,7 @@ import time
 from typing import Optional, List, Dict
 from core.logger import logger
 from services.api_client import APIClient
-from balethon import Client
-from balethon.objects import Message
-from core.config import INFO_CHANNEL_ID
+from core.config import INFO_CHANNEL_ID, PLATFORM
 
 class BaleUploadErrorNotifier:
     def __init__(self, api_client: APIClient):
@@ -14,7 +12,7 @@ class BaleUploadErrorNotifier:
         self.last_error_time = 0
         self.error_cooldown = 300
 
-    async def notify_upload_error(self, bot: Client, error_message: str = "", album_download_callback: callable = None):
+    async def notify_upload_error(self, bot, error_message: str = "", album_download_callback: callable = None):
         if not INFO_CHANNEL_ID:
             return
 
@@ -40,18 +38,19 @@ class BaleUploadErrorNotifier:
 
         self.last_error_time = current_time
 
+        messenger_name = "تلگرام" if PLATFORM == "telegram" else "بله"
         notification_text = (
-            "⚠️ *اختلال در سرویس آپلود بله* ⚠️\n\n"
-            "در حال حاضر سرویس آپلود فایل پیام‌رسان بله با مشکل مواجه شده است.\n"
-            "این مشکل احتمالا از سمت بله می‌باشد، به محض رفع مشکل، ربات به حالت عادی بازخواهد گشت.\n\n"
+            f"⚠️ *اختلال در سرویس آپلود {messenger_name}* ⚠️\n\n"
+            f"در حال حاضر سرویس آپلود فایل پیام‌رسان {messenger_name} با مشکل مواجه شده است.\n"
+            f"این مشکل احتمالا از سمت {messenger_name} می‌باشد، به محض رفع مشکل، ربات به حالت عادی بازخواهد گشت.\n\n"
             "✅ به محض رفع مشکل، این پیام حذف خواهد شد.\n\n"
             "#اختلال\n\n@abraava\n@abraava_bot"
         )
 
         try:
-            # We will use a central messaging helper later, but for now:
-            msg = await bot.send_message(INFO_CHANNEL_ID, notification_text)
-            self.notification_message_id = msg.id
+            from utils.messages import send_message
+            msg = await send_message(bot, INFO_CHANNEL_ID, notification_text, no_close=True)
+            self.notification_message_id = getattr(msg, "id", None)
             self.error_active = True
             logger.warning(f"Bale upload error notification sent")
 
@@ -64,13 +63,18 @@ class BaleUploadErrorNotifier:
         except Exception as e:
             logger.error(f"Failed to send upload error notification: {e}")
 
-    async def clear_upload_error_notification(self, bot: Client):
+    async def clear_upload_error_notification(self, bot):
         if not INFO_CHANNEL_ID or not self.error_active:
             return
 
         try:
-            await bot.delete_message(INFO_CHANNEL_ID, self.notification_message_id)
-            logger.info("Bale upload error notification cleared")
+            if hasattr(bot, "delete_message"):
+                await bot.delete_message(INFO_CHANNEL_ID, self.notification_message_id)
+            else:
+                from core.bot_client import get_bot_client
+                client = get_bot_client()
+                await client.delete_message(INFO_CHANNEL_ID, self.notification_message_id)
+            logger.info("Upload error notification cleared")
         except Exception as e:
             if "message not found" not in str(e).lower():
                 logger.error(f"Failed to delete error notification: {e}")
@@ -78,6 +82,6 @@ class BaleUploadErrorNotifier:
             self.error_active = False
             self.notification_message_id = None
 
-    async def check_and_clear_if_resolved(self, bot: Client, test_success: bool = False):
+    async def check_and_clear_if_resolved(self, bot, test_success: bool = False):
         if self.error_active and test_success:
             await self.clear_upload_error_notification(bot)

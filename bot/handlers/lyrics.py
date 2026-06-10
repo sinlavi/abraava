@@ -2,7 +2,6 @@ from services.lyrics_service import lyrics_service
 from crawlers.utils import get_track
 from utils.messages import send_message, edit_message
 from bot.keyboards import create_close_button
-from balethon.objects import InlineKeyboard
 import logging
 import re
 
@@ -56,7 +55,7 @@ async def handle_lyrics_request(bot, chat_id, track_id, owner_id, message_to_edi
 
         # Send lyrics
         for i, part in enumerate(parts):
-            reply_markup = InlineKeyboard([create_close_button(owner_id)]) if i == len(parts) - 1 else None
+            reply_markup = [create_close_button(owner_id)] if i == len(parts) - 1 else None
             if i == 0:
                 status_msg = await edit_message(status_msg, part, reply_markup=reply_markup)
             else:

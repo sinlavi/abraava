@@ -1,12 +1,11 @@
-from balethon import Client
-from balethon.objects import Message
 from core.config import BOT_NAME
 from utils.messages import send_message, edit_message
 from bot.keyboards import get_settings_keyboard, get_quality_keyboard
 from models.schemas import DownloadQuality
 
-async def settings_command(bot: Client, message: Message, user_settings_service):
-    user_id = message.author.id
+async def settings_command(bot, message, user_settings_service):
+    author = getattr(message, "author", None) or getattr(message, "sender", None)
+    user_id = getattr(author, "id", None)
     settings = await user_settings_service.get_settings(user_id)
 
     quality_text = "هر بار بپرس" if settings.download_quality == DownloadQuality.ASK else f"{settings.download_quality.value} kbps"
@@ -50,8 +49,9 @@ async def stats_command_logic(bot, message, user_id, api_client, rate_limiter, d
     from bot.keyboards import create_close_button
     message = await edit_message(message, text, reply_markup=[[create_close_button()]])
 
-async def stats_command(bot: Client, message: Message, api_client, rate_limiter, download_rate_limiter):
-    user_id = message.author.id
+async def stats_command(bot, message, api_client, rate_limiter, download_rate_limiter):
+    author = getattr(message, "author", None) or getattr(message, "sender", None)
+    user_id = getattr(author, "id", None)
     remaining_search = rate_limiter.get_user_remaining(user_id)
     remaining_download = download_rate_limiter.get_remaining(user_id)
 

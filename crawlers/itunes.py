@@ -7,10 +7,9 @@ from typing import Optional, Dict, Any, Literal, List, Union, Tuple
 from pathlib import Path
 import aiosqlite
 
-from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY, FOOTER
+from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY, FOOTER, PLATFORM
 from core.logger import logger
 from core.http_client import HttpClient
-from balethon.objects import Message
 from utils.messages import edit_message
 
 
@@ -107,6 +106,11 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
                        method: Literal["GET", "POST", "PUT", "DELETE"] = "GET", payload: dict = None,
                        official: bool = False) -> Optional[Dict[str, Any]]:
     params = params or {}
+    if not official and "platform" not in params:
+        params["platform"] = PLATFORM
+    if payload and "platform" not in payload:
+        payload["platform"] = PLATFORM
+
     if method == "GET" and not bypass_cache and not OFFLINE_MODE:
         cached = await _itunes_cache.get(endpoint, params)
         if cached: return cached
