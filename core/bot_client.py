@@ -777,28 +777,37 @@ class BotClient:
             logger.debug(f"✅ Callback query {callback_query_id} answered: {text}")
 
     async def send_chat_action(self, chat_id, action):
+        """Send chat action with proper parameters for Telethon v2"""
         if self.platform == "telegram":
+            # نقشه اکشن‌ها با پارامترهای صحیح
             tg_action = {
                 "typing": types.SendMessageTypingAction(),
-                "upload_photo": types.SendMessageUploadPhotoAction(),
+                "upload_photo": types.SendMessageUploadPhotoAction(progress=0),
                 "record_audio": types.SendMessageRecordAudioAction(),
-                "upload_audio": types.SendMessageUploadAudioAction(),
+                "upload_audio": types.SendMessageUploadAudioAction(progress=0),
                 "record_video": types.SendMessageRecordVideoAction(),
-                "upload_video": types.SendMessageUploadVideoAction(),
-                "upload_document": types.SendMessageUploadDocumentAction(),
+                "upload_video": types.SendMessageUploadVideoAction(progress=0),
+                "upload_document": types.SendMessageUploadDocumentAction(progress=0),
                 "find_location": types.SendMessageGeoLocationAction(),
                 "record_video_note": types.SendMessageRecordRoundAction(),
-                "upload_video_note": types.SendMessageUploadRoundAction(),
+                "upload_video_note": types.SendMessageUploadRoundAction(progress=0),
+                "cancel": types.SendMessageCancelAction(),
             }.get(action, types.SendMessageTypingAction())
             
-            await self.client(functions.messages.SetTypingRequest(
-                peer=chat_id,
-                action=tg_action
-            ))
-            logger.debug(f"⌨️ Chat action '{action}' sent to {chat_id}")
+            try:
+                await self.client(functions.messages.SetTypingRequest(
+                    peer=chat_id,
+                    action=tg_action
+                ))
+                logger.debug(f"⌨️ Chat action '{action}' sent to {chat_id}")
+            except Exception as e:
+                logger.warning(f"Could not send chat action '{action}': {e}")
         else:
-            await self.client.send_chat_action(chat_id, action)
-            logger.debug(f"⌨️ Chat action '{action}' sent to {chat_id}")
+            try:
+                await self.client.send_chat_action(chat_id, action)
+                logger.debug(f"⌨️ Chat action '{action}' sent to {chat_id}")
+            except Exception as e:
+                logger.warning(f"Could not send chat action '{action}': {e}")
 
     async def get_me(self):
         if self.platform == "telegram":
