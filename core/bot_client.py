@@ -56,7 +56,6 @@ class WrappedMessage:
                 self.document = message.document
                 self.media_type = "document"
                 
-                # Check document attributes
                 for attr in message.document.attributes:
                     if isinstance(attr, types.DocumentAttributeAudio):
                         self.audio = message.document
@@ -94,7 +93,6 @@ class WrappedMessage:
             self.content = message.content
             self.reply_to_message = getattr(message, 'reply_to_message', None)
             
-            # Handle media attributes for Balethon
             self.photo = getattr(message, 'photo', None)
             self.document = getattr(message, 'document', None)
             self.audio = getattr(message, 'audio', None)
@@ -106,7 +104,6 @@ class WrappedMessage:
             self.media_type = getattr(message, 'media_type', 'text')
 
     async def reply(self, text, reply_markup=None):
-        """Reply with text"""
         return await self.client_wrapper.send_message(
             self.chat.id, text, 
             reply_markup=reply_markup, 
@@ -114,7 +111,6 @@ class WrappedMessage:
         )
 
     async def reply_photo(self, photo, caption=None, reply_markup=None):
-        """Reply with a photo"""
         return await self.client_wrapper.send_photo(
             self.chat.id, photo, 
             caption=caption, 
@@ -123,7 +119,6 @@ class WrappedMessage:
         )
 
     async def reply_audio(self, audio, caption=None, reply_markup=None, **kwargs):
-        """Reply with an audio file"""
         return await self.client_wrapper.send_audio(
             self.chat.id, audio, 
             caption=caption, 
@@ -133,7 +128,6 @@ class WrappedMessage:
         )
 
     async def reply_voice(self, voice, caption=None, reply_markup=None):
-        """Reply with a voice message"""
         return await self.client_wrapper.send_voice(
             self.chat.id, voice, 
             caption=caption, 
@@ -142,7 +136,6 @@ class WrappedMessage:
         )
 
     async def edit(self, text, reply_markup=None):
-        """Edit the message"""
         return await self.client_wrapper.edit_message(
             self.chat.id, self.id, 
             text, 
@@ -150,11 +143,9 @@ class WrappedMessage:
         )
 
     async def delete(self):
-        """Delete the message"""
         return await self.client_wrapper.delete_message(self.chat.id, self.id)
     
     async def download_media(self, file_path=None):
-        """Download media from the message"""
         if not self.has_media:
             return None
             
@@ -175,7 +166,6 @@ class WrappedMessage:
     
     @property
     def has_media(self):
-        """Check if message has any media"""
         return any([
             self.photo, self.document, self.audio, 
             self.voice, self.video, self.animation, 
@@ -184,7 +174,6 @@ class WrappedMessage:
     
     @property
     def file_id(self):
-        """Get file ID of the media (for Balethon)"""
         if self.platform != "telegram":
             if self.photo:
                 return self.photo.file_id
@@ -200,7 +189,6 @@ class WrappedMessage:
     
     @property
     def message_link(self):
-        """Get link to the message (Telegram only)"""
         if self.platform == "telegram":
             if self.chat.type == "channel" or self.chat.type == "supergroup":
                 username = getattr(self.chat, 'username', None)
@@ -230,17 +218,14 @@ class WrappedCallbackQuery:
             self.message = WrappedMessage(query.message, platform) if query.message else None
 
     async def answer(self, text=None, show_alert=False):
-        """Answer this callback query"""
         return await self.client_wrapper.answer_callback_query(self.id, text, show_alert)
     
     async def edit_message(self, text, reply_markup=None):
-        """Edit the message associated with this callback"""
         if self.message:
             return await self.message.edit(text, reply_markup)
         return None
     
     async def delete_message(self):
-        """Delete the message associated with this callback"""
         if self.message:
             return await self.message.delete()
         return None
@@ -285,7 +270,6 @@ class BotClient:
             self.client.on_shutdown()(self._bale_on_shutdown)
 
     async def _handle_error(self, error, context=None):
-        """Handle errors with registered error handlers"""
         for handler in self._error_handlers:
             try:
                 if asyncio.iscoroutinefunction(handler):
@@ -387,7 +371,6 @@ class BotClient:
         return decorator
     
     def on_error(self):
-        """Decorator to register error handlers"""
         def decorator(handler):
             self._error_handlers.append(handler)
             return handler
@@ -453,7 +436,6 @@ class BotClient:
             return InlineKeyboard(*rows)
 
     async def send_message(self, chat_id, text, reply_markup=None, reply_to_message_id=None, parse_mode='md'):
-        """Send a text message"""
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
@@ -477,7 +459,6 @@ class BotClient:
             return wrapped
 
     async def edit_message(self, chat_id, message_id, text, reply_markup=None, parse_mode='md'):
-        """Edit a message"""
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
@@ -511,14 +492,12 @@ class BotClient:
                 raise
 
     async def delete_message(self, chat_id, message_id):
-        """Delete a message"""
         if self.platform == "telegram":
             await self.client.delete_messages(chat_id, [message_id])
         else:
             await self.client.delete_message(chat_id, message_id)
 
     async def send_photo(self, chat_id, photo, caption=None, reply_markup=None, reply_to_message_id=None):
-        """Send a photo"""
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
@@ -543,7 +522,6 @@ class BotClient:
             return wrapped
 
     async def send_audio(self, chat_id, audio, caption=None, reply_markup=None, reply_to_message_id=None, **kwargs):
-        """Send an audio file"""
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
@@ -577,7 +555,6 @@ class BotClient:
             return wrapped
 
     async def send_voice(self, chat_id, voice, caption=None, reply_markup=None, reply_to_message_id=None):
-        """Send a voice message"""
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
@@ -603,7 +580,6 @@ class BotClient:
             return wrapped
 
     async def send_document(self, chat_id, document, caption=None, reply_markup=None, reply_to_message_id=None):
-        """Send a document file"""
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
@@ -628,7 +604,6 @@ class BotClient:
             return wrapped
 
     async def send_video(self, chat_id, video, caption=None, reply_markup=None, reply_to_message_id=None):
-        """Send a video"""
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
@@ -653,7 +628,6 @@ class BotClient:
             return wrapped
 
     async def get_chat(self, chat_id):
-        """Get chat information"""
         if self.platform == "telegram":
             chat = await self.client.get_entity(chat_id)
             return type('Chat', (), {
@@ -666,7 +640,6 @@ class BotClient:
             return await self.client.get_chat(chat_id)
 
     async def get_chat_member(self, chat_id, user_id):
-        """Get chat member information"""
         if self.platform == "telegram":
             try:
                 participant = await self.client.get_participant(chat_id, user_id)
@@ -715,7 +688,6 @@ class BotClient:
             return member
 
     async def answer_callback_query(self, callback_query_id, text=None, show_alert=False):
-        """Answer a callback query"""
         if self.platform == "telegram":
             await self.client(functions.messages.SetBotCallbackAnswerRequest(
                 query_id=int(callback_query_id),
@@ -726,7 +698,6 @@ class BotClient:
             await self.client.answer_callback_query(callback_query_id, text, show_alert)
 
     async def send_chat_action(self, chat_id, action):
-        """Send chat action (typing, upload_photo, etc.)"""
         if self.platform == "telegram":
             tg_action = {
                 "typing": types.SendMessageTypingAction(),
@@ -749,7 +720,6 @@ class BotClient:
             await self.client.send_chat_action(chat_id, action)
 
     async def get_me(self):
-        """Get bot information"""
         if self.platform == "telegram":
             if hasattr(self, '_tg_me'):
                 return self._tg_me
@@ -758,7 +728,6 @@ class BotClient:
             return self.client.user
 
     async def download_media(self, message, file_path=None):
-        """Download media from a message"""
         if self.platform == "telegram":
             return await self.client.download_media(message.raw, file=file_path)
         else:
@@ -772,20 +741,27 @@ class BotClient:
                 return await self.client.download_voice(message.voice, file_path)
         return None
 
+    async def _run_telegram(self):
+        """Internal method to run Telegram bot"""
+        await self.client.start(bot_token=BOT_TOKEN)
+        self._tg_me = await self.client.get_me()
+        
+        for handler in self._init_handlers:
+            try:
+                if asyncio.iscoroutinefunction(handler):
+                    await handler()
+                else:
+                    handler()
+            except Exception as e:
+                await self._handle_error(e, {"handler": handler, "event": "init"})
+        
+        await self.client.run_until_disconnected()
+
     def run(self):
         """Run the bot"""
         if self.platform == "telegram":
-            self.client.loop.run_until_complete(self.client.start(bot_token=BOT_TOKEN))
-            self._tg_me = self.client.loop.run_until_complete(self.client.get_me())
-            
-            for handler in self._init_handlers:
-                if asyncio.iscoroutinefunction(handler):
-                    self.client.loop.run_until_complete(handler())
-                else:
-                    handler()
-
             try:
-                self.client.run_until_disconnected()
+                self.client.loop.run_until_complete(self._run_telegram())
             finally:
                 for handler in self._shutdown_handlers:
                     if asyncio.iscoroutinefunction(handler):
