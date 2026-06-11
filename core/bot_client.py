@@ -311,7 +311,7 @@ class BotClient:
 
         if PLATFORM == "telegram":
             # تنظیم پراکسی - فقط در صورت وجود پراکسی معتبر
-            proxy_config = None
+            self.proxy_config = None
             if PROXY and PROXY.strip():
                 try:
                     import socks
@@ -341,11 +341,11 @@ class BotClient:
                         host, port = proxy_url.split(":")
                     
                     # ساخت تنظیمات پراکسی
-                    proxy_config = (socks.SOCKS5, host, int(port), True, username, password)
+                    self.proxy_config = (socks.SOCKS5, host, int(port), True, username, password)
                     logger.info(f"🔌 Proxy configured: {host}:{port}")
                 except Exception as e:
                     logger.warning(f"⚠️ Invalid proxy configuration: {e}")
-                    proxy_config = None
+                    self.proxy_config = None
             else:
                 logger.info("🔌 No proxy configured, using direct connection")
             
@@ -354,7 +354,7 @@ class BotClient:
                 "abraava_tg", 
                 int(TELEGRAM_API_ID), 
                 TELEGRAM_API_HASH, 
-                proxy=proxy_config,
+                proxy=self.proxy_config,
                 connection_retries=5,
                 retry_delay=1
             )
@@ -1064,12 +1064,36 @@ class BotClient:
                 try:
                     await self.client.start(bot_token=BOT_TOKEN)
                 except Exception as e:
-                    logger.error(f"❌ Failed to connect to Telegram: {e}")
-                    logger.info("💡 Tips:")
-                    logger.info("   1. Check your internet connection")
-                    logger.info("   2. Disable proxy if not needed")
-                    logger.info("   3. Check TELEGRAM_API_ID and TELEGRAM_API_HASH")
-                    raise
+                    logger.error(f"❌ Failed to connect to Telegram with proxy: {e}")
+
+                    if self.proxy_config:
+                        logger.info("🔄 Attempting to connect without proxy...")
+                        try:
+                            # کلاینت جدید بدون پراکسی
+                            self.client = TelegramClient(
+                                "abraava_tg_direct",
+                                int(TELEGRAM_API_ID),
+                                TELEGRAM_API_HASH,
+                                proxy=None,
+                                connection_retries=5,
+                                retry_delay=1
+                            )
+                            # ثبت مجدد هندلرها برای کلاینت جدید
+                            @self.client.on(events.NewMessage(incoming=True))
+                            async def handler_message(event):
+                                await self._tg_on_message(event)
+
+                            @self.client.on(events.CallbackQuery())
+                            async def handler_callback(event):
+                                await self._tg_on_callback(event)
+
+                            await self.client.start(bot_token=BOT_TOKEN)
+                            logger.info("✅ Connected successfully without proxy")
+                        except Exception as e2:
+                            logger.error(f"❌ Failed to connect without proxy: {e2}")
+                            raise e2
+                    else:
+                        raise e
                 
                 self._tg_me = await self.client.get_me()
                 

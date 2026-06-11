@@ -199,7 +199,9 @@ async def get_cached_audio(track_id: Union[int, str], quality: str = None, platf
             return None
         url = mirror['url']
         logger.info(f"Cached audio found for {track_id}: {url} on platform {platform}")
-        return url.split('<token>/')[1] if '<token>' in url else url
+        if '<token>/' in url: return url.split('<token>/')[1]
+        if url.startswith("tg://file/"): return url[10:]
+        return url
     logger.info(f"No cached audio for {track_id} with quality {quality or '192'} on platform {platform}")
     return None
 
@@ -208,7 +210,9 @@ async def get_cached_artwork(entity_type: str, entity_id: Union[int, str], platf
     data = await get_mirror(entity_type, entity_id, 'artworkUrl', platform=platform)
     if data and data.get("mirrors", {}).get('artworkUrl'):
         url = data["mirrors"]['artworkUrl']['url']
-        return url.split('<token>/')[1] if '<token>' in url else url
+        if '<token>/' in url: return url.split('<token>/')[1]
+        if url.startswith("tg://file/"): return url[10:]
+        return url
     return None
 
 
@@ -216,7 +220,9 @@ async def get_cached_preview(track_id: Union[int, str], platform: str = PLATFORM
     data = await get_mirror('track', track_id, 'previewUrl', platform=platform)
     if data and data.get("mirrors", {}).get('previewUrl'):
         url = data["mirrors"]['previewUrl']['url']
-        return url.split('<token>/')[1] if '<token>' in url else url
+        if '<token>/' in url: return url.split('<token>/')[1]
+        if url.startswith("tg://file/"): return url[10:]
+        return url
     return None
 
 

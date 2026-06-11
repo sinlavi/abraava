@@ -14,7 +14,7 @@ if PLATFORM == "telegram":
 else:
     INFO_CHANNEL_LINK = f"https://ble.ir/{INFO_CHANNEL_USERNAME.lstrip('@')}"
     DEEP_LINK_BASE = f"https://ble.ir/{BOT_USERNAME.lstrip('@')}?start="
-FOOTER = f'\n\n{INFO_CHANNEL_LINK}\n{BOT_USERNAME}'
+FOOTER = f'\n\n{INFO_CHANNEL_USERNAME}\n{BOT_USERNAME}'
 
 # Connection Settings
 PROXY = os.getenv("proxy", "socks5h://127.0.0.1:1080")
