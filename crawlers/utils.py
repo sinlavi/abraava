@@ -1,6 +1,6 @@
 import logging
 from typing import Optional, Dict, Any, Union, Tuple
-from balethon.objects import Message
+
 from core.config import OFFLINE_MODE
 from crawlers.itunes import lookup_itunes
 from services.music_adapter import MusicAdapter

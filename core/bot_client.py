@@ -80,22 +80,26 @@ class BotClient:
         if PLATFORM == "telegram":
             proxy_config = None
             if PROXY:
-                import socks
-                p = PROXY.replace("socks5h://", "").replace("socks5://", "")
-                if "@" in p:
-                    auth, addr = p.split("@")
-                    user, pwd = auth.split(":")
-                    host, port = addr.split(":")
-                else:
-                    host, port = p.split(":")
-                    user, pwd = None, None
-                proxy_config = (socks.SOCKS5, host, int(port), True, user, pwd)
+                try:
+                    import socks
+                    p = PROXY.replace("socks5h://", "").replace("socks5://", "")
+                    if "@" in p:
+                        auth, addr = p.split("@")
+                        user, pwd = auth.split(":")
+                        host, port = addr.split(":")
+                    else:
+                        host, port = p.split(":")
+                        user, pwd = None, None
+                    proxy_config = (socks.SOCKS5, host, int(port), True, user, pwd)
+                except Exception as e:
+                    logger.error(f"Failed to configure TG proxy: {e}")
 
-            self.client = TelegramClient("abraava_tg", int(TELEGRAM_API_ID), TELEGRAM_API_HASH, proxy=proxy_config)
+            api_id = int(TELEGRAM_API_ID) if TELEGRAM_API_ID else 0
+            self.client = TelegramClient("abraava_tg", api_id, TELEGRAM_API_HASH, proxy=proxy_config)
             self.client.on(events.NewMessage(incoming=True))(self._tg_on_message)
             self.client.on(events.CallbackQuery())(self._tg_on_callback)
         else:
-            self.client = Client(token=BOT_TOKEN, proxy=PROXY)
+            self.client = Client(token=BOT_TOKEN or "", proxy=PROXY)
             self.client.on_message()(self._bale_on_message)
             self.client.on_callback_query()(self._bale_on_callback)
             self.client.on_initialize()(self._bale_on_init)
@@ -183,8 +187,14 @@ class BotClient:
                     if isinstance(btn, dict):
                         if btn.get("url"):
                             tg_row.append(Button.url(btn["text"], btn["url"]))
-                        else:
+                        elif btn.get("callback_data"):
                             tg_row.append(Button.inline(btn["text"], btn["callback_data"]))
+                        elif btn.get("copy_text"):
+                            # Telegram doesn't support copy_text directly, use a callback or just a plain button
+                            tg_row.append(Button.inline(btn["text"], f"copy:{btn['copy_text'][:32]}"))
+                        else:
+                            # Fallback
+                            tg_row.append(Button.inline(btn["text"], "ignore"))
                     else:
                         tg_row.append(btn)
                 rows.append(tg_row)
@@ -195,7 +205,12 @@ class BotClient:
                 bale_row = []
                 for btn in row:
                     if isinstance(btn, dict):
-                        bale_row.append(InlineKeyboardButton(text=btn["text"], url=btn.get("url"), callback_data=btn.get("callback_data")))
+                        bale_row.append(InlineKeyboardButton(
+                            text=btn["text"],
+                            url=btn.get("url"),
+                            callback_data=btn.get("callback_data"),
+                            copy_text=btn.get("copy_text")
+                        ))
                     else:
                         bale_row.append(btn)
                 rows.append(bale_row)
@@ -285,13 +300,43 @@ class BotClient:
 
     async def get_chat(self, chat_id):
         if self.platform == "telegram":
-            chat = await self.client.get_entity(chat_id)
-            return type('Chat', (), {
-                'id': chat.id,
-                'type': 'private' if isinstance(chat, types.User) else 'group' if isinstance(chat, (types.Chat, types.Channel)) and not getattr(chat, 'broadcast', False) else 'channel'
-            })
+            try:
+                chat = await self.client.get_entity(chat_id)
+                return type('Chat', (), {
+                    'id': chat.id,
+                    'type': 'private' if isinstance(chat, types.User) else 'group' if isinstance(chat, (types.Chat, types.Channel)) and not getattr(chat, 'broadcast', False) else 'channel'
+                })
+            except Exception as e:
+                logger.error(f"TG get_chat error: {e}")
+                return None
         else:
             return await self.client.get_chat(chat_id)
+
+    async def get_chat_member(self, chat_id, user_id):
+        if self.platform == "telegram":
+            from telethon.errors import UserNotParticipantError
+            try:
+                # For Telethon, we check if user is in the chat
+                p = await self.client.get_permissions(chat_id, user_id)
+                # status can be 'member', 'administrator', 'creator' (left is handled by exception)
+                status = 'member'
+                if p.is_admin: status = 'administrator'
+                if p.is_creator: status = 'creator'
+                return type('ChatMember', (), {'status': status})
+            except UserNotParticipantError:
+                return type('ChatMember', (), {'status': 'left'})
+            except Exception as e:
+                if "not a participant" in str(e).lower(): return type('ChatMember', (), {'status': 'left'})
+                logger.error(f"TG get_chat_member error: {e}")
+                return None
+        else:
+            return await self.client.get_chat_member(chat_id, user_id)
+
+    async def forward_message(self, chat_id, message_id, from_chat_id):
+        if self.platform == "telegram":
+            return await self.client.forward_messages(chat_id, message_id, from_chat_id)
+        else:
+            return await self.client.forward_message(chat_id, message_id, from_chat_id)
 
     async def answer_callback_query(self, callback_query_id, text=None, show_alert=False):
         if self.platform == "telegram":
