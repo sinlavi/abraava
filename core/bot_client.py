@@ -117,13 +117,23 @@ class WrappedMessage:
             self.caption = getattr(message, 'caption', None)
             self.reply_to_message = getattr(message, 'reply_to_message', None)
             
-            self.photo = getattr(message, 'photo', None)
-            self.document = getattr(message, 'document', None)
-            self.audio = getattr(message, 'audio', None)
-            self.voice = getattr(message, 'voice', None)
-            self.video = getattr(message, 'video', None)
-            self.animation = getattr(message, 'animation', None)
-            self.sticker = getattr(message, 'sticker', None)
+            # Handle Balethon's special List objects or normal lists
+            def flatten(m):
+                if m is None: return None
+                if isinstance(m, (str, bytes)): return m
+                try:
+                    if (hasattr(m, '__iter__') or hasattr(m, '__getitem__')) and not hasattr(m, 'file_id'):
+                        return m[-1] if len(m) > 0 else None
+                except: pass
+                return m
+
+            self.photo = flatten(getattr(message, 'photo', None))
+            self.document = flatten(getattr(message, 'document', None))
+            self.audio = flatten(getattr(message, 'audio', None))
+            self.voice = flatten(getattr(message, 'voice', None))
+            self.video = flatten(getattr(message, 'video', None))
+            self.animation = flatten(getattr(message, 'animation', None))
+            self.sticker = flatten(getattr(message, 'sticker', None))
             self.media_type = getattr(message, 'media_type', 'text')
 
     async def reply(self, text, reply_markup=None):
@@ -219,16 +229,16 @@ class WrappedMessage:
                     return None
             return None
         else:
-            if self.photo:
-                return self.photo.file_id
-            elif self.document:
-                return self.document.file_id
-            elif self.audio:
-                return self.audio.file_id
-            elif self.voice:
-                return self.voice.file_id
-            elif self.video:
-                return self.video.file_id
+            # Balethon handling
+            target = self.photo or self.document or self.audio or self.voice or self.video or self.animation or self.sticker
+            if not target: return None
+
+            # Robust extraction of ID
+            for attr in ['id', 'file_id', 'file_unique_id']:
+                try:
+                    val = getattr(target, attr, None)
+                    if val: return str(val)
+                except: pass
         return None
     
     @property
@@ -1045,14 +1055,20 @@ class BotClient:
             logger.info(f"✅ Media downloaded: {result}")
             return result
         else:
+            def get_target(m, attr):
+                val = getattr(m, attr, None)
+                if val and (hasattr(val, '__iter__') or hasattr(val, '__getitem__')) and not isinstance(val, (str, bytes)):
+                    return val[-1] if len(val) > 0 else None
+                return val
+
             if hasattr(message, 'photo') and message.photo:
-                result = await self.client.download_photo(message.photo, file_path)
+                result = await self.client.download_photo(get_target(message, 'photo'), file_path)
             elif hasattr(message, 'document') and message.document:
-                result = await self.client.download_document(message.document, file_path)
+                result = await self.client.download_document(get_target(message, 'document'), file_path)
             elif hasattr(message, 'audio') and message.audio:
-                result = await self.client.download_audio(message.audio, file_path)
+                result = await self.client.download_audio(get_target(message, 'audio'), file_path)
             elif hasattr(message, 'voice') and message.voice:
-                result = await self.client.download_voice(message.voice, file_path)
+                result = await self.client.download_voice(get_target(message, 'voice'), file_path)
             else:
                 return None
             logger.info(f"✅ Media downloaded: {result}")
