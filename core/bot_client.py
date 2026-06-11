@@ -302,25 +302,53 @@ class BotClient:
         self._error_handlers = []
 
         if PLATFORM == "telegram":
+            # تنظیم پراکسی - فقط در صورت وجود پراکسی معتبر
             proxy_config = None
-            if PROXY:
-                import socks
-                p = PROXY.replace("socks5h://", "").replace("socks5://", "")
-                if "@" in p:
-                    auth, addr = p.split("@")
-                    user, pwd = auth.split(":")
-                    host, port = addr.split(":")
-                else:
-                    host, port = p.split(":")
-                    user, pwd = None, None
-                proxy_config = (socks.SOCKS5, host, int(port), True, user, pwd)
-                logger.info(f"🔌 Proxy configured: {host}:{port}")
-
+            if PROXY and PROXY.strip():
+                try:
+                    import socks
+                    # پشتیبانی از فرمت‌های مختلف پراکسی
+                    proxy_url = PROXY.strip()
+                    
+                    # حذف پروتکل
+                    if proxy_url.startswith("socks5h://"):
+                        proxy_url = proxy_url[9:]
+                    elif proxy_url.startswith("socks5://"):
+                        proxy_url = proxy_url[8:]
+                    elif proxy_url.startswith("socks4://"):
+                        proxy_url = proxy_url[8:]
+                    
+                    # جدا کردن اطلاعات احراز هویت
+                    username = None
+                    password = None
+                    
+                    if "@" in proxy_url:
+                        auth, addr = proxy_url.split("@")
+                        if ":" in auth:
+                            username, password = auth.split(":")
+                        else:
+                            username = auth
+                        host, port = addr.split(":")
+                    else:
+                        host, port = proxy_url.split(":")
+                    
+                    # ساخت تنظیمات پراکسی
+                    proxy_config = (socks.SOCKS5, host, int(port), True, username, password)
+                    logger.info(f"🔌 Proxy configured: {host}:{port}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Invalid proxy configuration: {e}")
+                    proxy_config = None
+            else:
+                logger.info("🔌 No proxy configured, using direct connection")
+            
+            # ایجاد کلاینت تلگرام
             self.client = TelegramClient(
                 "abraava_tg", 
                 int(TELEGRAM_API_ID), 
                 TELEGRAM_API_HASH, 
-                proxy=proxy_config
+                proxy=proxy_config,
+                connection_retries=5,
+                retry_delay=1
             )
             
             @self.client.on(events.NewMessage(incoming=True))
@@ -334,7 +362,7 @@ class BotClient:
             logger.info("🤖 Telegram bot client initialized")
                 
         else:
-            self.client = Client(token=BOT_TOKEN, proxy=PROXY)
+            self.client = Client(token=BOT_TOKEN, proxy=PROXY if PROXY else None)
             self.client.on_message()(self._bale_on_message)
             self.client.on_callback_query()(self._bale_on_callback)
             self.client.on_initialize()(self._bale_on_init)
@@ -536,19 +564,23 @@ class BotClient:
     async def start(self):
         if self.platform == "telegram":
             logger.info("🚀 Starting Telegram bot...")
-            await self.client.start(bot_token=BOT_TOKEN)
-            self._tg_me = await self.client.get_me()
-            logger.info(f"✨ Bot started as @{self._tg_me.username} (ID: {self._tg_me.id})")
-            
-            for handler in self._init_handlers:
-                try:
-                    if asyncio.iscoroutinefunction(handler):
-                        await handler()
-                    else:
-                        handler()
-                    logger.debug(f"✅ Init handler executed: {handler.__name__}")
-                except Exception as e:
-                    await self._handle_error(e, {"handler": handler})
+            try:
+                await self.client.start(bot_token=BOT_TOKEN)
+                self._tg_me = await self.client.get_me()
+                logger.info(f"✨ Bot started as @{self._tg_me.username} (ID: {self._tg_me.id})")
+                
+                for handler in self._init_handlers:
+                    try:
+                        if asyncio.iscoroutinefunction(handler):
+                            await handler()
+                        else:
+                            handler()
+                        logger.debug(f"✅ Init handler executed: {handler.__name__}")
+                    except Exception as e:
+                        await self._handle_error(e, {"handler": handler})
+            except Exception as e:
+                logger.error(f"❌ Failed to start bot: {e}")
+                raise
         else:
             await self.client.connect()
 
@@ -846,7 +878,6 @@ class BotClient:
                 else:
                     # برای گروه‌ها و کانال‌ها
                     try:
-                        # استفاده از get_permissions (موجود در Telethon)
                         permissions = await self.client.get_permissions(chat_id, user_id)
                         if permissions:
                             is_member = getattr(permissions, 'is_member', False)
@@ -903,7 +934,7 @@ class BotClient:
                     query_id=int(callback_query_id),
                     message=text or "",
                     alert=show_alert,
-                    cache_time=0  # اضافه کردن cache_time
+                    cache_time=0
                 ))
                 logger.info(f"✅ Callback query {callback_query_id} answered")
             except Exception as e:
@@ -979,7 +1010,16 @@ class BotClient:
                 logger.info("🚀 Starting Telegram bot...")
                 logger.info("=" * 50)
                 
-                await self.client.start(bot_token=BOT_TOKEN)
+                try:
+                    await self.client.start(bot_token=BOT_TOKEN)
+                except Exception as e:
+                    logger.error(f"❌ Failed to connect to Telegram: {e}")
+                    logger.info("💡 Tips:")
+                    logger.info("   1. Check your internet connection")
+                    logger.info("   2. Disable proxy if not needed")
+                    logger.info("   3. Check TELEGRAM_API_ID and TELEGRAM_API_HASH")
+                    raise
+                
                 self._tg_me = await self.client.get_me()
                 
                 logger.info(f"✨ Bot Information:")
