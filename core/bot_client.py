@@ -32,10 +32,9 @@ class WrappedMessage:
             self.caption = message.caption
             self.reply_to_message = None
             if message.reply_to:
-                # We can't easily fetch full reply message here without await, so we mock it
                 self.reply_to_message = type('Reply', (), {
                     'id': message.reply_to.reply_to_msg_id,
-                    'author': type('Author', (), {'id': None}) # ID unknown without fetch
+                    'author': type('Author', (), {'id': None})
                 })
         else:
             self.id = message.id
@@ -67,6 +66,10 @@ class WrappedCallbackQuery:
             self.author = query.author
             self.data = query.data
             self.message = WrappedMessage(query.message, platform) if query.message else None
+
+    async def answer(self, text=None, show_alert=False):
+        """Answer this callback query"""
+        return await self.client_wrapper.answer_callback_query(self.id, text, show_alert)
 
 class BotClient:
     def __init__(self):
@@ -101,36 +104,6 @@ class BotClient:
             self.client.on_initialize()(self._bale_on_init)
             self.client.on_shutdown()(self._bale_on_shutdown)
 
-    async def edit_message(self, chat_id, message_id, text, reply_markup=None):
-        markup = self._convert_keyboard(reply_markup)
-        if self.platform == "telegram":
-            try:
-                msg = await self.client.edit_message(chat_id, message_id, text, buttons=markup, parse_mode='md')
-                wrapped = WrappedMessage(msg, "telegram")
-                wrapped.client_wrapper = self
-                return wrapped
-            except Exception as e:
-                if "message is not modified" in str(e).lower(): return None
-                raise
-        else:
-            try:
-                # Bale might use edit_message_text or edit_text
-                # Try different possible method names
-                if hasattr(self.client, 'edit_message_text'):
-                    msg = await self.client.edit_message_text(chat_id, message_id, text, reply_markup=markup)
-                elif hasattr(self.client, 'edit_text'):
-                    msg = await self.client.edit_text(chat_id, message_id, text, reply_markup=markup)
-                else:
-                    # Fallback: send a new message and delete the old one
-                    await self.delete_message(chat_id, message_id)
-                    msg = await self.send_message(chat_id, text, reply_markup=reply_markup)
-                
-                wrapped = WrappedMessage(msg, "bale")
-                wrapped.client_wrapper = self
-                return wrapped
-            except Exception as e:
-                if "message is not modified" in str(e).lower(): return None
-                raise
     async def _tg_on_message(self, event):
         wrapped = WrappedMessage(event.message, "telegram")
         wrapped.client_wrapper = self
@@ -139,7 +112,8 @@ class BotClient:
 
     async def _tg_on_callback(self, event):
         wrapped = WrappedCallbackQuery(event, "telegram")
-        wrapped.message.client_wrapper = self
+        if wrapped.message:
+            wrapped.message.client_wrapper = self
         for handler in self._callback_handlers:
             await handler(wrapped)
 
@@ -152,7 +126,8 @@ class BotClient:
     async def _bale_on_callback(self, callback_query):
         query = callback_query
         wrapped = WrappedCallbackQuery(query, "bale")
-        wrapped.message.client_wrapper = self
+        if wrapped.message:
+            wrapped.message.client_wrapper = self
         for handler in self._callback_handlers:
             await handler(wrapped)
 
@@ -205,7 +180,8 @@ class BotClient:
             await self.client.connect()
 
     def _convert_keyboard(self, keyboard):
-        if not keyboard: return None
+        if not keyboard: 
+            return None
         if self.platform == "telegram":
             rows = []
             for row in keyboard:
@@ -241,56 +217,33 @@ class BotClient:
             wrapped = WrappedMessage(msg, "bale")
             wrapped.client_wrapper = self
             return wrapped
-    
+
     async def edit_message(self, chat_id, message_id, text, reply_markup=None):
+        """Edit a message - uses edit_message_text for Balethon [citation:1] and edit_message for Telethon [citation:3][citation:8]"""
         markup = self._convert_keyboard(reply_markup)
         if self.platform == "telegram":
             try:
+                # Telethon's edit_message method [citation:3][citation:8]
                 msg = await self.client.edit_message(chat_id, message_id, text, buttons=markup, parse_mode='md')
                 wrapped = WrappedMessage(msg, "telegram")
                 wrapped.client_wrapper = self
                 return wrapped
             except Exception as e:
-                if "message is not modified" in str(e).lower(): return None
+                if "message is not modified" in str(e).lower(): 
+                    return None
                 raise
         else:
             try:
-                msg = await self.client.edit_message(chat_id, message_id, text, reply_markup=markup)
+                # Balethon uses edit_message_text [citation:1]
+                msg = await self.client.edit_message_text(chat_id, message_id, text, reply_markup=markup)
                 wrapped = WrappedMessage(msg, "bale")
                 wrapped.client_wrapper = self
                 return wrapped
             except Exception as e:
-                if "message is not modified" in str(e).lower(): return None
+                if "message is not modified" in str(e).lower(): 
+                    return None
                 raise
-    async def get_chat_member(self, chat_id, user_id):
-        if self.platform == "telegram":
-            member = await self.client.get_permissions(chat_id, user_id)
-            # telethon's get_permissions returns a ChatParticipant object
-            status = "member"
-            if member.is_member:
-                if getattr(member, 'is_admin', False):
-                    status = "administrator"
-                elif getattr(member, 'is_creator', False):
-                    status = "creator"
-                else:
-                    status = "member"
-            else:
-                status = "left"
-            
-            return type('ChatMember', (), {
-                'user': type('User', (), {
-                    'id': user_id,
-                    'is_bot': False,  # Would need additional API call to check
-                    'username': None,
-                    'first_name': None
-                }),
-                'status': status,
-                'is_member': member.is_member
-            })
-        else:
-            member = await self.client.get_chat_member(chat_id, user_id)
-            return member
-            
+
     async def delete_message(self, chat_id, message_id):
         if self.platform == "telegram":
             await self.client.delete_messages(chat_id, [message_id])
@@ -352,6 +305,59 @@ class BotClient:
         else:
             return await self.client.get_chat(chat_id)
 
+    async def get_chat_member(self, chat_id, user_id):
+        """Get chat member information [citation:2]"""
+        if self.platform == "telegram":
+            try:
+                # Try to get participant info
+                participant = await self.client.get_participant(chat_id, user_id)
+                
+                status = "member"
+                if isinstance(participant, types.ChannelParticipantAdmin):
+                    status = "administrator"
+                elif isinstance(participant, types.ChannelParticipantCreator):
+                    status = "creator"
+                elif isinstance(participant, types.ChannelParticipant):
+                    status = "member"
+                elif isinstance(participant, types.ChatParticipantAdmin):
+                    status = "administrator"
+                elif isinstance(participant, types.ChatParticipantCreator):
+                    status = "creator"
+                elif isinstance(participant, types.ChatParticipant):
+                    status = "member"
+                else:
+                    status = "left"
+                
+                # Get user info
+                user = participant.user if hasattr(participant, 'user') else await self.client.get_entity(user_id)
+                
+                return type('ChatMember', (), {
+                    'user': type('User', (), {
+                        'id': user.id,
+                        'is_bot': getattr(user, 'bot', False),
+                        'username': getattr(user, 'username', None),
+                        'first_name': getattr(user, 'first_name', None)
+                    }),
+                    'status': status,
+                    'is_member': status != "left"
+                })
+            except Exception as e:
+                # User is not a participant
+                return type('ChatMember', (), {
+                    'user': type('User', (), {
+                        'id': user_id,
+                        'is_bot': False,
+                        'username': None,
+                        'first_name': None
+                    }),
+                    'status': "left",
+                    'is_member': False
+                })
+        else:
+            # Balethon's get_chat_member method [citation:2]
+            member = await self.client.get_chat_member(chat_id, user_id)
+            return member
+
     async def answer_callback_query(self, callback_query_id, text=None, show_alert=False):
         if self.platform == "telegram":
             await self.client(functions.messages.SetBotCallbackAnswerRequest(
@@ -379,6 +385,15 @@ class BotClient:
             ))
         else:
             await self.client.send_chat_action(chat_id, action)
+
+    async def get_me(self):
+        """Get bot information"""
+        if self.platform == "telegram":
+            if hasattr(self, '_tg_me'):
+                return self._tg_me
+            return await self.client.get_me()
+        else:
+            return self.client.user
 
     def run(self):
         if self.platform == "telegram":
