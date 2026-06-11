@@ -70,7 +70,6 @@ async def send_external_search_results(bot, chat_id, type_, term, results, page,
     source_name = source_map.get(type_, "منابع خارجی")
     header = (
         f"🔍 *نتایج جستجو در {source_name}:*\n"
-        f"📝 *عبارت:* `{term}`\n"
         f"📊 *تعداد کل:* {total_items} مورد\n"
         f"📄 *صفحه:* {page} از {total_pages}"
     )
