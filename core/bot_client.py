@@ -239,6 +239,7 @@ class BotClient:
         self._init_handlers = []
         self._shutdown_handlers = []
         self._error_handlers = []
+        self._running = False
 
         if PLATFORM == "telegram":
             proxy_config = None
@@ -260,8 +261,14 @@ class BotClient:
                 TELEGRAM_API_HASH, 
                 proxy=proxy_config
             )
-            self.client.on(events.NewMessage(incoming=True))(self._tg_on_message)
-            self.client.on(events.CallbackQuery())(self._tg_on_callback)
+            # Register event handlers
+            @self.client.on(events.NewMessage(incoming=True))
+            async def tg_message_handler(event):
+                await self._tg_on_message(event)
+            
+            @self.client.on(events.CallbackQuery())
+            async def tg_callback_handler(event):
+                await self._tg_on_callback(event)
         else:
             self.client = Client(token=BOT_TOKEN, proxy=PROXY)
             self.client.on_message()(self._bale_on_message)
@@ -281,6 +288,7 @@ class BotClient:
 
     async def _tg_on_message(self, event):
         try:
+            logger.debug(f"Received message: {event.message.id}")
             wrapped = WrappedMessage(event.message, "telegram")
             wrapped.client_wrapper = self
             for handler in self._message_handlers:
@@ -293,6 +301,7 @@ class BotClient:
 
     async def _tg_on_callback(self, event):
         try:
+            logger.debug(f"Received callback: {event.id}")
             wrapped = WrappedCallbackQuery(event, "telegram")
             if wrapped.message:
                 wrapped.message.client_wrapper = self
@@ -349,12 +358,14 @@ class BotClient:
     def on_message(self):
         def decorator(handler):
             self._message_handlers.append(handler)
+            logger.info(f"Message handler registered: {handler.__name__}")
             return handler
         return decorator
 
     def on_callback_query(self):
         def decorator(handler):
             self._callback_handlers.append(handler)
+            logger.info(f"Callback handler registered: {handler.__name__}")
             return handler
         return decorator
 
@@ -379,13 +390,15 @@ class BotClient:
     @property
     def user(self):
         if self.platform == "telegram":
-            return type('User', (), {
-                'id': self._tg_me.id, 
-                'username': self._tg_me.username,
-                'first_name': self._tg_me.first_name,
-                'last_name': getattr(self._tg_me, 'last_name', None),
-                'is_bot': getattr(self._tg_me, 'bot', True)
-            })
+            if hasattr(self, '_tg_me'):
+                return type('User', (), {
+                    'id': self._tg_me.id, 
+                    'username': self._tg_me.username,
+                    'first_name': self._tg_me.first_name,
+                    'last_name': getattr(self._tg_me, 'last_name', None),
+                    'is_bot': getattr(self._tg_me, 'bot', True)
+                })
+            return None
         else:
             return self.client.user
 
@@ -393,9 +406,13 @@ class BotClient:
         if self.platform == "telegram":
             await self.client.start(bot_token=BOT_TOKEN)
             self._tg_me = await self.client.get_me()
+            logger.info(f"Bot started as @{self._tg_me.username} (ID: {self._tg_me.id})")
             for handler in self._init_handlers:
                 try:
-                    await handler()
+                    if asyncio.iscoroutinefunction(handler):
+                        await handler()
+                    else:
+                        handler()
                 except Exception as e:
                     await self._handle_error(e, {"handler": handler, "event": "init"})
         else:
@@ -741,32 +758,54 @@ class BotClient:
                 return await self.client.download_voice(message.voice, file_path)
         return None
 
-    async def _run_telegram(self):
-        """Internal method to run Telegram bot"""
-        await self.client.start(bot_token=BOT_TOKEN)
-        self._tg_me = await self.client.get_me()
-        
-        for handler in self._init_handlers:
-            try:
-                if asyncio.iscoroutinefunction(handler):
-                    await handler()
-                else:
-                    handler()
-            except Exception as e:
-                await self._handle_error(e, {"handler": handler, "event": "init"})
-        
-        await self.client.run_until_disconnected()
-
     def run(self):
-        """Run the bot"""
+        """Run the bot - Fixed version with proper event handling"""
         if self.platform == "telegram":
+            # Define async function to run the bot
+            async def run_telegram():
+                # Start the client with bot token
+                await self.client.start(bot_token=BOT_TOKEN)
+                self._tg_me = await self.client.get_me()
+                logger.info(f"✅ Bot started successfully as @{self._tg_me.username}")
+                logger.info(f"📱 Bot ID: {self._tg_me.id}")
+                logger.info(f"👥 Total message handlers: {len(self._message_handlers)}")
+                logger.info(f"🔘 Total callback handlers: {len(self._callback_handlers)}")
+                
+                # Run initialize handlers
+                for handler in self._init_handlers:
+                    try:
+                        if asyncio.iscoroutinefunction(handler):
+                            await handler()
+                        else:
+                            handler()
+                    except Exception as e:
+                        await self._handle_error(e, {"handler": handler, "event": "init"})
+                
+                logger.info("🔄 Bot is now listening for messages...")
+                
+                # Keep the bot running - this is the main event loop
+                await self.client.run_until_disconnected()
+            
+            # Run the async function
             try:
-                self.client.loop.run_until_complete(self._run_telegram())
+                self.client.loop.run_until_complete(run_telegram())
+            except KeyboardInterrupt:
+                logger.info("🛑 Bot stopped by user")
+            except Exception as e:
+                logger.error(f"❌ Bot crashed: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
             finally:
+                # Run shutdown handlers
                 for handler in self._shutdown_handlers:
-                    if asyncio.iscoroutinefunction(handler):
-                        self.client.loop.run_until_complete(handler())
-                    else:
-                        handler()
+                    try:
+                        if asyncio.iscoroutinefunction(handler):
+                            self.client.loop.run_until_complete(handler())
+                        else:
+                            handler()
+                    except Exception as e:
+                        logger.error(f"Error in shutdown handler: {e}")
         else:
+            # Bale platform
             self.client.run()
