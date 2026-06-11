@@ -8,13 +8,11 @@ PLATFORM = os.getenv("PLATFORM", "bale").lower() # 'bale' or 'telegram'
 BOT_NAME = "ابرآوا"
 BOT_USERNAME = "@abraava_bot"
 INFO_CHANNEL_USERNAME = "@abraava"
+FOOTER = f'\n\n{INFO_CHANNEL_USERNAME}\n{BOT_USERNAME}'
 if PLATFORM == "telegram":
-    INFO_CHANNEL_LINK = "https://t.me/+IoyGvIa6OZ4yMjU0"
     DEEP_LINK_BASE = f"https://t.me/{BOT_USERNAME.lstrip('@')}?start="
 else:
-    INFO_CHANNEL_LINK = f"https://ble.ir/{INFO_CHANNEL_USERNAME.lstrip('@')}"
     DEEP_LINK_BASE = f"https://ble.ir/{BOT_USERNAME.lstrip('@')}?start="
-FOOTER = f'\n\n{INFO_CHANNEL_LINK}\n{BOT_USERNAME}'
 
 # Connection Settings
 PROXY = os.getenv("proxy", "socks5h://127.0.0.1:1080")
@@ -46,7 +44,7 @@ BROADCAST_CHANNELS = [
     {"username": "@abraava", "name": "ابرآوا", "id": 5524168471},
 ]
 REQUIRED_CHANNELS = [
-    {"username": "@abraava", "name": "ابرآوا", "id": 5524168471, "invite_link": "https://t.me/+IoyGvIa6OZ4yMjU0"},
+    {"username": "@abraava", "name": "ابرآوا", "id": 5524168471},
 ]
 BROADCAST_KEYWORDS = ["#اطلاع_رسانی", "#ابرآوا", "#اطلاعیه", "#تبلیغات"]
 

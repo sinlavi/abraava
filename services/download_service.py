@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 from typing import Optional, Union, List
 from core.logger import logger
-from core.config import OFFLINE_MODE, DEFAULT_QUALITY, FOOTER, PLATFORM
+from core.config import OFFLINE_MODE, DEFAULT_QUALITY, FOOTER
 from core.http_client import HttpClient
 from models.schemas import DownloadQuality
 from crawlers.utils import get_track, get_or_crawl_collection, get_or_crawl_collection_tracks
@@ -131,20 +131,16 @@ class DownloadService:
         caption = self._build_caption(track, quality_value)
 
         # Check cache
-        audio_cache = await get_cached_audio(track_id, quality=quality_value, platform=PLATFORM)
+        audio_cache = await get_cached_audio(track_id, quality=quality_value)
         if audio_cache:
-            logger.info(f"Using cached audio for track {track_id} (quality: {quality_value}, platform: {PLATFORM}) -> {audio_cache}")
+            logger.info(f"Using cached audio for track {track_id} (quality: {quality_value}) -> {audio_cache}")
             try:
                 status_msg = await self._update_status(chat_id, status_msg, "📤 *در حال ارسال فایل از حافظه کش...*",
                                                        status_prefix, reply_markup, is_batch)
                 markup = self._build_audio_markup(track_id, track.get("trackViewUrl"), user_id=user_id)
                 await self.bot.send_chat_action(chat_id, "upload_voice")
                 logger.info(f"Sending cached audio: {track.get('trackName')} ({quality_value}kbps)")
-
-                # Check if it's a file_id or a URL
-                is_file_id = str(audio_cache).startswith("tg://") or (PLATFORM == "bale" and "/" not in str(audio_cache))
-
-                msg = await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption,
+                await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption,
                                           reply_markup=markup)
                 if not is_batch: await safe_delete(status_msg)
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
@@ -218,14 +214,9 @@ class DownloadService:
                     logger.info(f"Uploading fresh audio: {track.get('trackName')} ({quality_value}kbps)")
                     msg = await self.bot.send_audio(chat_id, audio=f, caption=caption,
                                                     reply_markup=markup)
-
-                    if msg and msg.file_id and track_id:
-                        if PLATFORM == "telegram":
-                            audio_mirror_url = f"tg://file/{msg.file_id}"
-                        else:
-                            audio_mirror_url = f'https://tapi.bale.ai/file/bot<token>/{msg.file_id}'
-                        # Save mirror for the current platform
-                        await set_mirror('track', track_id, 'audioUrl', audio_mirror_url, quality=quality_value, platform=PLATFORM)
+                    if msg and track_id and not str(track_id).startswith(("yt_", "sc_", "sp_", "it_")):
+                        # For now we use bale mirror logic, for telegram it will be different but this is old code
+                        pass
 
                 file_size = os.path.getsize(mp3_path)
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),

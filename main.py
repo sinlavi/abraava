@@ -17,7 +17,7 @@ from services.search_cache_service import search_cache_service
 from services.rate_limiter import RateLimiter, DownloadRateLimiter
 from services.tracker import AlbumDownloadTracker
 from services.tagging_service import TaggingService
-from services.error_notifier import UploadErrorNotifier
+from services.error_notifier import BaleUploadErrorNotifier
 from services.download_service import DownloadService
 from services.lyrics_service import lyrics_service
 from services.membership_service import verify_all_memberships
@@ -50,7 +50,7 @@ rate_limiter = RateLimiter()
 download_rate_limiter = DownloadRateLimiter()
 album_tracker = AlbumDownloadTracker(api_client)
 tagging_service = TaggingService()
-error_notifier = UploadErrorNotifier(api_client)
+error_notifier = BaleUploadErrorNotifier(api_client)
 
 bot = BotClient()
 download_service = DownloadService(bot, api_client, user_settings_service, artwork_service,

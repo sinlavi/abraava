@@ -1,4 +1,4 @@
-from core.config import FOOTER, INFO_CHANNEL_USERNAME, PLATFORM, INFO_CHANNEL_LINK
+from core.config import FOOTER, INFO_CHANNEL_USERNAME, PLATFORM
 
 def create_close_button(user_id: int = None) -> dict:
     cb = f"close:u{user_id}" if user_id else "close"
@@ -10,7 +10,8 @@ def create_cancel_button(task_id: str, user_id: int = None) -> dict:
     return {"text": "⏹️ توقف", "callback_data": cb}
 
 def create_info_channel_button() -> dict:
-    return {"text": "📢 کانال اطلاع‌رسانی", "url": INFO_CHANNEL_LINK}
+    link = f"https://t.me/{INFO_CHANNEL_USERNAME.lstrip('@')}" if PLATFORM == "telegram" else f"https://ble.ir/{INFO_CHANNEL_USERNAME.lstrip('@')}"
+    return {"text": "📢 کانال اطلاع‌رسانی", "url": link}
 
 def create_retry_button(callback_data: str, user_id: int = None, button_text: str = "🔄 تلاش مجدد") -> dict:
     cb = callback_data if callback_data.startswith("retry:") else f"retry:{callback_data}"

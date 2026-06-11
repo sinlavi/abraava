@@ -5,7 +5,7 @@ from typing import Optional
 
 from core.logger import logger
 from crawlers.utils import get_track
-from crawlers.itunes import get_cached_preview, set_mirror, PLATFORM
+from crawlers.itunes import get_cached_preview, set_mirror
 from utils.messages import send_message, edit_message, safe_delete
 from core.http_client import HttpClient
 from core.config import FOOTER
@@ -45,7 +45,7 @@ async def send_voice_preview(bot, chat_id: int, track_id: int, user_id: int = No
         reply_markup = markup
 
         # Attempt 1: From Cache (mirror)
-        preview_cache = await get_cached_preview(track_id, platform=PLATFORM)
+        preview_cache = await get_cached_preview(track_id)
         if preview_cache:
             try:
                 await bot.send_voice(chat_id, voice=preview_cache, caption=caption, reply_markup=reply_markup)
@@ -61,12 +61,8 @@ async def send_voice_preview(bot, chat_id: int, track_id: int, user_id: int = No
                 preview_data = io.BytesIO(await resp.read())
                 preview_data.name = f"preview_{track_id}.mp3"
                 msg = await bot.send_voice(chat_id, voice=preview_data, caption=caption, reply_markup=reply_markup)
-                if msg and msg.file_id and track_id:
-                    if PLATFORM == "telegram":
-                        preview_mirror_url = f"tg://file/{msg.file_id}"
-                    else:
-                        preview_mirror_url = f'https://tapi.bale.ai/file/bot<token>/{msg.file_id}'
-                    await set_mirror('track', str(track_id), 'previewUrl', preview_mirror_url, platform=PLATFORM)
+                if msg and track_id:
+                    await set_mirror('track', str(track_id), 'previewUrl', f'https://tapi.bale.ai/file/bot<token>/{msg.voice.id}')
                 await safe_delete(status_msg)
             else:
                 status_msg = await _update_preview_status(bot, chat_id, status_msg, "دریافت پیش‌نمایش با خطا مواجه شد.")
