@@ -214,19 +214,29 @@ class WrappedCallbackQuery:
         
         if platform == "telegram":
             self.id = query.id
+            self.sender_id = query.sender_id
+            self.data = query.data.decode() if isinstance(query.data, bytes) else query.data
+            self.chat_instance = getattr(query, 'chat_instance', None)
+            
+            # دریافت پیام از query - در Telethon، پیام در query.query.message است
+            if hasattr(query, 'message') and query.message:
+                self.message = WrappedMessage(query.message, platform)
+                if self.message:
+                    self.message.client_wrapper = self.client_wrapper
+            else:
+                self.message = None
+                
+            # دریافت اطلاعات فرستنده
             self.author = type('Author', (), {
                 'id': query.sender_id,
-                'first_name': getattr(query, 'sender', None) and getattr(query.sender, 'first_name', None)
+                'first_name': None,
+                'last_name': None
             })
-            self.data = query.data.decode() if isinstance(query.data, bytes) else query.data
-            self.message = WrappedMessage(query.message, platform) if query.message else None
-            if self.message:
-                self.message.client_wrapper = self.client_wrapper
         else:
             self.id = query.id
             self.author = query.author
             self.data = query.data
-            self.message = WrappedMessage(query.message, platform) if query.message else None
+            self.message = WrappedMessage(query.message, platform) if hasattr(query, 'message') and query.message else None
 
     async def answer(self, text=None, show_alert=False):
         return await self.client_wrapper.answer_callback_query(self.id, text, show_alert)
@@ -272,7 +282,7 @@ class BotClient:
                 proxy=proxy_config
             )
             
-            # ثبت هندلرها مانند Bale
+            # ثبت هندلرها
             @self.client.on(events.NewMessage(incoming=True))
             async def handler_message(event):
                 await self._tg_on_message(event)
@@ -328,6 +338,7 @@ class BotClient:
 
     async def _tg_on_callback(self, event):
         try:
+            # لاگ دریافت callback
             logger.info(f"🔘 Callback query received: {event.data}")
             
             wrapped = WrappedCallbackQuery(event, "telegram")
@@ -348,6 +359,8 @@ class BotClient:
                     await self._handle_error(e, {"handler": handler, "callback": wrapped})
         except Exception as e:
             logger.error(f"❌ Error in _tg_on_callback: {e}")
+            import traceback
+            traceback.print_exc()
             await self._handle_error(e, {"event": "callback", "platform": "telegram"})
 
     async def _bale_on_message(self, message):
