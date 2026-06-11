@@ -895,50 +895,105 @@ class BotClient:
         if self.platform == "telegram":
             try:
                 logger.debug(f"🔍 Getting member {user_id} info from chat {chat_id}")
-                participant = await self.client.get_participant(chat_id, user_id)
                 
-                status = "member"
-                if isinstance(participant, types.ChannelParticipantAdmin):
-                    status = "administrator"
-                elif isinstance(participant, types.ChannelParticipantCreator):
-                    status = "creator"
-                elif isinstance(participant, types.ChannelParticipant):
-                    status = "member"
-                elif isinstance(participant, types.ChatParticipantAdmin):
-                    status = "administrator"
-                elif isinstance(participant, types.ChatParticipantCreator):
-                    status = "creator"
-                elif isinstance(participant, types.ChatParticipant):
-                    status = "member"
-                else:
+                # روش صحیح برای دریافت اطلاعات عضو در Telethon
+                # ابتدا چت را دریافت می‌کنیم
+                chat = await self.client.get_entity(chat_id)
+                
+                # دریافت اطلاعات کاربر
+                user = await self.client.get_entity(user_id)
+                
+                # بررسی وضعیت عضو
+                status = "left"
+                is_member = False
+                
+                try:
+                    # سعی می‌کنیم اطلاعات شرکت‌کننده را دریافت کنیم
+                    # برای گروه‌ها و سوپرگروه‌ها
+                    if hasattr(chat, 'megagroup') or hasattr(chat, 'broadcast'):
+                        # برای کانال‌ها و سوپرگروه‌ها
+                        participant = await self.client.get_participant(chat, user)
+                        if participant:
+                            is_member = True
+                            if hasattr(participant, 'participant'):
+                                if isinstance(participant.participant, (
+                                    types.ChannelParticipantCreator,
+                                    types.ChatParticipantCreator
+                                )):
+                                    status = "creator"
+                                elif isinstance(participant.participant, (
+                                    types.ChannelParticipantAdmin,
+                                    types.ChatParticipantAdmin
+                                )):
+                                    status = "administrator"
+                                else:
+                                    status = "member"
+                            else:
+                                status = "member"
+                    else:
+                        # برای گروه‌های معمولی
+                        # بررسی می‌کنیم آیا کاربر در گروه است یا خیر
+                        async for participant in self.client.iter_participants(chat):
+                            if participant.id == user_id:
+                                is_member = True
+                                if isinstance(participant, types.ChannelParticipantCreator):
+                                    status = "creator"
+                                elif isinstance(participant, types.ChannelParticipantAdmin):
+                                    status = "administrator"
+                                else:
+                                    status = "member"
+                                break
+                                
+                except Exception as e:
+                    # کاربر عضو نیست یا دسترسی وجود ندارد
+                    logger.debug(f"User {user_id} is not a participant or no access: {e}")
+                    is_member = False
                     status = "left"
                 
-                user = participant.user if hasattr(participant, 'user') else await self.client.get_entity(user_id)
+                logger.info(f"✅ Member {user_id} status: {status} (is_member={is_member})")
                 
-                logger.info(f"✅ Member {user_id} status: {status}")
                 return type('ChatMember', (), {
                     'user': type('User', (), {
                         'id': user.id,
                         'is_bot': getattr(user, 'bot', False),
                         'username': getattr(user, 'username', None),
-                        'first_name': getattr(user, 'first_name', None)
+                        'first_name': getattr(user, 'first_name', None),
+                        'last_name': getattr(user, 'last_name', None)
                     }),
                     'status': status,
-                    'is_member': status != "left"
+                    'is_member': is_member
                 })
+                
             except Exception as e:
                 logger.warning(f"⚠️ Could not get member {user_id}: {e}")
-                return type('ChatMember', (), {
-                    'user': type('User', (), {
-                        'id': user_id,
-                        'is_bot': False,
-                        'username': None,
-                        'first_name': None
-                    }),
-                    'status': "left",
-                    'is_member': False
-                })
+                # برگرداندن اطلاعات پایه کاربر
+                try:
+                    user = await self.client.get_entity(user_id)
+                    return type('ChatMember', (), {
+                        'user': type('User', (), {
+                            'id': user.id,
+                            'is_bot': getattr(user, 'bot', False),
+                            'username': getattr(user, 'username', None),
+                            'first_name': getattr(user, 'first_name', None),
+                            'last_name': getattr(user, 'last_name', None)
+                        }),
+                        'status': "unknown",
+                        'is_member': False
+                    })
+                except:
+                    return type('ChatMember', (), {
+                        'user': type('User', (), {
+                            'id': user_id,
+                            'is_bot': False,
+                            'username': None,
+                            'first_name': None,
+                            'last_name': None
+                        }),
+                        'status': "unknown",
+                        'is_member': False
+                    })
         else:
+            # Bale platform
             member = await self.client.get_chat_member(chat_id, user_id)
             return member
 
