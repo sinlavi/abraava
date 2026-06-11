@@ -2,9 +2,9 @@ import time
 from typing import Optional, List, Dict
 from core.logger import logger
 from services.api_client import APIClient
-from core.config import INFO_CHANNEL_ID
+from core.config import INFO_CHANNEL_ID, PLATFORM
 
-class BaleUploadErrorNotifier:
+class UploadErrorNotifier:
     def __init__(self, api_client: APIClient):
         self.api_client = api_client
         self.notification_message_id = None
@@ -38,20 +38,22 @@ class BaleUploadErrorNotifier:
 
         self.last_error_time = current_time
 
+        platform_name = "تلگرام" if PLATFORM == "telegram" else "بله"
         notification_text = (
-            "⚠️ *اختلال در سرویس آپلود بله* ⚠️\n\n"
-            "در حال حاضر سرویس آپلود فایل پیام‌رسان بله با مشکل مواجه شده است.\n"
-            "این مشکل احتمالا از سمت بله می‌باشد، به محض رفع مشکل، ربات به حالت عادی بازخواهد گشت.\n\n"
+            f"⚠️ *اختلال در سرویس آپلود {platform_name}* ⚠️\n\n"
+            f"در حال حاضر سرویس آپلود فایل پیام‌رسان {platform_name} با مشکل مواجه شده است.\n"
+            f"این مشکل احتمالا از سمت {platform_name} می‌باشد، به محض رفع مشکل، ربات به حالت عادی بازخواهد گشت.\n\n"
             "✅ به محض رفع مشکل، این پیام حذف خواهد شد.\n\n"
             "#اختلال\n\n@abraava\n@abraava_bot"
         )
 
         try:
             # We will use a central messaging helper later, but for now:
-            msg = await bot.send_message(INFO_CHANNEL_ID, notification_text)
+            from utils.messages import send_message
+            msg = await send_message(bot, INFO_CHANNEL_ID, notification_text)
             self.notification_message_id = msg.id
             self.error_active = True
-            logger.warning(f"Bale upload error notification sent")
+            logger.warning(f"{platform_name} upload error notification sent")
 
             if album_download_callback:
                 try:

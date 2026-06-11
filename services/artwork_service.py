@@ -5,6 +5,7 @@ import asyncio
 from typing import Optional, Union, Dict, Any, List, Tuple
 from core.logger import logger
 from core.http_client import HttpClient
+from core.config import PLATFORM
 from services.api_client import APIClient
 from crawlers.itunes import set_mirror, get_mirror
 from crawlers.youtube import get_artist_image
@@ -29,7 +30,7 @@ class ArtworkService:
             if isinstance(entity_id, str) and entity_id.startswith(("yt_", "sc_", "sp_")):
                 return None
 
-            data = await get_mirror(entity_type, str(entity_id), 'artworkUrl')
+            data = await get_mirror(entity_type, str(entity_id), 'artworkUrl', platform=PLATFORM)
             if data and isinstance(data, dict):
                 artwork_data = data.get('mirrors', {}).get('artworkUrl')
                 if not artwork_data and 'data' in data:
@@ -39,6 +40,8 @@ class ArtworkService:
                     cached_url = artwork_data.get('url') if isinstance(artwork_data, dict) else artwork_data
                     if cached_url and '<token>' in cached_url:
                         return cached_url.split('<token>/')[-1]
+                    if cached_url and cached_url.startswith("tg://file/"):
+                        return cached_url[10:]
                     return cached_url
             return None
         except Exception as e:
@@ -52,8 +55,12 @@ class ArtworkService:
             if isinstance(entity_id, str) and entity_id.startswith(("yt_", "sc_", "sp_")):
                 return False
 
-            artwork_url = f'https://tapi.bale.ai/file/bot<token>/{file_id}'
-            result = await set_mirror(entity_type, str(entity_id), 'artworkUrl', artwork_url)
+            if PLATFORM == "telegram":
+                artwork_url = f"tg://file/{file_id}"
+            else:
+                artwork_url = f'https://tapi.bale.ai/file/bot<token>/{file_id}'
+
+            result = await set_mirror(entity_type, str(entity_id), 'artworkUrl', artwork_url, platform=PLATFORM)
             return bool(result)
         except Exception as e:
             logger.error(f"Error setting artwork mirror: {e}")
@@ -109,9 +116,8 @@ class ArtworkService:
                     photo_io.name = "artwork.jpg"
                     msg = await bot.send_photo(chat_id, photo=photo_io, caption=f"{caption}{FOOTER}", reply_markup=markup)
 
-                    if msg and msg.photo and entity_type and entity_id:
-                        file_id = str(msg.photo[0].id)
-                        await self.set_artwork_mirror(entity_type, entity_id, file_id)
+                    if msg and msg.file_id and entity_type and entity_id:
+                        await self.set_artwork_mirror(entity_type, entity_id, msg.file_id)
                 return msg
             except Exception as e:
                 logger.warning(f"Failed to send artwork: {e}")
