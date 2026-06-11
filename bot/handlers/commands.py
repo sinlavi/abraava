@@ -1,10 +1,10 @@
-from balethon import Client
-from balethon.objects import Message, InlineKeyboardButton, InlineKeyboard
+
+
 from core.config import BOT_NAME, INFO_CHANNEL_ID, REQUIRED_CHANNELS
 from utils.messages import send_message, edit_message
 from bot.keyboards import get_settings_keyboard, create_info_channel_button
 
-async def start_command(bot: Client, message: Message):
+async def start_command(bot, message):
     welcome_text = (
         f"🎵 *به ربات موسیقی {BOT_NAME} خوش آمدید*\n\n"
         f"من اینجام تا آهنگ‌های مورد علاقت رو برات پیدا کنم و بفرستم.\n"
@@ -13,17 +13,19 @@ async def start_command(bot: Client, message: Message):
 
     user_id = message.author.id
     markup = []
-    markup.append([InlineKeyboardButton(text="🆘 راهنما", callback_data=f"help_cmd:u{user_id}")])
+    markup.append([{"text": "🆘 راهنما", "callback_data": f"help_cmd:u{user_id}"}])
     if INFO_CHANNEL_ID:
         markup.append([create_info_channel_button()])
 
     if REQUIRED_CHANNELS:
+        from core.config import PLATFORM
         for channel in REQUIRED_CHANNELS:
-            markup.append([InlineKeyboardButton(text=f"📢 عضویت در {channel['name']}", url=f"https://ble.ir/{channel['username'].lstrip('@')}")])
+            link = f"https://t.me/{channel['username'].lstrip('@')}" if PLATFORM == "telegram" else f"https://ble.ir/{channel['username'].lstrip('@')}"
+            markup.append([{"text": f"📢 عضویت در {channel['name']}", "url": link}])
 
-    await send_message(bot, message.chat.id, welcome_text, reply_markup=InlineKeyboard(*markup) if markup else None)
+    await send_message(bot, message.chat.id, welcome_text, reply_markup=markup if markup else None)
 
-async def help_command(bot: Client, message: Message, is_callback=False):
+async def help_command(bot, message, is_callback=False):
     is_group = message.chat.type in ["group", "supergroup"]
     if is_group:
         help_text = (
@@ -60,7 +62,7 @@ async def help_command(bot: Client, message: Message, is_callback=False):
     else:
         await send_message(bot, message.chat.id, help_text)
 
-async def about_command(bot: Client, message: Message):
+async def about_command(bot, message):
     about_text = (
         f"ℹ️ *درباره پروژه {BOT_NAME}*\n\n"
         f"ربات {BOT_NAME} پیشرفته‌ترین ابزار جستجو و دانلود موسیقی در پیام‌رسان بله است که با اتصال به دیتابیس‌های جهانی همچون iTunes و YouTube Music، بهترین تجربه را برای شما فراهم می‌کند.\n\n"

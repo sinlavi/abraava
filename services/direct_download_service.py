@@ -9,7 +9,6 @@ from pathlib import Path
 from core.logger import logger
 from utils.messages import send_message, edit_message, safe_delete
 from bot.keyboards import create_close_button
-from balethon.objects import InlineKeyboardButton, InlineKeyboard
 from core.config import PROXY, FOOTER
 
 # ── User‑agent list (Same as youtube crawler) ────────────────────
@@ -101,7 +100,7 @@ class DirectDownloadService:
                 continue
         return None
 
-    async def ask_confirmation(self, chat_id, url, user_id=None, reply_to=None):
+    async def ask_confirmation(self, bot, chat_id, url, user_id=None, reply_to=None):
         # This method is now mostly a fallback for non-YouTube/non-SoundCloud direct links
         # that couldn't be parsed into IDs.
         status_msg = await send_message(self.bot, chat_id, "⏳ *در حال دریافت اطلاعات از پیوند...*", reply_to_message_id=reply_to)
@@ -133,20 +132,20 @@ class DirectDownloadService:
         link_id = await store_direct_link(url)
 
         markup = [
-            [InlineKeyboardButton(text="✅ بله، دانلود کن", callback_data=f"confirm_dl:{link_id}:u{user_id}")],
+            [{"text": "✅ بله، دانلود کن", "callback_data": f"confirm_dl:{link_id}:u{user_id}"}],
             [create_close_button(user_id)]
         ]
 
         if meta.get("thumbnail"):
             try:
                 await self.bot.send_chat_action(chat_id, "upload_photo")
-                await self.bot.send_photo(chat_id, photo=meta["thumbnail"], caption=f"{text}{FOOTER}", reply_markup=InlineKeyboard(*markup))
+                await self.bot.send_photo(chat_id, photo=meta["thumbnail"], caption=f"{text}{FOOTER}", reply_markup=markup)
                 await safe_delete(status_msg)
             except Exception as e:
                 logger.warning(f"Failed to send thumbnail: {e}")
-                status_msg = await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
+                status_msg = await edit_message(status_msg, text, reply_markup=markup)
         else:
-            status_msg = await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
+            status_msg = await edit_message(status_msg, text, reply_markup=markup)
 
     async def _update_status(self, chat_id, msg, text, reply_markup=None):
         await safe_delete(msg)
@@ -219,12 +218,12 @@ class DirectDownloadService:
                     from utils.helpers import generate_deep_link
                     # For direct download, we might not have a reliable ID yet, but let's try to get one if meta had it
                     # or just use close button as fallback if ID is not available.
-                    markup = [[InlineKeyboardButton(text="📋 کپی پیوند", copy_text=url)],
-                              [InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=url)],
+                    markup = [[{"text": "📋 کپی پیوند", "copy_text": url}],
+                              [{"text": "🌐 اطلاعات بیشتر", "url": url}],
                               [create_close_button(user_id)]]
                     await self.bot.send_chat_action(chat_id, "upload_voice")
                     logger.info(f"Direct uploading audio: {track_data.get('trackName')} ({quality}kbps)")
-                    await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=InlineKeyboard(*markup))
+                    await self.bot.send_audio(chat_id, audio=f, caption=f"{caption}{FOOTER}", reply_markup=markup)
                 await safe_delete(status_msg)
                 return status_msg, True
             else:
