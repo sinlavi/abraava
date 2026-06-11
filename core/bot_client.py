@@ -129,9 +129,8 @@ class BotClient:
 
     def run(self, on_startup=None):
         if self.platform == "telegram":
-            self.client.start(bot_token=self.token)
-
             loop = self.client.loop
+            loop.run_until_complete(self.client.start(bot_token=self.token))
             if on_startup:
                 loop.run_until_complete(on_startup())
 
