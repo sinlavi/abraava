@@ -211,7 +211,7 @@ class BotClient:
             wrapped = WrappedMessage(msg, "bale")
             wrapped.client_wrapper = self
             return wrapped
-
+    
     async def edit_message(self, chat_id, message_id, text, reply_markup=None):
         markup = self._convert_keyboard(reply_markup)
         if self.platform == "telegram":
@@ -232,7 +232,35 @@ class BotClient:
             except Exception as e:
                 if "message is not modified" in str(e).lower(): return None
                 raise
-
+    async def get_chat_member(self, chat_id, user_id):
+        if self.platform == "telegram":
+            member = await self.client.get_permissions(chat_id, user_id)
+            # telethon's get_permissions returns a ChatParticipant object
+            status = "member"
+            if member.is_member:
+                if getattr(member, 'is_admin', False):
+                    status = "administrator"
+                elif getattr(member, 'is_creator', False):
+                    status = "creator"
+                else:
+                    status = "member"
+            else:
+                status = "left"
+            
+            return type('ChatMember', (), {
+                'user': type('User', (), {
+                    'id': user_id,
+                    'is_bot': False,  # Would need additional API call to check
+                    'username': None,
+                    'first_name': None
+                }),
+                'status': status,
+                'is_member': member.is_member
+            })
+        else:
+            member = await self.client.get_chat_member(chat_id, user_id)
+            return member
+            
     async def delete_message(self, chat_id, message_id):
         if self.platform == "telegram":
             await self.client.delete_messages(chat_id, [message_id])
