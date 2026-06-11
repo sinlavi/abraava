@@ -301,3 +301,39 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         retry_markup = [[Button(text="🔄 تلاش مجدد", callback_data=f"track:{track_id}:u{owner_id}")]]
         if status_msg: status_msg = await edit_message(status_msg, f"خطا در نمایش صفحه آهنگ: {e}", reply_markup=retry_markup)
         else: await send_message(bot, chat_id, f"خطا در نمایش صفحه آهنگ: {e}", reply_markup=retry_markup)
+
+async def show_playlist_page(bot, chat_id, playlist_id, source, artwork_service, owner_id, message_to_edit=None, reply_to=None):
+    from bot.handlers.search import music_adapter
+    status_msg = message_to_edit or await send_message(bot, chat_id, "🔄 *در حال دریافت اطلاعات لیست پخش...*", show_cancel=True, reply_to_message_id=reply_to)
+
+    try:
+        if source == "spotify":
+            tracks = await music_adapter.get_sp_playlist_tracks(playlist_id)
+            title = "Spotify Playlist"
+        else:
+            tracks = await music_adapter.get_yt_playlist_tracks(playlist_id)
+            title = "YouTube Playlist"
+
+        if not tracks:
+            await edit_message(status_msg, "❌ لیست پخش خالی است یا یافت نشد.")
+            return
+
+        text = f"📂 *لیست پخش:* {title}\n"
+        text += f"🎵 *تعداد قطعات:* {len(tracks)}\n\n"
+        text += "💡 قطعات اول لیست در زیر نمایش داده شده‌اند. جهت دانلود می‌توانید از دکمه دانلود کل استفاده کنید."
+
+        markup_rows = []
+        for i, track in enumerate(tracks[:10]):
+            btn_text = f"‎{i+1}. {track['trackName'][:35]} 🎵"
+            markup_rows.append([Button(text=btn_text, callback_data=f"track:{track['trackId']}:u{owner_id}")])
+
+        # Batch download button
+        # We need a way to pass these tracks to download_album or similar
+        # For now, let's just show the tracks
+
+        markup_rows.append([create_close_button(owner_id)])
+        await edit_message(status_msg, text, reply_markup=markup_rows)
+
+    except Exception as e:
+        logger.error(f"Error in show_playlist_page: {e}")
+        await edit_message(status_msg, f"❌ خطا در نمایش لیست پخش: {e}")

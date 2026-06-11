@@ -221,6 +221,12 @@ async def on_message(message):
                     await direct_download_service.ask_confirmation(chat_id, term, user_id=user_id, reply_to=message.id)
             elif type_ in ["track", "album", "artist", "ytm", "sc", "quick","all"]:
                 await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE, reply_to=message.id)
+            elif type_ == "spotify_playlist":
+                from bot.handlers.details import show_playlist_page
+                await show_playlist_page(bot, chat_id, term, "spotify", artwork_service, user_id, reply_to=message.id)
+            elif type_ == "youtube_playlist":
+                from bot.handlers.details import show_playlist_page
+                await show_playlist_page(bot, chat_id, term, "youtube", artwork_service, user_id, reply_to=message.id)
             else:
                 if text.startswith("/"):
                     await send_message(bot, chat_id, "⚠️ *دستور وارد شده معتبر نیست.*\n\nبرای مشاهده راهنما از /help استفاده کنید.")

@@ -36,12 +36,16 @@ async def parse_search_query(text: str) -> Optional[Tuple[str, str]]:
     # Spotify / Deezer links
     music_link_match = re.search(r'(https?://(open\.spotify\.com|www\.deezer\.com|deezer\.com)/[^\s]+)', text)
     if music_link_match:
-        return "music_link", music_link_match.group(1)
+        url = music_link_match.group(1)
+        if "playlist/" in url: return "spotify_playlist", url
+        return "music_link", url
 
     # YouTube / SoundCloud direct link detection
-    direct_link_match = re.search(r'(https?://(www\.)?(youtube\.com|youtu\.be|soundcloud\.com)/[^\s]+)', text)
+    direct_link_match = re.search(r'(https?://(www\.)?(youtube\.com|youtu\.be|soundcloud\.com|music\.youtube\.com)/[^\s]+)', text)
     if direct_link_match:
-        return "direct_link", direct_link_match.group(1)
+        url = direct_link_match.group(1)
+        if "list=" in url or "playlist?list=" in url: return "youtube_playlist", url
+        return "direct_link", url
 
     if text.startswith("/search"): return "track", text[7:].strip() or None
     elif text.startswith("/album"): return "album", text[6:].strip() or None
