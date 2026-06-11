@@ -32,9 +32,9 @@ class OdesliService:
                         ODESLI_METHODS.insert(0, method)
                     return cls._parse_response(data)
                 elif resp and resp.status == 429:
-                        logger.warning(f"Odesli method {method} rate limited (429)")
-                    else:
-                        logger.warning(f"Odesli method {method} failed with status {resp.status}")
+                    logger.warning(f"Odesli method {method} rate limited (429)")
+                else:
+                    logger.warning(f"Odesli method {method} failed with status {resp.status}")
             except Exception as e:
                 logger.debug(f"Odesli method {method} error: {e}")
                 if method in ODESLI_METHODS:
