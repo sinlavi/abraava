@@ -261,14 +261,16 @@ class BotClient:
                 TELEGRAM_API_HASH, 
                 proxy=proxy_config
             )
-            # Register event handlers
-            @self.client.on(events.NewMessage(incoming=True))
+            
+            # Register event handlers directly
+            @self.client.on(events.NewMessage)
             async def tg_message_handler(event):
                 await self._tg_on_message(event)
             
-            @self.client.on(events.CallbackQuery())
+            @self.client.on(events.CallbackQuery)
             async def tg_callback_handler(event):
                 await self._tg_on_callback(event)
+                
         else:
             self.client = Client(token=BOT_TOKEN, proxy=PROXY)
             self.client.on_message()(self._bale_on_message)
@@ -288,30 +290,48 @@ class BotClient:
 
     async def _tg_on_message(self, event):
         try:
-            logger.debug(f"Received message: {event.message.id}")
+            # Log every message for debugging
+            logger.info(f"📨 MESSAGE RECEIVED - Chat ID: {event.chat_id}, Message: {event.message.text}")
+            
             wrapped = WrappedMessage(event.message, "telegram")
             wrapped.client_wrapper = self
+            
+            if not self._message_handlers:
+                logger.warning("⚠️ No message handlers registered!")
+                return
+                
             for handler in self._message_handlers:
                 try:
                     await handler(wrapped)
+                    logger.info(f"✅ Message processed by handler: {handler.__name__}")
                 except Exception as e:
+                    logger.error(f"❌ Error in handler {handler.__name__}: {e}")
                     await self._handle_error(e, {"handler": handler, "message": wrapped})
         except Exception as e:
+            logger.error(f"❌ Error in _tg_on_message: {e}")
             await self._handle_error(e, {"event": "message", "platform": "telegram"})
 
     async def _tg_on_callback(self, event):
         try:
-            logger.debug(f"Received callback: {event.id}")
+            logger.info(f"🔘 CALLBACK RECEIVED - Data: {event.data}")
             wrapped = WrappedCallbackQuery(event, "telegram")
             if wrapped.message:
                 wrapped.message.client_wrapper = self
             wrapped.client_wrapper = self
+            
+            if not self._callback_handlers:
+                logger.warning("⚠️ No callback handlers registered!")
+                return
+                
             for handler in self._callback_handlers:
                 try:
                     await handler(wrapped)
+                    logger.info(f"✅ Callback processed by handler: {handler.__name__}")
                 except Exception as e:
+                    logger.error(f"❌ Error in callback handler {handler.__name__}: {e}")
                     await self._handle_error(e, {"handler": handler, "callback": wrapped})
         except Exception as e:
+            logger.error(f"❌ Error in _tg_on_callback: {e}")
             await self._handle_error(e, {"event": "callback", "platform": "telegram"})
 
     async def _bale_on_message(self, message):
@@ -358,14 +378,14 @@ class BotClient:
     def on_message(self):
         def decorator(handler):
             self._message_handlers.append(handler)
-            logger.info(f"Message handler registered: {handler.__name__}")
+            logger.info(f"✅ Message handler registered: {handler.__name__}")
             return handler
         return decorator
 
     def on_callback_query(self):
         def decorator(handler):
             self._callback_handlers.append(handler)
-            logger.info(f"Callback handler registered: {handler.__name__}")
+            logger.info(f"✅ Callback handler registered: {handler.__name__}")
             return handler
         return decorator
 
