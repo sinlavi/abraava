@@ -2,6 +2,7 @@ from core.config import PLATFORM, BOT_TOKEN, TELEGRAM_API_ID, TELEGRAM_API_HASH,
 from core.logger import logger
 import asyncio
 import os
+from datetime import datetime
 
 if PLATFORM == "telegram":
     from telethon import TelegramClient, events, Button, utils
@@ -29,11 +30,14 @@ class WrappedMessage:
                 'id': message.chat_id,
                 'type': 'private' if message.is_private else 'group' if message.is_group or message.is_supergroup else 'channel' if message.is_channel else 'unknown'
             })
-            self.content = message.text
-            self.caption = message.caption
+            
+            # Safe access to text and caption
+            self.content = getattr(message, 'text', None) or getattr(message, 'caption', None)
+            self.caption = getattr(message, 'caption', None)
+            
             self.reply_to_message = None
             
-            if message.reply_to:
+            if hasattr(message, 'reply_to') and message.reply_to:
                 self.reply_to_message = type('Reply', (), {
                     'id': message.reply_to.reply_to_msg_id,
                     'author': type('Author', (), {'id': None})
@@ -49,10 +53,12 @@ class WrappedMessage:
             self.sticker = None
             self.media_type = "text"
             
-            if message.photo:
+            if hasattr(message, 'photo') and message.photo:
                 self.photo = message.photo[-1] if isinstance(message.photo, list) else message.photo
                 self.media_type = "photo"
-            elif message.document:
+                if hasattr(message, 'caption') and message.caption:
+                    self.content = message.caption
+            elif hasattr(message, 'document') and message.document:
                 self.document = message.document
                 self.media_type = "document"
                 
@@ -73,16 +79,16 @@ class WrappedMessage:
                         self.sticker = message.document
                         self.media_type = "sticker"
                         break
-            elif message.voice:
+            elif hasattr(message, 'voice') and message.voice:
                 self.voice = message.voice
                 self.media_type = "voice"
-            elif message.video:
+            elif hasattr(message, 'video') and message.video:
                 self.video = message.video
                 self.media_type = "video"
-            elif message.animation:
+            elif hasattr(message, 'animation') and message.animation:
                 self.animation = message.animation
                 self.media_type = "animation"
-            elif message.sticker:
+            elif hasattr(message, 'sticker') and message.sticker:
                 self.sticker = message.sticker
                 self.media_type = "sticker"
                 
@@ -90,7 +96,7 @@ class WrappedMessage:
             self.id = message.id
             self.author = message.author
             self.chat = message.chat
-            self.content = message.content
+            self.content = getattr(message, 'content', None)
             self.reply_to_message = getattr(message, 'reply_to_message', None)
             
             self.photo = getattr(message, 'photo', None)
@@ -262,7 +268,7 @@ class BotClient:
                 proxy=proxy_config
             )
             
-            # Register event handlers directly
+            # Register event handlers
             @self.client.on(events.NewMessage)
             async def tg_message_handler(event):
                 await self._tg_on_message(event)
@@ -290,8 +296,13 @@ class BotClient:
 
     async def _tg_on_message(self, event):
         try:
-            # Log every message for debugging
-            logger.info(f"📨 MESSAGE RECEIVED - Chat ID: {event.chat_id}, Message: {event.message.text}")
+            # Get message text safely
+            message_text = getattr(event.message, 'text', None) or getattr(event.message, 'caption', None)
+            sender = await event.get_sender()
+            sender_name = sender.first_name if sender else "Unknown"
+            
+            # Log like Balethon style
+            logger.info(f"📩 New message from {sender_name} (ID: {event.sender_id}) in chat {event.chat_id}: {message_text}")
             
             wrapped = WrappedMessage(event.message, "telegram")
             wrapped.client_wrapper = self
@@ -303,17 +314,20 @@ class BotClient:
             for handler in self._message_handlers:
                 try:
                     await handler(wrapped)
-                    logger.info(f"✅ Message processed by handler: {handler.__name__}")
+                    logger.debug(f"✅ Message handled by {handler.__name__}")
                 except Exception as e:
                     logger.error(f"❌ Error in handler {handler.__name__}: {e}")
                     await self._handle_error(e, {"handler": handler, "message": wrapped})
         except Exception as e:
-            logger.error(f"❌ Error in _tg_on_message: {e}")
+            logger.error(f"❌ Error in message handler: {e}")
+            import traceback
+            traceback.print_exc()
             await self._handle_error(e, {"event": "message", "platform": "telegram"})
 
     async def _tg_on_callback(self, event):
         try:
-            logger.info(f"🔘 CALLBACK RECEIVED - Data: {event.data}")
+            logger.info(f"🔘 Callback query received: {event.data}")
+            
             wrapped = WrappedCallbackQuery(event, "telegram")
             if wrapped.message:
                 wrapped.message.client_wrapper = self
@@ -326,16 +340,19 @@ class BotClient:
             for handler in self._callback_handlers:
                 try:
                     await handler(wrapped)
-                    logger.info(f"✅ Callback processed by handler: {handler.__name__}")
+                    logger.debug(f"✅ Callback handled by {handler.__name__}")
                 except Exception as e:
                     logger.error(f"❌ Error in callback handler {handler.__name__}: {e}")
                     await self._handle_error(e, {"handler": handler, "callback": wrapped})
         except Exception as e:
-            logger.error(f"❌ Error in _tg_on_callback: {e}")
+            logger.error(f"❌ Error in callback handler: {e}")
             await self._handle_error(e, {"event": "callback", "platform": "telegram"})
 
     async def _bale_on_message(self, message):
         try:
+            sender_name = message.author.first_name if hasattr(message.author, 'first_name') else str(message.author.id)
+            logger.info(f"📩 New message from {sender_name} (ID: {message.author.id}) in chat {message.chat.id}: {message.content}")
+            
             wrapped = WrappedMessage(message, "bale")
             wrapped.client_wrapper = self
             for handler in self._message_handlers:
@@ -348,6 +365,8 @@ class BotClient:
 
     async def _bale_on_callback(self, callback_query):
         try:
+            logger.info(f"🔘 Callback query received: {callback_query.data}")
+            
             query = callback_query
             wrapped = WrappedCallbackQuery(query, "bale")
             if wrapped.message:
@@ -362,18 +381,22 @@ class BotClient:
             await self._handle_error(e, {"event": "callback", "platform": "bale"})
 
     async def _bale_on_init(self):
+        logger.info("🚀 Bot initializing...")
         for handler in self._init_handlers:
             try:
                 await handler()
             except Exception as e:
                 await self._handle_error(e, {"handler": handler, "event": "init"})
+        logger.info("✅ Bot initialization complete")
 
     async def _bale_on_shutdown(self):
+        logger.info("🛑 Bot shutting down...")
         for handler in self._shutdown_handlers:
             try:
                 await handler()
             except Exception as e:
                 await self._handle_error(e, {"handler": handler, "event": "shutdown"})
+        logger.info("✅ Bot shutdown complete")
 
     def on_message(self):
         def decorator(handler):
@@ -426,7 +449,7 @@ class BotClient:
         if self.platform == "telegram":
             await self.client.start(bot_token=BOT_TOKEN)
             self._tg_me = await self.client.get_me()
-            logger.info(f"Bot started as @{self._tg_me.username} (ID: {self._tg_me.id})")
+            logger.info(f"✨ Bot started as @{self._tg_me.username} (ID: {self._tg_me.id})")
             for handler in self._init_handlers:
                 try:
                     if asyncio.iscoroutinefunction(handler):
@@ -484,6 +507,7 @@ class BotClient:
             )
             wrapped = WrappedMessage(result, "telegram")
             wrapped.client_wrapper = self
+            logger.debug(f"📤 Message sent to {chat_id}: {text[:50]}...")
             return wrapped
         else:
             msg = await self.client.send_message(
@@ -493,6 +517,7 @@ class BotClient:
             )
             wrapped = WrappedMessage(msg, "bale")
             wrapped.client_wrapper = self
+            logger.debug(f"📤 Message sent to {chat_id}: {text[:50]}...")
             return wrapped
 
     async def edit_message(self, chat_id, message_id, text, reply_markup=None, parse_mode='md'):
@@ -508,6 +533,7 @@ class BotClient:
                 if msg:
                     wrapped = WrappedMessage(msg, "telegram")
                     wrapped.client_wrapper = self
+                    logger.debug(f"✏️ Message {message_id} edited in chat {chat_id}")
                     return wrapped
                 return None
             except Exception as e:
@@ -522,6 +548,7 @@ class BotClient:
                 )
                 wrapped = WrappedMessage(msg, "bale")
                 wrapped.client_wrapper = self
+                logger.debug(f"✏️ Message {message_id} edited in chat {chat_id}")
                 return wrapped
             except Exception as e:
                 if "message is not modified" in str(e).lower(): 
@@ -531,8 +558,10 @@ class BotClient:
     async def delete_message(self, chat_id, message_id):
         if self.platform == "telegram":
             await self.client.delete_messages(chat_id, [message_id])
+            logger.debug(f"🗑️ Message {message_id} deleted from chat {chat_id}")
         else:
             await self.client.delete_message(chat_id, message_id)
+            logger.debug(f"🗑️ Message {message_id} deleted from chat {chat_id}")
 
     async def send_photo(self, chat_id, photo, caption=None, reply_markup=None, reply_to_message_id=None):
         markup = self._convert_keyboard(reply_markup)
@@ -546,6 +575,7 @@ class BotClient:
             )
             wrapped = WrappedMessage(msg, "telegram")
             wrapped.client_wrapper = self
+            logger.debug(f"📸 Photo sent to chat {chat_id}")
             return wrapped
         else:
             msg = await self.client.send_photo(
@@ -556,6 +586,7 @@ class BotClient:
             )
             wrapped = WrappedMessage(msg, "bale")
             wrapped.client_wrapper = self
+            logger.debug(f"📸 Photo sent to chat {chat_id}")
             return wrapped
 
     async def send_audio(self, chat_id, audio, caption=None, reply_markup=None, reply_to_message_id=None, **kwargs):
@@ -579,6 +610,7 @@ class BotClient:
             )
             wrapped = WrappedMessage(msg, "telegram")
             wrapped.client_wrapper = self
+            logger.debug(f"🎵 Audio sent to chat {chat_id}")
             return wrapped
         else:
             msg = await self.client.send_audio(
@@ -589,6 +621,7 @@ class BotClient:
             )
             wrapped = WrappedMessage(msg, "bale")
             wrapped.client_wrapper = self
+            logger.debug(f"🎵 Audio sent to chat {chat_id}")
             return wrapped
 
     async def send_voice(self, chat_id, voice, caption=None, reply_markup=None, reply_to_message_id=None):
@@ -604,6 +637,7 @@ class BotClient:
             )
             wrapped = WrappedMessage(msg, "telegram")
             wrapped.client_wrapper = self
+            logger.debug(f"🎤 Voice message sent to chat {chat_id}")
             return wrapped
         else:
             msg = await self.client.send_voice(
@@ -614,6 +648,7 @@ class BotClient:
             )
             wrapped = WrappedMessage(msg, "bale")
             wrapped.client_wrapper = self
+            logger.debug(f"🎤 Voice message sent to chat {chat_id}")
             return wrapped
 
     async def send_document(self, chat_id, document, caption=None, reply_markup=None, reply_to_message_id=None):
@@ -628,6 +663,7 @@ class BotClient:
             )
             wrapped = WrappedMessage(msg, "telegram")
             wrapped.client_wrapper = self
+            logger.debug(f"📄 Document sent to chat {chat_id}")
             return wrapped
         else:
             msg = await self.client.send_document(
@@ -638,6 +674,7 @@ class BotClient:
             )
             wrapped = WrappedMessage(msg, "bale")
             wrapped.client_wrapper = self
+            logger.debug(f"📄 Document sent to chat {chat_id}")
             return wrapped
 
     async def send_video(self, chat_id, video, caption=None, reply_markup=None, reply_to_message_id=None):
@@ -652,6 +689,7 @@ class BotClient:
             )
             wrapped = WrappedMessage(msg, "telegram")
             wrapped.client_wrapper = self
+            logger.debug(f"🎥 Video sent to chat {chat_id}")
             return wrapped
         else:
             msg = await self.client.send_video(
@@ -662,6 +700,7 @@ class BotClient:
             )
             wrapped = WrappedMessage(msg, "bale")
             wrapped.client_wrapper = self
+            logger.debug(f"🎥 Video sent to chat {chat_id}")
             return wrapped
 
     async def get_chat(self, chat_id):
@@ -731,8 +770,10 @@ class BotClient:
                 message=text,
                 alert=show_alert
             ))
+            logger.debug(f"✅ Callback query {callback_query_id} answered: {text}")
         else:
             await self.client.answer_callback_query(callback_query_id, text, show_alert)
+            logger.debug(f"✅ Callback query {callback_query_id} answered: {text}")
 
     async def send_chat_action(self, chat_id, action):
         if self.platform == "telegram":
@@ -753,8 +794,10 @@ class BotClient:
                 peer=chat_id,
                 action=tg_action
             ))
+            logger.debug(f"⌨️ Chat action '{action}' sent to {chat_id}")
         else:
             await self.client.send_chat_action(chat_id, action)
+            logger.debug(f"⌨️ Chat action '{action}' sent to {chat_id}")
 
     async def get_me(self):
         if self.platform == "telegram":
@@ -766,30 +809,48 @@ class BotClient:
 
     async def download_media(self, message, file_path=None):
         if self.platform == "telegram":
-            return await self.client.download_media(message.raw, file=file_path)
+            result = await self.client.download_media(message.raw, file=file_path)
+            logger.debug(f"💾 Media downloaded to {result}")
+            return result
         else:
             if hasattr(message, 'photo') and message.photo:
-                return await self.client.download_photo(message.photo, file_path)
+                result = await self.client.download_photo(message.photo, file_path)
+                logger.debug(f"💾 Photo downloaded to {result}")
+                return result
             elif hasattr(message, 'document') and message.document:
-                return await self.client.download_document(message.document, file_path)
+                result = await self.client.download_document(message.document, file_path)
+                logger.debug(f"💾 Document downloaded to {result}")
+                return result
             elif hasattr(message, 'audio') and message.audio:
-                return await self.client.download_audio(message.audio, file_path)
+                result = await self.client.download_audio(message.audio, file_path)
+                logger.debug(f"💾 Audio downloaded to {result}")
+                return result
             elif hasattr(message, 'voice') and message.voice:
-                return await self.client.download_voice(message.voice, file_path)
+                result = await self.client.download_voice(message.voice, file_path)
+                logger.debug(f"💾 Voice downloaded to {result}")
+                return result
         return None
 
     def run(self):
-        """Run the bot - Fixed version with proper event handling"""
+        """Run the bot"""
         if self.platform == "telegram":
             # Define async function to run the bot
             async def run_telegram():
+                logger.info("🚀 Starting Telegram bot...")
+                
                 # Start the client with bot token
                 await self.client.start(bot_token=BOT_TOKEN)
                 self._tg_me = await self.client.get_me()
-                logger.info(f"✅ Bot started successfully as @{self._tg_me.username}")
-                logger.info(f"📱 Bot ID: {self._tg_me.id}")
-                logger.info(f"👥 Total message handlers: {len(self._message_handlers)}")
-                logger.info(f"🔘 Total callback handlers: {len(self._callback_handlers)}")
+                
+                logger.info(f"✨ Bot information:")
+                logger.info(f"   • Username: @{self._tg_me.username}")
+                logger.info(f"   • ID: {self._tg_me.id}")
+                logger.info(f"   • Name: {self._tg_me.first_name} {getattr(self._tg_me, 'last_name', '')}")
+                logger.info(f"📝 Registered handlers:")
+                logger.info(f"   • Message handlers: {len(self._message_handlers)}")
+                logger.info(f"   • Callback handlers: {len(self._callback_handlers)}")
+                logger.info(f"   • Init handlers: {len(self._init_handlers)}")
+                logger.info(f"   • Shutdown handlers: {len(self._shutdown_handlers)}")
                 
                 # Run initialize handlers
                 for handler in self._init_handlers:
@@ -798,12 +859,15 @@ class BotClient:
                             await handler()
                         else:
                             handler()
+                        logger.debug(f"✅ Init handler executed: {handler.__name__}")
                     except Exception as e:
+                        logger.error(f"❌ Error in init handler {handler.__name__}: {e}")
                         await self._handle_error(e, {"handler": handler, "event": "init"})
                 
-                logger.info("🔄 Bot is now listening for messages...")
+                logger.info("✅ Bot is ready and listening for updates...")
+                logger.info("💡 Press Ctrl+C to stop the bot")
                 
-                # Keep the bot running - this is the main event loop
+                # Keep the bot running
                 await self.client.run_until_disconnected()
             
             # Run the async function
@@ -818,14 +882,18 @@ class BotClient:
                 raise
             finally:
                 # Run shutdown handlers
+                logger.info("🔄 Running shutdown handlers...")
                 for handler in self._shutdown_handlers:
                     try:
                         if asyncio.iscoroutinefunction(handler):
                             self.client.loop.run_until_complete(handler())
                         else:
                             handler()
+                        logger.debug(f"✅ Shutdown handler executed: {handler.__name__}")
                     except Exception as e:
-                        logger.error(f"Error in shutdown handler: {e}")
+                        logger.error(f"❌ Error in shutdown handler {handler.__name__}: {e}")
+                logger.info("👋 Bot shutdown complete")
         else:
             # Bale platform
+            logger.info("🚀 Starting Bale bot...")
             self.client.run()
