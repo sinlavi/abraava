@@ -1,4 +1,4 @@
-
+from balethon.objects import InlineKeyboardButton, InlineKeyboard
 from core.config import ITEMS_PER_PAGE
 from bot.keyboards import create_pagination_row, create_close_button
 from utils.messages import send_message, edit_message
@@ -18,6 +18,7 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
 
     header = (
         f"🔍 *نتایج جستجو برای {type_fa_map.get(type_, type_)}:*\n"
+        f"📝 *عبارت:* ```{term}```\n"
         f"📊 *تعداد کل:* {total_items} مورد\n"
         f"📄 *صفحه:* {page} از {total_pages}"
     )
@@ -36,7 +37,7 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
             callback = f"track:{item['trackId']}:u{owner_id}"
         else:
             continue
-        markup_rows.append([{"text": btn_text, "callback_data": callback}])
+        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=callback)])
 
     if total_pages > 1:
         search_id = generate_search_hash(type_, term)
@@ -46,9 +47,9 @@ async def send_search_results(bot, chat_id, type_, term, results, page, search_c
             markup_rows.append(pagination)
 
     markup_rows.append([
-        {"text": "🔍 آلبوم‌ها", "callback_data": f"refine:album:{term}:u{owner_id}"},
-        {"text": "🔍 هنرمندان", "callback_data": f"refine:artist:{term}:u{owner_id}"},
-        {"text": "🔍 آهنگ‌ها", "callback_data": f"refine:track:{term}:u{owner_id}"}
+        InlineKeyboardButton(text="🔍 آلبوم‌ها", callback_data=f"refine:album:{term}:u{owner_id}"),
+        InlineKeyboardButton(text="🔍 هنرمندان", callback_data=f"refine:artist:{term}:u{owner_id}"),
+        InlineKeyboardButton(text="🔍 آهنگ‌ها", callback_data=f"refine:track:{term}:u{owner_id}")
     ])
 
     if message_to_edit:
@@ -88,7 +89,7 @@ async def send_external_search_results(bot, chat_id, type_, term, results, page,
             callback = f"track:{item['trackId']}:u{owner_id}"
         else:
             continue
-        markup_rows.append([{"text": btn_text, "callback_data": callback}])
+        markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=callback)])
 
     if total_pages > 1:
         search_id = generate_search_hash(type_, term)

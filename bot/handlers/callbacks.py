@@ -1,4 +1,4 @@
-
+from balethon.objects import CallbackQuery, InlineKeyboard, InlineKeyboardButton
 from models.schemas import DownloadQuality
 from bot.handlers.details import show_artist_page, show_collection_page, show_track_page
 from bot.handlers.search_results import send_search_results, send_external_search_results
@@ -22,7 +22,7 @@ async def store_direct_link(url: str) -> str:
     DIRECT_LINKS[link_id] = url
     return link_id
 
-async def handle_callback(bot, callback_query, api_client, user_settings_service,
+async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_settings_service,
                           artwork_service, search_cache_service, download_service,
                           rate_limiter, download_rate_limiter, direct_download_service):
     data = callback_query.data
@@ -208,12 +208,12 @@ async def handle_callback(bot, callback_query, api_client, user_settings_service
         settings = await user_settings_service.get_settings(user_id)
         if settings.download_quality == DownloadQuality.ASK:
             markup = [
-                [{"text": "🎵 ۳۲۰ kbps", "callback_data": f"dl_q:320:{track_id}:u{user_id}"}],
-                [{"text": "🎶 ۱۹۲ kbps", "callback_data": f"dl_q:192:{track_id}:u{user_id}"}],
-                [{"text": "🎧 ۱۲۸ kbps", "callback_data": f"dl_q:128:{track_id}:u{user_id}"}],
+                [InlineKeyboardButton(text="🎵 ۳۲۰ kbps", callback_data=f"dl_q:320:{track_id}:u{user_id}")],
+                [InlineKeyboardButton(text="🎶 ۱۹۲ kbps", callback_data=f"dl_q:192:{track_id}:u{user_id}")],
+                [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_q:128:{track_id}:u{user_id}")],
                 [create_close_button(user_id)]
             ]
-            await send_message(bot, chat_id, "🎵 *کیفیت دانلود را انتخاب کنید:*", reply_markup=markup)
+            await send_message(bot, chat_id, "🎵 *کیفیت دانلود را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup))
         else:
             await bot.answer_callback_query(callback_query.id, text="⏳ در حال آماده‌سازی...")
             status_msg = await send_message(bot, chat_id, "⏳ *در حال آماده‌سازی دانلود...*", show_cancel=True)
@@ -243,12 +243,12 @@ async def handle_callback(bot, callback_query, api_client, user_settings_service
         settings = await user_settings_service.get_settings(user_id)
         if settings.download_quality == DownloadQuality.ASK:
             markup = [
-                [{"text": "🎵 ۳۲۰ kbps", "callback_data": f"dl_aq:320:{coll_id}:u{user_id}"}],
-                [{"text": "🎶 ۱۹۲ kbps", "callback_data": f"dl_aq:192:{coll_id}:u{user_id}"}],
-                [{"text": "🎧 ۱۲۸ kbps", "callback_data": f"dl_aq:128:{coll_id}:u{user_id}"}],
+                [InlineKeyboardButton(text="🎵 ۳۲۰ kbps", callback_data=f"dl_aq:320:{coll_id}:u{user_id}")],
+                [InlineKeyboardButton(text="🎶 ۱۹۲ kbps", callback_data=f"dl_aq:192:{coll_id}:u{user_id}")],
+                [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"dl_aq:128:{coll_id}:u{user_id}")],
                 [create_close_button(user_id)]
             ]
-            await send_message(bot, chat_id, "📀 *کیفیت دانلود آلبوم را انتخاب کنید:*", reply_markup=markup)
+            await send_message(bot, chat_id, "📀 *کیفیت دانلود آلبوم را انتخاب کنید:*", reply_markup=InlineKeyboard(*markup))
         else:
             await bot.answer_callback_query(callback_query.id, text="📀 شروع دانلود آلبوم...")
             status_msg = await send_message(bot, chat_id, "⏳ *در حال آماده‌سازی دانلود آلبوم...*", show_cancel=True)

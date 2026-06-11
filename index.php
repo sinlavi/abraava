@@ -114,12 +114,11 @@ function initDatabase(SQLite3 $db): void {
         urlType TEXT NOT NULL,
         mirrorUrl TEXT NOT NULL,
         quality TEXT,
-        platform TEXT NOT NULL DEFAULT 'bale',
         updatedAt TEXT,
-        PRIMARY KEY (entityType, entityId, urlType, quality, platform)
+        PRIMARY KEY (entityType, entityId, urlType, quality)
     )");
 
-    $db->exec("CREATE INDEX IF NOT EXISTS idx_mirrors_quality ON entityMirrors(entityType, entityId, urlType, quality, platform)");
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_mirrors_quality ON entityMirrors(entityType, entityId, urlType, quality)");
     $db->exec("CREATE INDEX IF NOT EXISTS idx_mirrors_lookup ON entityMirrors(entityType, entityId)");
 
     $db->exec("CREATE TABLE IF NOT EXISTS requestCache (
@@ -212,47 +211,7 @@ function initDatabase(SQLite3 $db): void {
 
     migrateSchemaToTextPK($db);
     migrateMirrorQualitySupport($db);
-    migrateMirrorPlatformSupport($db);
     $initialized = true;
-}
-
-function migrateMirrorPlatformSupport(SQLite3 $db): void {
-    $result = $db->query("PRAGMA table_info(entityMirrors)");
-    $hasPlatform = false;
-    while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-        if ($row['name'] === 'platform') {
-            $hasPlatform = true;
-            break;
-        }
-    }
-    $result->finalize();
-
-    if (!$hasPlatform) {
-        error_log("Migrating entityMirrors to support platform");
-        $db->exec("BEGIN IMMEDIATE TRANSACTION");
-        try {
-            $db->exec("CREATE TABLE entityMirrors_new (
-                entityType TEXT NOT NULL,
-                entityId TEXT NOT NULL,
-                urlType TEXT NOT NULL,
-                mirrorUrl TEXT NOT NULL,
-                quality TEXT,
-                platform TEXT NOT NULL DEFAULT 'bale',
-                updatedAt TEXT,
-                PRIMARY KEY (entityType, entityId, urlType, quality, platform)
-            )");
-            $db->exec("INSERT INTO entityMirrors_new (entityType, entityId, urlType, mirrorUrl, quality, updatedAt)
-                       SELECT entityType, entityId, urlType, mirrorUrl, quality, updatedAt FROM entityMirrors");
-            $db->exec("DROP TABLE entityMirrors");
-            $db->exec("ALTER TABLE entityMirrors_new RENAME TO entityMirrors");
-            $db->exec("CREATE INDEX IF NOT EXISTS idx_mirrors_quality ON entityMirrors(entityType, entityId, urlType, quality, platform)");
-            $db->exec("CREATE INDEX IF NOT EXISTS idx_mirrors_lookup ON entityMirrors(entityType, entityId)");
-            $db->exec("COMMIT");
-        } catch (Exception $e) {
-            $db->exec("ROLLBACK");
-            error_log("Migration failed for entityMirrors platform: " . $e->getMessage());
-        }
-    }
 }
 
 function migrateSchemaToTextPK(SQLite3 $db): void {
@@ -326,15 +285,14 @@ function migrateSchemaToTextPK(SQLite3 $db): void {
                 urlType TEXT NOT NULL,
                 mirrorUrl TEXT NOT NULL,
                 quality TEXT,
-                platform TEXT NOT NULL DEFAULT 'bale',
                 updatedAt TEXT,
-                PRIMARY KEY (entityType, entityId, urlType, quality, platform)
+                PRIMARY KEY (entityType, entityId, urlType, quality)
             )");
             $db->exec("INSERT INTO entityMirrors_new (entityType, entityId, urlType, mirrorUrl, quality, updatedAt)
                        SELECT entityType, 'it_' || entityId, urlType, mirrorUrl, quality, updatedAt FROM entityMirrors");
             $db->exec("DROP TABLE entityMirrors");
             $db->exec("ALTER TABLE entityMirrors_new RENAME TO entityMirrors");
-            $db->exec("CREATE INDEX IF NOT EXISTS idx_mirrors_quality ON entityMirrors(entityType, entityId, urlType, quality, platform)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_mirrors_quality ON entityMirrors(entityType, entityId, urlType, quality)");
             $db->exec("CREATE INDEX IF NOT EXISTS idx_mirrors_lookup ON entityMirrors(entityType, entityId)");
             $db->exec("COMMIT");
         } catch (Exception $e) {
@@ -926,14 +884,13 @@ function extractQualityFromUrlType(string $urlType): ?string {
  * @param string $id Entity ID
  * @param string|null $requestedQuality Optional requested quality parameter
  */
-function attachMirrors(array &$entity, string $type, string $id, ?string $requestedQuality = null, string $platform = 'bale'): void {
+function attachMirrors(array &$entity, string $type, string $id, ?string $requestedQuality = null): void {
     $db = getDB();
     $id = normalizeId($id);
     
-    $stmt = getStatement("SELECT urlType, mirrorUrl, quality FROM entityMirrors WHERE entityType=:t AND entityId=:id AND platform=:p");
+    $stmt = getStatement("SELECT urlType, mirrorUrl, quality FROM entityMirrors WHERE entityType=:t AND entityId=:id");
     $stmt->bindValue(':t', $type, SQLITE3_TEXT);
     $stmt->bindValue(':id', $id, SQLITE3_TEXT);
-    $stmt->bindValue(':p', $platform, SQLITE3_TEXT);
     $res = $stmt->execute();
     
     $mirrors = [];
@@ -985,9 +942,9 @@ function attachMirrors(array &$entity, string $type, string $id, ?string $reques
     }
 }
 
-function setMirrorUrl(SQLite3 $db, string $type, string $id, string $urlType, string $mirrorUrl, ?string $quality = null, string $platform = 'bale'): array {
+function setMirrorUrl(SQLite3 $db, string $type, string $id, string $urlType, string $mirrorUrl, ?string $quality = null): array {
     if (!in_array($urlType, ['artworkUrl','previewUrl','audioUrl'])) return ['success' => false, 'error' => 'Invalid urlType'];
-    if (!filter_var($mirrorUrl, FILTER_VALIDATE_URL) && strpos($mirrorUrl, 'tg://') !== 0) return ['success' => false, 'error' => 'Invalid URL'];
+    if (!filter_var($mirrorUrl, FILTER_VALIDATE_URL)) return ['success' => false, 'error' => 'Invalid URL'];
     
     $id = normalizeId($id);
     ensureEntityExists($db, $type, $id);
@@ -995,26 +952,24 @@ function setMirrorUrl(SQLite3 $db, string $type, string $id, string $urlType, st
     $actualUrlType = getAudioUrlTypeWithQuality($urlType, $quality);
     $qualityValue = ($urlType === 'audioUrl') ? $quality : null;
     
-    $stmt = getStatement("INSERT OR REPLACE INTO entityMirrors (entityType, entityId, urlType, mirrorUrl, quality, platform, updatedAt)
-                          VALUES (:t,:id,:ut,:url,:q,:p, datetime('now'))");
+    $stmt = getStatement("INSERT OR REPLACE INTO entityMirrors (entityType, entityId, urlType, mirrorUrl, quality, updatedAt) 
+                          VALUES (:t,:id,:ut,:url,:q, datetime('now'))");
     $stmt->bindValue(':t', $type, SQLITE3_TEXT);
     $stmt->bindValue(':id', $id, SQLITE3_TEXT);
     $stmt->bindValue(':ut', $actualUrlType, SQLITE3_TEXT);
     $stmt->bindValue(':url', $mirrorUrl, SQLITE3_TEXT);
     $stmt->bindValue(':q', $qualityValue, SQLITE3_TEXT);
-    $stmt->bindValue(':p', $platform, SQLITE3_TEXT);
     $stmt->execute();
     
-    return ['success' => true, 'message' => "Mirror $urlType set" . ($quality ? " for quality $quality" : "") . " on platform $platform"];
+    return ['success' => true, 'message' => "Mirror $urlType set" . ($quality ? " for quality $quality" : "")];
 }
 
-function getMirrorUrls(SQLite3 $db, string $type, string $id, ?string $urlType = null, ?string $quality = null, string $platform = 'bale'): array {
+function getMirrorUrls(SQLite3 $db, string $type, string $id, ?string $urlType = null, ?string $quality = null): array {
     $id = normalizeId($id);
-    $sql = "SELECT urlType, mirrorUrl, quality FROM entityMirrors WHERE entityType=:t AND entityId=:id AND platform=:p";
+    $sql = "SELECT urlType, mirrorUrl, quality FROM entityMirrors WHERE entityType=:t AND entityId=:id";
     $stmt = getStatement($sql);
     $stmt->bindValue(':t', $type, SQLITE3_TEXT);
     $stmt->bindValue(':id', $id, SQLITE3_TEXT);
-    $stmt->bindValue(':p', $platform, SQLITE3_TEXT);
     $res = $stmt->execute();
     
     $mirrors = [];
@@ -1069,18 +1024,17 @@ function getMirrorUrls(SQLite3 $db, string $type, string $id, ?string $urlType =
     ];
 }
 
-function deleteMirrorUrl(SQLite3 $db, string $type, string $id, ?string $urlType = null, ?string $quality = null, string $platform = 'bale'): array {
+function deleteMirrorUrl(SQLite3 $db, string $type, string $id, ?string $urlType = null, ?string $quality = null): array {
     $id = normalizeId($id);
     if ($urlType) {
         $actualUrlType = getAudioUrlTypeWithQuality($urlType, $quality);
-        $stmt = getStatement("DELETE FROM entityMirrors WHERE entityType=:t AND entityId=:id AND urlType=:ut AND platform=:p");
+        $stmt = getStatement("DELETE FROM entityMirrors WHERE entityType=:t AND entityId=:id AND urlType=:ut");
         $stmt->bindValue(':ut', $actualUrlType, SQLITE3_TEXT);
     } else {
-        $stmt = getStatement("DELETE FROM entityMirrors WHERE entityType=:t AND entityId=:id AND platform=:p");
+        $stmt = getStatement("DELETE FROM entityMirrors WHERE entityType=:t AND entityId=:id");
     }
     $stmt->bindValue(':t', $type, SQLITE3_TEXT);
     $stmt->bindValue(':id', $id, SQLITE3_TEXT);
-    $stmt->bindValue(':p', $platform, SQLITE3_TEXT);
     $stmt->execute();
     
     $message = $urlType ? "Mirror '$urlType'" . ($quality ? " for quality $quality" : "") . " deleted" : 'All mirrors deleted';
@@ -1122,7 +1076,7 @@ function saveLyrics(SQLite3 $db, string $trackId, $lyrics): array {
 }
 
 // ── Fetch single entity from DB ───────────────────────────
-function fetchEntityById(SQLite3 $db, string $type, string $id, ?string $quality = null, string $platform = 'bale'): ?array {
+function fetchEntityById(SQLite3 $db, string $type, string $id, ?string $quality = null): ?array {
     $id = normalizeId($id);
     $table = match ($type) {
         'artist' => 'artists',
@@ -1136,7 +1090,7 @@ function fetchEntityById(SQLite3 $db, string $type, string $id, ?string $quality
     $stmt->bindValue(':id', $id, SQLITE3_TEXT);
     $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
     if ($row) {
-        attachMirrors($row, $type, $id, $quality, $platform);
+        attachMirrors($row, $type, $id, $quality);
         return $row;
     }
     return null;
@@ -1331,7 +1285,6 @@ function makeApiRequestWithFallback(string $url, array $params = [], int $retryC
 function searchLocalDatabase(array $params): array {
     $db = getDB();
     $results = [];
-    $platform = $params['platform'] ?? 'bale';
     
     if (isset($params['term'])) {
         $term = '%' . strtolower($params['term']) . '%';
@@ -1344,7 +1297,7 @@ function searchLocalDatabase(array $params): array {
             $stmt->bindValue(':limit', $limit, SQLITE3_INTEGER);
             $res = $stmt->execute();
             while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
-                attachMirrors($row, 'artist', $row['artistId'], null, $platform);
+                attachMirrors($row, 'artist', $row['artistId']);
                 $results[] = $row;
             }
         }
@@ -1355,7 +1308,7 @@ function searchLocalDatabase(array $params): array {
             $stmt->bindValue(':limit', $limit, SQLITE3_INTEGER);
             $res = $stmt->execute();
             while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
-                attachMirrors($row, 'collection', $row['collectionId'], null, $platform);
+                attachMirrors($row, 'collection', $row['collectionId']);
                 $results[] = $row;
             }
         }
@@ -1366,7 +1319,7 @@ function searchLocalDatabase(array $params): array {
             $stmt->bindValue(':limit', $limit, SQLITE3_INTEGER);
             $res = $stmt->execute();
             while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
-                attachMirrors($row, 'track', $row['trackId'], null, $platform);
+                attachMirrors($row, 'track', $row['trackId']);
                 $results[] = $row;
             }
         }
@@ -1375,7 +1328,7 @@ function searchLocalDatabase(array $params): array {
         foreach ($ids as $idStr) {
             $id = normalizeId(trim($idStr));
             foreach (['artist', 'collection', 'track'] as $type) {
-                $entity = fetchEntityById($db, $type, $id, null, $platform);
+                $entity = fetchEntityById($db, $type, $id);
                 if ($entity) {
                     $results[] = $entity;
                     break;
@@ -1403,10 +1356,9 @@ function searchiTunes(SQLite3 $db, array $params): array {
             processResults($db, $response['results']);
             saveCacheIds($db, 'search', $params, $response['results']);
         }
-        $platform = $params['platform'] ?? 'bale';
         foreach ($response['results'] as &$item) {
             $quality = $params['quality'] ?? null;
-            enrichItemWithMirrors($item, $quality, $platform);
+            enrichItemWithMirrors($item, $quality);
         }
     }
     
@@ -1432,24 +1384,23 @@ function lookupiTunes(SQLite3 $db, array $params): array {
             processResults($db, $response['results']);
             saveCacheIds($db, 'lookup', $params, $response['results']);
         }
-        $platform = $params['platform'] ?? 'bale';
         foreach ($response['results'] as &$item) {
             $quality = $params['quality'] ?? null;
-            enrichItemWithMirrors($item, $quality, $platform);
+            enrichItemWithMirrors($item, $quality);
         }
     }
     
     return $response ?? ['resultCount' => 0, 'results' => []];
 }
 
-function enrichItemWithMirrors(array &$item, ?string $requestedQuality = null, string $platform = 'bale'): void {
+function enrichItemWithMirrors(array &$item, ?string $requestedQuality = null): void {
     $wrapper = $item['wrapperType'] ?? '';
     if ($wrapper === 'artist' && isset($item['artistId'])) {
-        attachMirrors($item, 'artist', $item['artistId'], $requestedQuality, $platform);
+        attachMirrors($item, 'artist', $item['artistId'], $requestedQuality);
     } elseif ($wrapper === 'collection' && isset($item['collectionId'])) {
-        attachMirrors($item, 'collection', $item['collectionId'], $requestedQuality, $platform);
+        attachMirrors($item, 'collection', $item['collectionId'], $requestedQuality);
     } elseif ($wrapper === 'track' && isset($item['trackId'])) {
-        attachMirrors($item, 'track', $item['trackId'], $requestedQuality, $platform);
+        attachMirrors($item, 'track', $item['trackId'], $requestedQuality);
     }
 }
 
@@ -1522,8 +1473,6 @@ function handleRequest(): void {
         $params['quality'] = $quality;
     }
 
-    $platform = $params['platform'] ?? 'bale';
-
     try {
         switch ($path) {
             case '/search':
@@ -1539,11 +1488,11 @@ function handleRequest(): void {
             case '/artist':
                 if (empty($params['id'])) throw new Exception('Missing id', 400);
                 $id = normalizeId($params['id']);
-                $artist = fetchEntityById($db, 'artist', $id, $quality, $platform);
+                $artist = fetchEntityById($db, 'artist', $id, $quality);
                 if (!$artist) {
-                    $lookup = lookupiTunes($db, ['id' => $id, 'quality' => $quality, 'platform' => $platform]);
+                    $lookup = lookupiTunes($db, ['id' => $id, 'quality' => $quality]);
                     $artist = $lookup['results'][0] ?? null;
-                    if ($artist) attachMirrors($artist, 'artist', $id, $quality, $platform);
+                    if ($artist) attachMirrors($artist, 'artist', $id, $quality);
                 }
                 if (!$artist) throw new Exception('Artist not found', 404);
                 $response = ['resultCount' => 1, 'results' => [$artist]];
@@ -1552,11 +1501,11 @@ function handleRequest(): void {
             case '/album':
                 if (empty($params['id'])) throw new Exception('Missing id', 400);
                 $id = normalizeId($params['id']);
-                $album = fetchEntityById($db, 'collection', $id, $quality, $platform);
+                $album = fetchEntityById($db, 'collection', $id, $quality);
                 if (!$album) {
-                    $lookup = lookupiTunes($db, ['id' => $id, 'quality' => $quality, 'platform' => $platform]);
+                    $lookup = lookupiTunes($db, ['id' => $id, 'quality' => $quality]);
                     $album = $lookup['results'][0] ?? null;
-                    if ($album) attachMirrors($album, 'collection', $id, $quality, $platform);
+                    if ($album) attachMirrors($album, 'collection', $id, $quality);
                 }
                 if (!$album) throw new Exception('Album not found', 404);
                 $response = ['resultCount' => 1, 'results' => [$album]];
@@ -1565,11 +1514,11 @@ function handleRequest(): void {
             case '/track':
                 if (empty($params['id'])) throw new Exception('Missing id', 400);
                 $id = normalizeId($params['id']);
-                $track = fetchEntityById($db, 'track', $id, $quality, $platform);
+                $track = fetchEntityById($db, 'track', $id, $quality);
                 if (!$track) {
-                    $lookup = lookupiTunes($db, ['id' => $id, 'quality' => $quality, 'platform' => $platform]);
+                    $lookup = lookupiTunes($db, ['id' => $id, 'quality' => $quality]);
                     $track = $lookup['results'][0] ?? null;
-                    if ($track) attachMirrors($track, 'track', $id, $quality, $platform);
+                    if ($track) attachMirrors($track, 'track', $id, $quality);
                 }
                 if (!$track) throw new Exception('Track not found', 404);
                 $response = ['resultCount' => 1, 'results' => [$track]];
@@ -1579,18 +1528,18 @@ function handleRequest(): void {
                 if ($method !== 'POST') throw new Exception('Method not allowed', 405);
                 $response = setMirrorUrl($db, $params['entityType'] ?? '', $params['entityId'] ?? '',
                                          $params['urlType'] ?? '', $params['mirrorUrl'] ?? '', 
-                                         $params['quality'] ?? null, $platform);
+                                         $params['quality'] ?? null);
                 break;
                 
             case '/mirror/get':
                 $response = getMirrorUrls($db, $params['entityType'] ?? '', $params['entityId'] ?? '',
-                                         $params['urlType'] ?? $params['url_type'] ?? null, $params['quality'] ?? null, $platform);
+                                         $params['urlType'] ?? $params['url_type'] ?? null, $params['quality'] ?? null);
                 break;
                 
             case '/mirror/delete':
                 if (!in_array($method, ['POST', 'DELETE'])) throw new Exception('Method not allowed', 405);
                 $response = deleteMirrorUrl($db, $params['entityType'] ?? '', $params['entityId'] ?? '',
-                                           $params['urlType'] ?? null, $params['quality'] ?? null, $platform);
+                                           $params['urlType'] ?? null, $params['quality'] ?? null);
                 break;
 
             case '/artist/save':

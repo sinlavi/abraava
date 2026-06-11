@@ -6,7 +6,8 @@ if PROXY:
     os.environ["HTTP_PROXY"] = PROXY
     os.environ["HTTPS_PROXY"] = PROXY
 
-from core.bot_client import BotClient
+from balethon import Client
+from balethon.objects import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboard
 from core.logger import logger
 from core.http_client import HttpClient
 
@@ -52,7 +53,7 @@ album_tracker = AlbumDownloadTracker(api_client)
 tagging_service = TaggingService()
 error_notifier = BaleUploadErrorNotifier(api_client)
 
-bot = BotClient()
+bot = Client(token=BOT_TOKEN, proxy=PROXY)
 download_service = DownloadService(bot, api_client, user_settings_service, artwork_service,
                                    tagging_service, error_notifier, album_tracker, download_rate_limiter)
 direct_download_service = DirectDownloadService(bot, tagging_service)
@@ -68,8 +69,8 @@ async def on_shutdown():
     logger.info("Bot shutting down...")
 
 @bot.on_message()
-async def on_message(message):
-    if not message.author or getattr(message.author, 'is_bot', False): return
+async def on_message(message: Message):
+    if not message.author or message.author.is_bot: return
 
     # Broadcast forward handling
     if message.chat.type == "channel" and str(message.chat.id) == str(INFO_CHANNEL_ID):
@@ -112,11 +113,11 @@ async def on_message(message):
                 name = ch.get('channel_name', ch.get('channel_username', ch.get('channel_id')))
                 link = ch.get('invite_link', '')
                 if link:
-                    markup_rows.append([{"text": f"📢 عضویت در {name}", "url": link}])
+                    markup_rows.append([InlineKeyboardButton(text=f"📢 عضویت در {name}", url=link)])
                 else:
                     channels_text += f"\n\n🔸 {name}"
             markup_rows.append([create_close_button(user_id)])
-            await send_message(bot, chat_id, channels_text, reply_markup=markup_rows)
+            await send_message(bot, chat_id, channels_text, reply_markup=InlineKeyboard(*markup_rows))
             return
 
     if text.startswith("/start"):
@@ -194,7 +195,7 @@ async def on_message(message):
                             await show_track_page(bot, chat_id, f"yt_{m.group(1)}", artwork_service, user_id, message_to_edit=status_msg)
                         else:
                             await safe_delete(status_msg)
-                            await direct_download_service.ask_confirmation(bot, chat_id, yt_url, user_id=user_id)
+                            await direct_download_service.ask_confirmation(chat_id, yt_url, user_id=user_id)
                     else:
                         # No link at all, try searching
                         title, artist = resolved.get("title"), resolved.get("artist")
@@ -217,7 +218,7 @@ async def on_message(message):
                 elif sc_m:
                     await show_track_page(bot, chat_id, f"sc_{sc_m.group(1)}", artwork_service, user_id, reply_to=message.id)
                 else:
-                    await direct_download_service.ask_confirmation(bot, chat_id, term, user_id=user_id, reply_to=message.id)
+                    await direct_download_service.ask_confirmation(chat_id, term, user_id=user_id, reply_to=message.id)
             elif type_ in ["track", "album", "artist", "ytm", "sc", "quick","all"]:
                 await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE, reply_to=message.id)
             else:
@@ -228,7 +229,7 @@ async def on_message(message):
                     await handle_search(bot, chat_id, user_id, "track", text, api_client, search_cache_service, OFFLINE_MODE, reply_to=message.id)
 
 @bot.on_callback_query()
-async def on_callback(callback_query):
+async def on_callback(callback_query: CallbackQuery):
     try:
         await handle_callback(bot, callback_query, api_client, user_settings_service,
                              artwork_service, search_cache_service, download_service,

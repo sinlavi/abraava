@@ -1,5 +1,6 @@
+from balethon.objects import InlineKeyboard, Message, InlineKeyboardButton
 from core.config import FOOTER
-from bot.keyboards import create_close_button, create_info_channel_button, create_cancel_button, create_cancel_operation_button
+from bot.keyboards import create_close_button, create_info_channel_button, create_cancel_button
 import logging
 import copy
 import asyncio
@@ -13,37 +14,32 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
         markup = copy.deepcopy(reply_markup)
 
         # Flatten and check for close button in all nested lists
-        has_close = False
-        for row in markup:
-            if isinstance(row, list):
-                for btn in row:
-                    if isinstance(btn, dict) and btn.get('callback_data', '').startswith('close'):
-                        has_close = True
-                        break
-            if has_close: break
+        has_close = any(
+            getattr(btn, 'callback_data', '') == 'close'
+            for row in markup
+            if isinstance(row, list)
+            for btn in row
+        )
 
         if not no_close and not has_close:
             if task_id:
                 markup.append([create_cancel_button(task_id)])
             elif show_cancel:
-                markup.append([create_cancel_operation_button()])
+                markup.append([InlineKeyboardButton(text="⏹️ لغو عملیات", callback_data="close")])
             elif show_info:
                 markup.append([create_info_channel_button()])
 
             # Final check just in case something was added but not 'close'
-            has_close_now = False
-            for row in markup:
-                if isinstance(row, list):
-                    for btn in row:
-                        if isinstance(btn, dict) and btn.get('callback_data', '').startswith('close'):
-                            has_close_now = True
-                            break
-                if has_close_now: break
-
+            has_close_now = any(
+                getattr(btn, 'callback_data', '') == 'close'
+                for row in markup
+                if isinstance(row, list)
+                for btn in row
+            )
             if not has_close_now:
                 markup.append([create_close_button()])
 
-        return markup
+        return InlineKeyboard(*markup)
     return reply_markup
 
 async def safe_delete(message, attempt=1):
@@ -83,7 +79,7 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
             return message
 
         if "message not found" in err_msg:
-            return await send_message(message.client_wrapper if hasattr(message, 'client_wrapper') else message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
+            return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
         max_attempts = 10 if force_edit else 3
         if ("rate limit" in err_msg or "too many" in err_msg) and attempt < max_attempts:
@@ -100,9 +96,9 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
         except Exception:
             pass
 
-        return await send_message(message.client_wrapper if hasattr(message, 'client_wrapper') else message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
+        return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
-async def reply_message(message, text: str, reply_markup=None, show_info=False):
+async def reply_message(message: Message, text: str, reply_markup=None, show_info=False):
     markup = _prepare_markup(reply_markup, False, show_info)
-    await message.client_wrapper.send_chat_action(message.chat.id, "typing")
+    await message.client.send_chat_action(message.chat.id, "typing")
     return await message.reply(text=f"{text}{FOOTER}", reply_markup=markup)

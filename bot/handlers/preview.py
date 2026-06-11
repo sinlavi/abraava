@@ -1,8 +1,8 @@
 import asyncio
 import io
 from typing import Optional
-
-
+from balethon import Client
+from balethon.objects import Message
 from core.logger import logger
 from crawlers.utils import get_track
 from crawlers.itunes import get_cached_preview, set_mirror
@@ -10,13 +10,13 @@ from utils.messages import send_message, edit_message, safe_delete
 from core.http_client import HttpClient
 from core.config import FOOTER
 from bot.keyboards import create_close_button
-
+from balethon.objects import InlineKeyboard, InlineKeyboardButton
 
 async def _update_preview_status(bot, chat_id, msg, text):
     await safe_delete(msg)
     return await send_message(bot, chat_id, text, show_cancel=True)
 
-async def send_voice_preview(bot, chat_id: int, track_id: int, user_id: int = None, reply_to=None):
+async def send_voice_preview(bot: Client, chat_id: int, track_id: int, user_id: int = None, reply_to=None):
     status_msg = await send_message(bot, chat_id, "⏳ *در حال دریافت پیش‌نمایش...*", reply_to_message_id=reply_to)
 
     try:
@@ -37,12 +37,12 @@ async def send_voice_preview(bot, chat_id: int, track_id: int, user_id: int = No
         markup = []
         source_url = track.get("trackViewUrl") or track.get("previewUrl")
         if track_id:
-            markup.append([{"text": "📋 کپی پیوند", "copy_text": generate_deep_link("track", track_id)}])
+            markup.append([InlineKeyboardButton(text="📋 کپی پیوند", copy_text=generate_deep_link("track", track_id))])
         if source_url:
-            markup.append([{"text": "🌐 اطلاعات بیشتر", "url": source_url}])
+            markup.append([InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=source_url)])
         markup.append([create_close_button(user_id)])
 
-        reply_markup = markup
+        reply_markup = InlineKeyboard(*markup)
 
         # Attempt 1: From Cache (mirror)
         preview_cache = await get_cached_preview(track_id)

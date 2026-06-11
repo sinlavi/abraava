@@ -1,6 +1,6 @@
 import asyncio
 import logging
-
+from balethon.objects import InlineKeyboardButton, InlineKeyboard
 from utils.messages import send_message, edit_message, safe_delete
 from crawlers.utils import get_or_crawl_collection, get_or_crawl_collection_tracks
 from bot.keyboards import create_close_button
@@ -47,7 +47,7 @@ async def download_album(bot, chat_id, collection_id, user_id, download_service,
             tracks = tracks_data['results']
             coll_name = coll.get('collectionName', 'آلبوم')
 
-        album_markup = [[{"text": "⏹️ توقف دانلود", "callback_data": f"cancel_album:{lock_id}:u{user_id}"}]]
+        album_markup = InlineKeyboard(*[[InlineKeyboardButton(text="⏹️ توقف دانلود", callback_data=f"cancel_album:{lock_id}:u{user_id}")]])
         await safe_delete(parent_msg)
         parent_msg = await send_message(bot, chat_id, f"📀 *نام:* {coll_name}\n🎵 *تعداد قطعات:* {len(tracks)}\n⬇️ *در حال دانلود...*", reply_markup=album_markup)
 
@@ -132,9 +132,9 @@ async def _send_album_summary(bot, chat_id, coll_name, total, success, failed, f
 
         failed_ids = ",".join([str(tid) for tid, _ in failed_tracks])
         if len(failed_ids) < 100: # Increased limit for Bale
-            markup_rows.append([{"text": "🔄 تلاش مجدد قطعات ناموفق", "callback_data": f"retry_failed:{failed_ids}:u{user_id}"}])
+            markup_rows.append([InlineKeyboardButton(text="🔄 تلاش مجدد قطعات ناموفق", callback_data=f"retry_failed:{failed_ids}:u{user_id}")])
 
     markup_rows.append([create_close_button(user_id)])
 
     if status_msg: await safe_delete(status_msg)
-    await send_message(bot, chat_id, final_text, reply_markup=markup_rows)
+    await send_message(bot, chat_id, final_text, reply_markup=InlineKeyboard(*markup_rows))
