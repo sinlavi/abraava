@@ -101,6 +101,36 @@ class BotClient:
             self.client.on_initialize()(self._bale_on_init)
             self.client.on_shutdown()(self._bale_on_shutdown)
 
+    async def edit_message(self, chat_id, message_id, text, reply_markup=None):
+        markup = self._convert_keyboard(reply_markup)
+        if self.platform == "telegram":
+            try:
+                msg = await self.client.edit_message(chat_id, message_id, text, buttons=markup, parse_mode='md')
+                wrapped = WrappedMessage(msg, "telegram")
+                wrapped.client_wrapper = self
+                return wrapped
+            except Exception as e:
+                if "message is not modified" in str(e).lower(): return None
+                raise
+        else:
+            try:
+                # Bale might use edit_message_text or edit_text
+                # Try different possible method names
+                if hasattr(self.client, 'edit_message_text'):
+                    msg = await self.client.edit_message_text(chat_id, message_id, text, reply_markup=markup)
+                elif hasattr(self.client, 'edit_text'):
+                    msg = await self.client.edit_text(chat_id, message_id, text, reply_markup=markup)
+                else:
+                    # Fallback: send a new message and delete the old one
+                    await self.delete_message(chat_id, message_id)
+                    msg = await self.send_message(chat_id, text, reply_markup=reply_markup)
+                
+                wrapped = WrappedMessage(msg, "bale")
+                wrapped.client_wrapper = self
+                return wrapped
+            except Exception as e:
+                if "message is not modified" in str(e).lower(): return None
+                raise
     async def _tg_on_message(self, event):
         wrapped = WrappedMessage(event.message, "telegram")
         wrapped.client_wrapper = self
