@@ -260,7 +260,7 @@ class BotClient:
                 performer=kwargs.get('performer')
             )]
             thumb = kwargs.get('thumb')
-            msg = await self.client.send_file(chat_id, audio, caption=caption, buttons=markup, reply_to=reply_to_message_id, attributes=attributes, thumb=thumb)
+            msg = await self.client.send_file(chat_id, audio, caption=caption, buttons=markup, reply_to=reply_to_message_id, attributes=attributes, thumb=thumb, voice=False)
             wrapped = WrappedMessage(msg, "telegram")
             wrapped.client_wrapper = self
             return wrapped
@@ -269,6 +269,29 @@ class BotClient:
             wrapped = WrappedMessage(msg, "bale")
             wrapped.client_wrapper = self
             return wrapped
+
+    async def send_voice(self, chat_id, voice, caption=None, reply_markup=None, reply_to_message_id=None):
+        markup = self._convert_keyboard(reply_markup)
+        if self.platform == "telegram":
+            msg = await self.client.send_file(chat_id, voice, caption=caption, buttons=markup, reply_to=reply_to_message_id, voice=True)
+            wrapped = WrappedMessage(msg, "telegram")
+            wrapped.client_wrapper = self
+            return wrapped
+        else:
+            msg = await self.client.send_voice(chat_id, voice, caption=caption, reply_markup=markup, reply_to_message_id=reply_to_message_id)
+            wrapped = WrappedMessage(msg, "bale")
+            wrapped.client_wrapper = self
+            return wrapped
+
+    async def get_chat(self, chat_id):
+        if self.platform == "telegram":
+            chat = await self.client.get_entity(chat_id)
+            return type('Chat', (), {
+                'id': chat.id,
+                'type': 'private' if isinstance(chat, types.User) else 'group' if isinstance(chat, (types.Chat, types.Channel)) and not getattr(chat, 'broadcast', False) else 'channel'
+            })
+        else:
+            return await self.client.get_chat(chat_id)
 
     async def answer_callback_query(self, callback_query_id, text=None, show_alert=False):
         if self.platform == "telegram":
@@ -300,12 +323,11 @@ class BotClient:
 
     def run(self):
         if self.platform == "telegram":
-            self.client.start(bot_token=BOT_TOKEN)
-            self._tg_me = self.client.get_me()
-            loop = asyncio.get_event_loop()
+            self.client.loop.run_until_complete(self.client.start(bot_token=BOT_TOKEN))
+            self._tg_me = self.client.loop.run_until_complete(self.client.get_me())
             for handler in self._init_handlers:
                 if asyncio.iscoroutinefunction(handler):
-                    loop.run_until_complete(handler())
+                    self.client.loop.run_until_complete(handler())
                 else:
                     handler()
 
@@ -313,7 +335,7 @@ class BotClient:
 
             for handler in self._shutdown_handlers:
                 if asyncio.iscoroutinefunction(handler):
-                    loop.run_until_complete(handler())
+                    self.client.loop.run_until_complete(handler())
                 else:
                     handler()
         else:
