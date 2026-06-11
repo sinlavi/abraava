@@ -30,20 +30,8 @@ class ArtworkService:
             if isinstance(entity_id, str) and entity_id.startswith(("yt_", "sc_", "sp_")):
                 return None
 
-            data = await get_mirror(entity_type, str(entity_id), 'artworkUrl', platform=PLATFORM)
-            if data and isinstance(data, dict):
-                artwork_data = data.get('mirrors', {}).get('artworkUrl')
-                if not artwork_data and 'data' in data:
-                    artwork_data = data['data'].get('mirrors', {}).get('artworkUrl')
-
-                if artwork_data:
-                    cached_url = artwork_data.get('url') if isinstance(artwork_data, dict) else artwork_data
-                    if cached_url and '<token>' in cached_url:
-                        return cached_url.split('<token>/')[-1]
-                    if cached_url and cached_url.startswith("tg://file/"):
-                        return cached_url[10:]
-                    return cached_url
-            return None
+            from crawlers.itunes import get_cached_artwork
+            return await get_cached_artwork(entity_type, str(entity_id), platform=PLATFORM)
         except Exception as e:
             logger.error(f"Error getting cached artwork: {e}")
             return None
