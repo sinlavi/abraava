@@ -57,7 +57,11 @@ class WrappedMessage:
         return await self.client.send_message(self.chat.id, text, reply_to=self.id, reply_markup=reply_markup)
 
     async def edit(self, text, reply_markup=None):
-        return await self.client.edit_message(self.chat.id, self.id, text, reply_markup=reply_markup)
+        if self.platform == "telegram":
+            return await self.client.edit_message(self.chat.id, self.id, text, buttons=reply_markup)
+        else:
+            # Balethon uses edit_message_text
+            return await self.client.edit_message_text(self.chat.id, self.id, text, reply_markup=reply_markup)
 
     async def delete(self):
         await self.raw.delete()
@@ -179,7 +183,7 @@ class BotClient:
         if self.platform == "telegram":
             return WrappedMessage(await self.client.edit_message(chat_id, message_id, text, buttons=markup), "telegram")
         else:
-            return WrappedMessage(await self.client.edit_message(chat_id, message_id, text, reply_markup=markup), "bale")
+            return WrappedMessage(await self.client.edit_message_text(chat_id, message_id, text, reply_markup=markup), "bale")
 
     async def send_photo(self, chat_id, photo, caption=None, reply_markup=None, reply_to=None):
         markup = self._convert_markup(reply_markup)
