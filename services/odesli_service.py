@@ -24,14 +24,14 @@ class OdesliService:
 
                 # Note: HttpClient session already uses ProxyConnector if PROXY is SOCKS
                 current_proxy = PROXY if PROXY and not PROXY.startswith("socks") else None
-                async with session.get(cls.BASE_URL, params=params, proxy=current_proxy, timeout=10) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        if method in ODESLI_METHODS:
-                            ODESLI_METHODS.remove(method)
-                            ODESLI_METHODS.insert(0, method)
-                        return cls._parse_response(data)
-                    elif resp.status == 429:
+                resp = await HttpClient.request("GET", cls.BASE_URL, params=params, proxy=current_proxy, timeout=10)
+                if resp and resp.status == 200:
+                    data = await resp.json()
+                    if method in ODESLI_METHODS:
+                        ODESLI_METHODS.remove(method)
+                        ODESLI_METHODS.insert(0, method)
+                    return cls._parse_response(data)
+                elif resp and resp.status == 429:
                         logger.warning(f"Odesli method {method} rate limited (429)")
                     else:
                         logger.warning(f"Odesli method {method} failed with status {resp.status}")

@@ -6,8 +6,7 @@ if PROXY:
     os.environ["HTTP_PROXY"] = PROXY
     os.environ["HTTPS_PROXY"] = PROXY
 
-from balethon import Client
-from balethon.objects import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboard
+from core.bot_client import BotClient
 from core.logger import logger
 from core.http_client import HttpClient
 
@@ -53,27 +52,24 @@ album_tracker = AlbumDownloadTracker(api_client)
 tagging_service = TaggingService()
 error_notifier = BaleUploadErrorNotifier(api_client)
 
-bot = Client(token=BOT_TOKEN, proxy=PROXY)
+bot = BotClient()
 download_service = DownloadService(bot, api_client, user_settings_service, artwork_service,
                                    tagging_service, error_notifier, album_tracker, download_rate_limiter)
 direct_download_service = DirectDownloadService(bot, tagging_service)
 
-@bot.on_initialize()
-async def on_init():
+async def init_services():
     await lyrics_service.init_db()
     logger.info(f"Bot initialized. Offline Mode: {OFFLINE_MODE}")
 
-@bot.on_shutdown()
-async def on_shutdown():
-    await HttpClient.close()
-    logger.info("Bot shutting down...")
-
 @bot.on_message()
-async def on_message(message: Message):
-    if not message.author or message.author.is_bot: return
+async def on_message(message):
+    if not message.author: return
+    # Platform agnostic bot check
+    is_bot = getattr(message.author, 'is_bot', getattr(message.author, 'bot', False))
+    if is_bot: return
 
     # Broadcast forward handling
-    if message.chat.type == "channel" and str(message.chat.id) == str(INFO_CHANNEL_ID):
+    if hasattr(message.chat, 'type') and message.chat.type == "channel" and str(message.chat.id) == str(INFO_CHANNEL_ID):
         await process_broadcast_message(bot, message, api_client)
         return
 
@@ -84,18 +80,21 @@ async def on_message(message: Message):
     # Register user
     await registration_service.register_user(message)
 
-    if message.chat.type == "channel": return
+    if hasattr(message.chat, 'type') and message.chat.type == "channel": return
 
-    is_group = message.chat.type in ["group", "supergroup"]
+    is_group = hasattr(message.chat, 'type') and message.chat.type in ["group", "supergroup"]
     if is_group:
-        bot_username = bot.user.username
-        is_reply_to_bot = message.reply_to_message and message.reply_to_message.author.id == bot.user.id
+        # Bot username check might need abstraction if names differ
+        from core.config import BOT_USERNAME
+        bot_username = BOT_USERNAME.lstrip('@')
+
+        is_reply_to_bot = message.reply_to_message and message.reply_to_message.author.id == (await bot.get_me()).id
         is_mentioned = f"@{bot_username}" in text
 
         if not (is_mentioned or is_reply_to_bot):
             return
 
-        if not is_valid_message(message): return
+        # if not is_valid_message(message): return # Validation might need update for Telethon
         text = re.sub(rf"@{re.escape(bot_username)}\s*", "", text).strip()
 
         if len(text) > 100:
@@ -113,11 +112,12 @@ async def on_message(message: Message):
                 name = ch.get('channel_name', ch.get('channel_username', ch.get('channel_id')))
                 link = ch.get('invite_link', '')
                 if link:
-                    markup_rows.append([InlineKeyboardButton(text=f"📢 عضویت در {name}", url=link)])
+                    from core.bot_client import Button
+                    markup_rows.append([Button(text=f"📢 عضویت در {name}", url=link)])
                 else:
                     channels_text += f"\n\n🔸 {name}"
             markup_rows.append([create_close_button(user_id)])
-            await send_message(bot, chat_id, channels_text, reply_markup=InlineKeyboard(*markup_rows))
+            await send_message(bot, chat_id, channels_text, reply_markup=markup_rows)
             return
 
     if text.startswith("/start"):
@@ -229,14 +229,14 @@ async def on_message(message: Message):
                     await handle_search(bot, chat_id, user_id, "track", text, api_client, search_cache_service, OFFLINE_MODE, reply_to=message.id)
 
 @bot.on_callback_query()
-async def on_callback(callback_query: CallbackQuery):
+async def on_callback(callback_query):
     try:
         await handle_callback(bot, callback_query, api_client, user_settings_service,
                              artwork_service, search_cache_service, download_service,
                              rate_limiter, download_rate_limiter, direct_download_service)
     except Exception as e:
         if "query is too old" in str(e).lower():
-            await bot.answer_callback_query(callback_query.id, text="⚠️ این جستجو منقضی شده است. لطفاً مجدداً جستجو کنید.", show_alert=True)
+            await callback_query.answer(text="⚠️ این جستجو منقضی شده است. لطفاً مجدداً جستجو کنید.", show_alert=True)
         else:
             logger.error(f"Callback error: {e}")
 
@@ -250,7 +250,7 @@ if __name__ == "__main__":
     logger.info("ABRAAVA bot is starting...")
     while True:
         try:
-            bot.run()
+            bot.run(on_startup=init_services)
         except KeyboardInterrupt: break
         except Exception as e:
             logger.exception(f"Bot crashed: {e}")

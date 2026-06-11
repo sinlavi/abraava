@@ -134,7 +134,6 @@ class LyricsService:
     async def _fetch_from_lrclib(self, title, artist, album=None):
         try:
             from core.http_client import HttpClient
-            session = await HttpClient.get_session()
             params = {
                 "track_name": title,
                 "artist_name": artist,
@@ -143,26 +142,26 @@ class LyricsService:
                 params["album_name"] = album
 
             url = "https://lrclib.net/api/get"
-            async with session.get(url, params=params, timeout=10) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return {"synced": data.get("syncedLyrics"), "plain": data.get("plainLyrics")}
+            resp = await HttpClient.request("GET", url, params=params)
+            if resp and resp.status == 200:
+                data = await resp.json()
+                return {"synced": data.get("syncedLyrics"), "plain": data.get("plainLyrics")}
 
-                if resp.status == 404:
-                    # Try search if direct get fails
-                    search_url = "https://lrclib.net/api/search"
-                    search_params = {"q": f"{artist} {title}"}
-                    async with session.get(search_url, params=search_params, timeout=10) as s_resp:
-                        if s_resp.status == 200:
-                            results = await s_resp.json()
-                            if results:
-                                # Return the first result's lyrics
-                                best_result = results[0]
-                                for res in results:
-                                    if res.get("syncedLyrics"):
-                                        best_result = res
-                                        break
-                                return {"synced": best_result.get("syncedLyrics"), "plain": best_result.get("plainLyrics")}
+            if resp and resp.status == 404:
+                # Try search if direct get fails
+                search_url = "https://lrclib.net/api/search"
+                search_params = {"q": f"{artist} {title}"}
+                s_resp = await HttpClient.request("GET", search_url, params=search_params)
+                if s_resp and s_resp.status == 200:
+                    results = await s_resp.json()
+                    if results:
+                        # Return the first result's lyrics
+                        best_result = results[0]
+                        for res in results:
+                            if res.get("syncedLyrics"):
+                                best_result = res
+                                break
+                        return {"synced": best_result.get("syncedLyrics"), "plain": best_result.get("plainLyrics")}
             return None
         except Exception as e:
             logger.error(f"Error fetching lyrics from LRCLIB: {e}")

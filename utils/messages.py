@@ -1,5 +1,5 @@
-from balethon.objects import InlineKeyboard, Message, InlineKeyboardButton
 from core.config import FOOTER
+from core.bot_client import Button
 from bot.keyboards import create_close_button, create_info_channel_button, create_cancel_button
 import logging
 import copy
@@ -25,7 +25,7 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
             if task_id:
                 markup.append([create_cancel_button(task_id)])
             elif show_cancel:
-                markup.append([InlineKeyboardButton(text="⏹️ لغو عملیات", callback_data="close")])
+                markup.append([Button(text="⏹️ لغو عملیات", callback_data="close")])
             elif show_info:
                 markup.append([create_info_channel_button()])
 
@@ -39,7 +39,7 @@ def _prepare_markup(reply_markup, no_close, show_info=False, task_id=None, show_
             if not has_close_now:
                 markup.append([create_close_button()])
 
-        return InlineKeyboard(*markup)
+        return markup
     return reply_markup
 
 async def safe_delete(message, attempt=1):
@@ -58,7 +58,7 @@ async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, sh
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
     try:
         await bot.send_chat_action(chat_id, "typing")
-        return await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup, reply_to_message_id=reply_to_message_id)
+        return await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup, reply_to=reply_to_message_id)
     except Exception as e:
         if "too many" in str(e).lower():
             await asyncio.sleep(1)
@@ -98,7 +98,7 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
 
         return await send_message(message.client, chat_id, text, reply_markup=markup, no_close=no_close, show_info=show_info, task_id=task_id)
 
-async def reply_message(message: Message, text: str, reply_markup=None, show_info=False):
+async def reply_message(message, text: str, reply_markup=None, show_info=False):
     markup = _prepare_markup(reply_markup, False, show_info)
     await message.client.send_chat_action(message.chat.id, "typing")
     return await message.reply(text=f"{text}{FOOTER}", reply_markup=markup)
