@@ -350,23 +350,17 @@ class BotClient:
                 logger.info("🔌 No proxy configured, using direct connection")
             
             # ایجاد کلاینت تلگرام
+            # برای تلاش اول با پراکسی، تعداد ریترا را کم می‌کنیم تا سریع‌تر به فال‌بک برسیم
             self.client = TelegramClient(
                 "abraava_tg", 
                 int(TELEGRAM_API_ID), 
                 TELEGRAM_API_HASH, 
                 proxy=self.proxy_config,
-                connection_retries=5,
+                connection_retries=2 if self.proxy_config else 5,
                 retry_delay=1
             )
             
-            @self.client.on(events.NewMessage(incoming=True))
-            async def handler_message(event):
-                await self._tg_on_message(event)
-            
-            @self.client.on(events.CallbackQuery())
-            async def handler_callback(event):
-                await self._tg_on_callback(event)
-            
+            self._register_tg_handlers()
             logger.info("🤖 Telegram bot client initialized")
                 
         else:
@@ -460,6 +454,15 @@ class BotClient:
             import traceback
             traceback.print_exc()
             await self._handle_error(e, {"event": "callback"})
+
+    def _register_tg_handlers(self):
+        @self.client.on(events.NewMessage(incoming=True))
+        async def handler_message(event):
+            await self._tg_on_message(event)
+
+        @self.client.on(events.CallbackQuery())
+        async def handler_callback(event):
+            await self._tg_on_callback(event)
 
     async def _bale_on_message(self, message):
         try:
@@ -1069,23 +1072,22 @@ class BotClient:
                     if self.proxy_config:
                         logger.info("🔄 Attempting to connect without proxy...")
                         try:
+                            # قطع کلاینت قبلی
+                            try:
+                                await self.client.disconnect()
+                            except: pass
+
                             # کلاینت جدید بدون پراکسی
                             self.client = TelegramClient(
-                                "abraava_tg_direct",
+                                "abraava_tg",
                                 int(TELEGRAM_API_ID),
                                 TELEGRAM_API_HASH,
                                 proxy=None,
                                 connection_retries=5,
                                 retry_delay=1
                             )
-                            # ثبت مجدد هندلرها برای کلاینت جدید
-                            @self.client.on(events.NewMessage(incoming=True))
-                            async def handler_message(event):
-                                await self._tg_on_message(event)
-
-                            @self.client.on(events.CallbackQuery())
-                            async def handler_callback(event):
-                                await self._tg_on_callback(event)
+                            # ثبت مجدد هندلرها
+                            self._register_tg_handlers()
 
                             await self.client.start(bot_token=BOT_TOKEN)
                             logger.info("✅ Connected successfully without proxy")
