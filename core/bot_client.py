@@ -119,7 +119,8 @@ class BotClient:
         for handler in self._message_handlers:
             await handler(wrapped)
 
-    async def _bale_on_callback(self, query):
+    async def _bale_on_callback(self, callback_query):
+        query = callback_query
         wrapped = WrappedCallbackQuery(query, "bale")
         wrapped.message.client_wrapper = self
         for handler in self._callback_handlers:
