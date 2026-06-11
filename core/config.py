@@ -4,15 +4,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Bot Info
+PLATFORM = os.getenv("PLATFORM", "bale").lower() # 'bale' or 'telegram'
 BOT_NAME = "ابرآوا"
 BOT_USERNAME = "@abraava_bot"
 INFO_CHANNEL_USERNAME = "@abraava"
 FOOTER = f'\n\n{INFO_CHANNEL_USERNAME}\n{BOT_USERNAME}'
-DEEP_LINK_BASE = f"https://ble.ir/{BOT_USERNAME.lstrip('@')}?start="
+if PLATFORM == "telegram":
+    DEEP_LINK_BASE = f"https://t.me/{BOT_USERNAME.lstrip('@')}?start="
+else:
+    DEEP_LINK_BASE = f"https://ble.ir/{BOT_USERNAME.lstrip('@')}?start="
 
 # Connection Settings
 PROXY = os.getenv("proxy", "socks5h://127.0.0.1:1080")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID")
+TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH")
 
 # Database and Channel IDs
 DB_CHANNEL_ID = os.getenv("DB_CHANNEL_ID")

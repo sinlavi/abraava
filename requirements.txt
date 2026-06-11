@@ -1,4 +1,5 @@
 balethon
+telethon
 ytmusicapi
 yt_dlp
 aiosqlite
