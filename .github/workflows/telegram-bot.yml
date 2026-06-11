@@ -205,7 +205,7 @@ jobs:
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
           OFFLINE_MODE: ${{ secrets.OFFLINE_MODE }}
           DB_CHANNEL_ID: ${{ secrets.DB_CHANNEL_ID }}
-          INFO_CHANNEL_ID: ${{ secrets.INFO_CHANNEL_ID }}
+          INFO_CHANNEL_ID: ${{ secrets.TELEGRAM_INFO_CHANNEL_ID }}
           API_TOKEN: ${{ secrets.API_TOKEN }}
         run: |
           echo "🚀 Starting bot..."
