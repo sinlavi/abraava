@@ -325,36 +325,32 @@ class BotClient:
             if PROXY and PROXY.strip():
                 try:
                     import socks
-                    # پشتیبانی از فرمت‌های مختلف پراکسی
-                    proxy_url = PROXY.strip()
+                    from urllib.parse import urlparse
                     
-                    # حذف پروتکل
-                    if proxy_url.startswith("socks5h://"):
-                        proxy_url = proxy_url[9:]
-                    elif proxy_url.startswith("socks5://"):
-                        proxy_url = proxy_url[8:]
-                    elif proxy_url.startswith("socks4://"):
-                        proxy_url = proxy_url[8:]
+                    parsed = urlparse(PROXY.strip())
+                    scheme = parsed.scheme.lower()
                     
-                    # جدا کردن اطلاعات احراز هویت
-                    username = None
-                    password = None
+                    # Map schemes to socks types
+                    proxy_type = socks.SOCKS5
+                    if "socks4" in scheme:
+                        proxy_type = socks.SOCKS4
+                    elif "http" in scheme:
+                        proxy_type = socks.HTTP
+
+                    # Extract credentials and host/port
+                    host = parsed.hostname
+                    port = parsed.port
+                    username = parsed.username
+                    password = parsed.password
                     
-                    if "@" in proxy_url:
-                        auth, addr = proxy_url.split("@")
-                        if ":" in auth:
-                            username, password = auth.split(":")
-                        else:
-                            username = auth
-                        host, port = addr.split(":")
+                    if host and port:
+                        # Construct proxy configuration tuple for Telethon
+                        self.proxy_config = (proxy_type, host, int(port), True, username, password)
+                        logger.info(f"🔌 Proxy configured: {scheme}://{host}:{port}")
                     else:
-                        host, port = proxy_url.split(":")
-                    
-                    # ساخت تنظیمات پراکسی
-                    self.proxy_config = (socks.SOCKS5, host, int(port), True, username, password)
-                    logger.info(f"🔌 Proxy configured: {host}:{port}")
+                        logger.warning(f"⚠️ Could not parse proxy URL: {PROXY}")
                 except Exception as e:
-                    logger.warning(f"⚠️ Invalid proxy configuration: {e}")
+                    logger.warning(f"⚠️ Proxy parsing error: {e}")
                     self.proxy_config = None
             else:
                 logger.info("🔌 No proxy configured, using direct connection")
@@ -1081,36 +1077,39 @@ class BotClient:
                 logger.info("=" * 50)
                 
                 try:
+                    logger.info("🔌 Attempting to connect to Telegram...")
                     await self.client.start(bot_token=BOT_TOKEN)
                 except Exception as e:
-                    logger.error(f"❌ Failed to connect to Telegram with proxy: {e}")
-
+                    # If we had a proxy configured, try falling back to direct connection
                     if self.proxy_config:
-                        logger.info("🔄 Attempting to connect without proxy...")
+                        logger.warning(f"⚠️ Connection with proxy failed: {e}")
+                        logger.info("🔄 Falling back to direct connection...")
                         try:
-                            # قطع کلاینت قبلی
+                            # Disconnect failed client
                             try:
                                 await self.client.disconnect()
                             except: pass
 
-                            # کلاینت جدید بدون پراکسی
+                            # Create new client without proxy
+                            # Use a different session name to avoid database lock if the previous one didn't close properly
                             self.client = TelegramClient(
-                                "abraava_tg",
+                                "abraava_tg_direct",
                                 int(TELEGRAM_API_ID),
                                 TELEGRAM_API_HASH,
                                 proxy=None,
                                 connection_retries=5,
                                 retry_delay=1
                             )
-                            # ثبت مجدد هندلرها
+                            # Re-register handlers
                             self._register_tg_handlers()
 
                             await self.client.start(bot_token=BOT_TOKEN)
-                            logger.info("✅ Connected successfully without proxy")
+                            logger.info("✨ Connected successfully using direct connection")
                         except Exception as e2:
-                            logger.error(f"❌ Failed to connect without proxy: {e2}")
+                            logger.error(f"❌ Direct connection fallback failed: {e2}")
                             raise e2
                     else:
+                        logger.error(f"❌ Connection failed: {e}")
                         raise e
                 
                 self._tg_me = await self.client.get_me()
