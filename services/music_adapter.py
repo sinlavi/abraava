@@ -280,22 +280,6 @@ class MusicAdapter:
             logger.error(f"Spotify get album tracks error: {e}")
             return []
 
-    async def get_sp_playlist_tracks(self, playlist_id: str) -> List[Dict[str, Any]]:
-        if not self.sp: return []
-        loop = asyncio.get_event_loop()
-        try:
-            if playlist_id.startswith("sp_"): playlist_id = playlist_id[3:]
-            results = await loop.run_in_executor(None, lambda: self.sp.playlist_items(playlist_id))
-            tracks = []
-            for item in results.get("items", []):
-                track = item.get("track")
-                if track:
-                    tracks.append(self._sp_to_itunes(track, "track"))
-            return tracks
-        except Exception as e:
-            logger.error(f"Spotify get playlist tracks error: {e}")
-            return []
-
     def _get_ydl_opts(self, method, proxy=None):
         opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': False, 'proxy': PROXY}
         if method == 3:
@@ -424,19 +408,6 @@ class MusicAdapter:
             return tracks
         except Exception as e:
             logger.error(f"YTM get album tracks error: {e}")
-            return []
-
-    async def get_yt_playlist_tracks(self, playlist_id: str) -> List[Dict[str, Any]]:
-        loop = asyncio.get_event_loop()
-        try:
-            if playlist_id.startswith("yt_"): playlist_id = playlist_id[3:]
-            playlist = await loop.run_in_executor(None, lambda: self.ytm.get_playlist(playlist_id))
-            tracks = []
-            for item in playlist.get("tracks", []):
-                tracks.append(self._ytm_to_itunes(item, "track"))
-            return tracks
-        except Exception as e:
-            logger.error(f"YTM get playlist tracks error: {e}")
             return []
 
     def _it_to_itunes(self, it_data: Dict[str, Any]) -> Dict[str, Any]:

@@ -4,7 +4,8 @@ import os
 import shutil
 from pathlib import Path
 from typing import Optional, Union, List
-from core.bot_client import Button
+from balethon import Client
+from balethon.objects import Message, InlineKeyboardButton, InlineKeyboard
 from core.logger import logger
 from core.config import OFFLINE_MODE, DEFAULT_QUALITY, FOOTER
 from core.http_client import HttpClient
@@ -37,7 +38,8 @@ class DownloadService:
             full_text = text
 
         if status_msg:
-            return await edit_message(status_msg, full_text, reply_markup=reply_markup, show_cancel=not is_batch)
+            await edit_message(status_msg, full_text, reply_markup=reply_markup, show_cancel=not is_batch)
+            return status_msg
         return await send_message(self.bot, chat_id, full_text, reply_markup=reply_markup, show_cancel=not is_batch)
 
     @staticmethod
@@ -115,23 +117,17 @@ class DownloadService:
                         return status_msg, False
                 else:
                     if safe_q:
-                        from core.config import PLATFORM
-                        platform_name = "تلگرام" if PLATFORM == "telegram" else "بله"
-                        limit = "2000" if PLATFORM == "telegram" else "20"
-                        text = (f"⚠️ *محدودیت حجم {platform_name} ({limit} مگابایت)*\n\n"
+                        text = (f"⚠️ *محدودیت حجم بله (۲۰ مگابایت)*\n\n"
                                 f"حجم تخمینی این آهنگ با کیفیت {quality_value}kbps حدود {est_size} مگابایت است که بیش از حد مجاز می‌باشد.\n"
                                 f"آیا مایلید با کیفیت {safe_q}kbps دانلود شود؟")
                         markup = [
-                            [Button(text=f"✅ بله ({safe_q} kbps)", callback_data=f"dl_fb:{safe_q}:{track_id}:u{user_id}")],
-                            [Button(text="❌ لغو", callback_data="close")]
+                            [InlineKeyboardButton(text=f"✅ بله ({safe_q} kbps)", callback_data=f"dl_fb:{safe_q}:{track_id}:u{user_id}")],
+                            [InlineKeyboardButton(text="❌ لغو", callback_data="close")]
                         ]
-                        await edit_message(status_msg, text, reply_markup=markup)
+                        await edit_message(status_msg, text, reply_markup=InlineKeyboard(*markup))
                         return status_msg, False
                     else:
-                        from core.config import PLATFORM
-                        platform_name = "تلگرام" if PLATFORM == "telegram" else "بله"
-                        limit = "2000" if PLATFORM == "telegram" else "20"
-                        status_msg = await self._update_status(chat_id, status_msg, f"❌ متأسفانه حجم این آهنگ حتی با کمترین کیفیت بیش از {limit} مگابایت است و امکان ارسال در {platform_name} وجود ندارد.", status_prefix, reply_markup, is_batch)
+                        status_msg = await self._update_status(chat_id, status_msg, "❌ متأسفانه حجم این آهنگ حتی با کمترین کیفیت بیش از ۲۰ مگابایت است و امکان ارسال در بله وجود ندارد.", status_prefix, reply_markup, is_batch)
                         return status_msg, False
 
         caption = self._build_caption(track, quality_value)
@@ -147,7 +143,7 @@ class DownloadService:
                 await self.bot.send_chat_action(chat_id, "upload_voice")
                 logger.info(f"Sending cached audio: {track.get('trackName')} ({quality_value}kbps)")
                 await self.bot.send_audio(chat_id, audio=audio_cache, caption=caption,
-                                          reply_markup=markup)
+                                          reply_markup=InlineKeyboard(*markup))
                 if not is_batch: await safe_delete(status_msg)
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
                                                    track.get('artistName', ''), track.get('collectionName', ''),
@@ -219,10 +215,11 @@ class DownloadService:
                     await self.bot.send_chat_action(chat_id, "upload_voice")
                     logger.info(f"Uploading fresh audio: {track.get('trackName')} ({quality_value}kbps)")
                     msg = await self.bot.send_audio(chat_id, audio=f, caption=caption,
-                                                    reply_markup=markup)
+                                                    reply_markup=InlineKeyboard(*markup))
                     if msg and track_id and not str(track_id).startswith(("yt_", "sc_", "sp_", "it_")):
-                        # Mirroring logic might need update for platform
-                        pass
+                        await set_mirror('track', str(track_id), 'audioUrl',
+                                         f'https://tapi.bale.ai/file/bot<token>/{msg.audio.id}',
+                                         quality=quality_value)
 
                 file_size = os.path.getsize(mp3_path)
                 await self.api_client.log_download(user_id, str(track_id), track.get('trackName', ''),
@@ -235,10 +232,10 @@ class DownloadService:
         except Exception as e:
             logger.error(f"Download error: {e}")
             retry_markup = [
-                [Button(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}:u{user_id}")]]
+                [InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:download_retry:{track_id}:u{user_id}")]]
             # But since _update_status supports custom reply_markup
             status_msg = await self._update_status(chat_id, status_msg, f"❌ خطا در دانلود {track.get('trackName', '')}",
-                                                   status_prefix, retry_markup, is_batch)
+                                                   status_prefix, InlineKeyboard(*retry_markup), is_batch)
             await self.error_notifier.notify_upload_error(self.bot, str(e))
             return status_msg, False
         finally:
@@ -299,10 +296,10 @@ class DownloadService:
         markup = []
         if not is_external:
             markup.append(
-                [Button(text="📂 نمایش در مینی اپ", web_app=f"https://player.abraava.ir?id={track_id}")])
+                [InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://player.abraava.ir?id={track_id}")])
 
-        markup.append([Button(text="📋 کپی پیوند", copy_text=generate_deep_link("track", track_id))])
-        markup.append([Button(text="🌐 اطلاعات بیشتر", url=source_url)])
+        markup.append([InlineKeyboardButton(text="📋 کپی پیوند", copy_text=generate_deep_link("track", track_id))])
+        markup.append([InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=source_url)])
         markup.append([create_close_button(user_id)])
 
         return markup
