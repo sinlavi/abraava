@@ -9,11 +9,17 @@ class APIClient:
         self.token = token
 
     async def _request(self, action: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        from core.config import PLATFORM
         session = await HttpClient.get_session()
         headers = {
             'Authorization': f'Bearer {self.token}',
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Platform': PLATFORM
         }
+
+        # Also ensure platform is in data for some endpoints
+        data['platform'] = PLATFORM
+
         try:
             async with session.post(f"{self.base_url}?action={action}", json=data, headers=headers) as resp:
                 return await resp.json()
