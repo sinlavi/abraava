@@ -210,7 +210,15 @@ class WrappedMessage:
     
     @property
     def file_id(self):
-        if self.platform != "telegram":
+        if self.platform == "telegram":
+            media = self.photo or self.document or self.audio or self.voice or self.video or self.animation or self.sticker
+            if media:
+                try:
+                    return utils.pack_bot_file_id(media)
+                except Exception:
+                    return None
+            return None
+        else:
             if self.photo:
                 return self.photo.file_id
             elif self.document:
@@ -622,6 +630,8 @@ class BotClient:
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
+            from utils.helpers import format_markdown
+            text = format_markdown(text)
             logger.debug(f"📤 Sending message to {chat_id}: {text[:50]}...")
             result = await self.client.send_message(
                 chat_id, text, 
@@ -649,6 +659,8 @@ class BotClient:
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
+            from utils.helpers import format_markdown
+            text = format_markdown(text)
             try:
                 logger.debug(f"✏️ Editing message {message_id} in chat {chat_id}")
                 msg = await self.client.edit_message(
@@ -696,6 +708,8 @@ class BotClient:
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
+            from utils.helpers import format_markdown
+            caption = format_markdown(caption)
             logger.debug(f"📸 Sending photo to chat {chat_id}")
             msg = await self.client.send_file(
                 chat_id, photo, 
@@ -724,6 +738,8 @@ class BotClient:
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
+            from utils.helpers import format_markdown
+            caption = format_markdown(caption)
             attributes = [types.DocumentAttributeAudio(
                 duration=int(kwargs.get('duration', 0)),
                 title=kwargs.get('title'),
@@ -761,6 +777,8 @@ class BotClient:
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
+            from utils.helpers import format_markdown
+            caption = format_markdown(caption)
             logger.debug(f"🎤 Sending voice to chat {chat_id}")
             msg = await self.client.send_file(
                 chat_id, voice, 
@@ -790,6 +808,8 @@ class BotClient:
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
+            from utils.helpers import format_markdown
+            caption = format_markdown(caption)
             logger.debug(f"📄 Sending document to chat {chat_id}")
             msg = await self.client.send_file(
                 chat_id, document, 
@@ -818,6 +838,8 @@ class BotClient:
         markup = self._convert_keyboard(reply_markup)
         
         if self.platform == "telegram":
+            from utils.helpers import format_markdown
+            caption = format_markdown(caption)
             logger.debug(f"🎥 Sending video to chat {chat_id}")
             msg = await self.client.send_file(
                 chat_id, video, 
@@ -863,34 +885,62 @@ class BotClient:
             try:
                 logger.debug(f"🔍 Getting member {user_id} info from chat {chat_id}")
                 
-                # دریافت اطلاعات کاربر
+                # Convert chat_id to int if it's numeric
+                if isinstance(chat_id, str) and (chat_id.isdigit() or (chat_id.startswith('-') and chat_id[1:].isdigit())):
+                    chat_id = int(chat_id)
+
+                # دریافت اطلاعات کاربر و چت
                 user = await self.client.get_entity(user_id)
+                chat = await self.client.get_entity(chat_id)
                 
                 # وضعیت پیش‌فرض
-                status = "unknown"
+                status = "left"
                 is_member = False
                 
                 # برای چت‌های خصوصی، کاربر همیشه عضو است
-                chat = await self.client.get_entity(chat_id)
                 if isinstance(chat, types.User):
                     status = "member"
                     is_member = True
-                else:
+                elif isinstance(chat, (types.Chat, types.Channel)):
                     # برای گروه‌ها و کانال‌ها
                     try:
-                        permissions = await self.client.get_permissions(chat_id, user_id)
-                        if permissions:
-                            is_member = getattr(permissions, 'is_member', False)
-                            if getattr(permissions, 'is_admin', False):
-                                status = "administrator"
-                            elif getattr(permissions, 'is_creator', False):
-                                status = "creator"
-                            elif is_member:
-                                status = "member"
-                            else:
-                                status = "left"
+                        if isinstance(chat, types.Channel):
+                            # استفاده از GetParticipantRequest برای دقت بیشتر در کانال‌ها
+                            try:
+                                p = await self.client(functions.channels.GetParticipantRequest(
+                                    channel=chat,
+                                    participant=user
+                                ))
+                                participant = p.participant
+                                is_member = True
+                                if isinstance(participant, types.ChannelParticipantCreator):
+                                    status = "creator"
+                                elif isinstance(participant, types.ChannelParticipantAdmin):
+                                    status = "administrator"
+                                else:
+                                    status = "member"
+                            except Exception as e:
+                                if "UserNotParticipantError" in str(e):
+                                    is_member = False
+                                    status = "left"
+                                else:
+                                    # Fallback to get_permissions
+                                    permissions = await self.client.get_permissions(chat, user)
+                                    is_member = permissions.is_member if permissions else False
+                                    if is_member:
+                                        if permissions.is_admin: status = "administrator"
+                                        elif permissions.is_creator: status = "creator"
+                                        else: status = "member"
+                        else:
+                            # گروه‌های معمولی
+                            permissions = await self.client.get_permissions(chat, user)
+                            is_member = permissions.is_member if permissions else False
+                            if is_member:
+                                if permissions.is_admin: status = "administrator"
+                                elif permissions.is_creator: status = "creator"
+                                else: status = "member"
                     except Exception as e:
-                        logger.debug(f"Could not get permissions: {e}")
+                        logger.debug(f"Could not get permissions/participant: {e}")
                         status = "unknown"
                         is_member = False
                 
@@ -909,7 +959,7 @@ class BotClient:
                 })
                 
             except Exception as e:
-                logger.warning(f"⚠️ Could not get member {user_id}: {e}")
+                logger.warning(f"⚠️ Could not get member {user_id} in {chat_id}: {e}")
                 return type('ChatMember', (), {
                     'user': type('User', (), {
                         'id': user_id,
@@ -930,6 +980,7 @@ class BotClient:
         if self.platform == "telegram":
             logger.debug(f"🔘 Answering callback {callback_query_id}")
             try:
+                # Try answering using functions for more control
                 await self.client(functions.messages.SetBotCallbackAnswerRequest(
                     query_id=int(callback_query_id),
                     message=text or "",
@@ -939,7 +990,7 @@ class BotClient:
                 logger.info(f"✅ Callback query {callback_query_id} answered")
             except Exception as e:
                 logger.error(f"❌ Failed to answer callback {callback_query_id}: {e}")
-                raise
+                # Don't raise, callback answering is not critical
         else:
             await self.client.answer_callback_query(callback_query_id, text, show_alert)
             logger.info(f"✅ Callback query answered")

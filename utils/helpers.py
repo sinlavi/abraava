@@ -1,7 +1,26 @@
 import hashlib
 import time
-from core.config import DEEP_LINK_BASE
+import re
+from core.config import DEEP_LINK_BASE, PLATFORM
 from typing import Any
+
+def format_markdown(text: str) -> str:
+    """Format markdown based on the current platform"""
+    if not text:
+        return text
+
+    if PLATFORM == "telegram":
+        # Convert Bale-style bold (*bold*) to Telegram-style bold (**bold**)
+        # This regex looks for text between single asterisks that are not part of other structures
+        # We use a simple approach here, assuming standard bot messages
+        # Avoid matching triple asterisks or already double asterisks
+
+        # Replace *bold* with **bold**
+        # But be careful about escaped asterisks if any
+        # A simple regex: (?<!\*)\*([^*]+)\*(?!\*)
+        text = re.sub(r'(?<!\*)\*([^*]+)\*(?!\*)', r'**\1**', text)
+
+    return text
 
 def format_duration(milliseconds):
     """Convert milliseconds to MM:SS format"""

@@ -1,4 +1,5 @@
 from core.config import FOOTER
+from utils.helpers import format_markdown
 from bot.keyboards import create_close_button, create_info_channel_button, create_cancel_button, create_cancel_operation_button
 import logging
 import copy
@@ -60,22 +61,24 @@ async def safe_delete(message, attempt=1):
 
 async def send_message(bot, chat_id, text, reply_markup=None, no_close=False, show_info=False, task_id=None, show_cancel=False, reply_to_message_id=None):
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
+    text = format_markdown(f"{text}{FOOTER}")
     try:
         await bot.send_chat_action(chat_id, "typing")
-        return await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup, reply_to_message_id=reply_to_message_id)
+        return await bot.send_message(chat_id, text=text, reply_markup=markup, reply_to_message_id=reply_to_message_id)
     except Exception as e:
         if "too many" in str(e).lower():
             await asyncio.sleep(1)
-            return await bot.send_message(chat_id, text=f"{text}{FOOTER}", reply_markup=markup)
+            return await bot.send_message(chat_id, text=text, reply_markup=markup)
         raise
 
 async def edit_message(message, text, reply_markup=None, no_close=False, show_info=False, task_id=None, force_edit=False, show_cancel=False, attempt=1):
     if not message: return None
     chat_id = message.chat.id
     markup = _prepare_markup(reply_markup, no_close, show_info, task_id, show_cancel)
+    text = format_markdown(f"{text}{FOOTER}")
 
     try:
-        return await message.edit(text=f"{text}{FOOTER}", reply_markup=markup)
+        return await message.edit(text=text, reply_markup=markup)
     except Exception as e:
         err_msg = str(e).lower()
 
@@ -104,5 +107,6 @@ async def edit_message(message, text, reply_markup=None, no_close=False, show_in
 
 async def reply_message(message, text: str, reply_markup=None, show_info=False):
     markup = _prepare_markup(reply_markup, False, show_info)
+    formatted_text = format_markdown(f"{text}{FOOTER}")
     await message.client_wrapper.send_chat_action(message.chat.id, "typing")
-    return await message.reply(text=f"{text}{FOOTER}", reply_markup=markup)
+    return await message.reply(text=formatted_text, reply_markup=markup)
