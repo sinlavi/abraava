@@ -72,11 +72,11 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
                     is_single = not is_album
 
                     if is_single:
-                        btn_text = f"\u200e{(i - 1)}. {name[:35]}{year_str} 🎵"
+                        btn_text = f"\u200e{(i)}. {name[:35]}{year_str} 🎵"
                         item_id = coll.get('collectionId') or coll.get('trackId')
                         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"single_album:{item_id}:u{owner_id}")])
                     else:
-                        btn_text = f"\u200e{(i - 1)}. {name[:35]}{year_str} 📀"
+                        btn_text = f"\u200e{(i)}. {name[:35]}{year_str} 📀"
                         markup_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"collection:{coll['collectionId']}:u{owner_id}")])
 
             pagination = create_pagination_row(f"artist:{artist_id}", page, total_pages, user_id=owner_id)
