@@ -3,9 +3,8 @@ name: Test Deploy
 on:
   workflow_dispatch:
   push:
-    schedule:
-      - cron: "0 */5 * * *"   # هر ۵ ساعت یکبار اجرا شود
-
+  schedule:
+    - cron: "0 */5 * * *"
 concurrency:
   group: test-deploy
   cancel-in-progress: true
