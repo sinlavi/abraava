@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     schedule:
-      - cron: "0 */3 * * *"
+      - cron: "0 */5 * * *"   # هر ۵ ساعت یکبار اجرا شود
 
 concurrency:
   group: test-deploy
@@ -365,9 +365,9 @@ jobs:
           echo "🚀 Starting bot..."
           python main.py
 
-      # ========== Restart on failure ==========
+      # ========== Restart on failure (for all event types, including schedule) ==========
       - name: Restart workflow on failure
-        if: failure() && github.event_name != 'schedule'
+        if: failure()   # بدون شرط && github.event_name != 'schedule'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
