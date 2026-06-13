@@ -883,8 +883,18 @@ function handleRequest(): void {
     $db = getDB();
     cleanExpiredCache($db);
     $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-    $scriptDir = dirname($_SERVER['SCRIPT_NAME']);
-    if ($scriptDir !== '/' && strpos($path, $scriptDir) === 0) $path = substr($path, strlen($scriptDir));
+    $scriptName = $_SERVER['SCRIPT_NAME'];
+    $scriptDir = dirname($scriptName);
+
+    if ($scriptDir !== '/' && strpos($path, $scriptDir) === 0) {
+        $path = substr($path, strlen($scriptDir));
+    }
+
+    // Support calls through index.php/endpoint
+    if (strpos($path, '/index.php') === 0) {
+        $path = substr($path, 10);
+    }
+
     $path = rtrim($path, '/') ?: '/';
     $method = $_SERVER['REQUEST_METHOD'];
     $params = ($method === 'GET') ? $_GET : (json_decode(file_get_contents('php://input'), true) ?: $_POST);

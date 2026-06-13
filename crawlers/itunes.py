@@ -105,8 +105,9 @@ endpoint_manager = iTunesEndpointManager(ALTERNATIVE_ENDPOINTS)
 
 async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = False,
                        method: Literal["GET", "POST", "PUT", "DELETE"] = "GET", payload: dict = None,
-                       official: bool = False) -> Optional[Dict[str, Any]]:
+                       official: bool = False, quality: str = None) -> Optional[Dict[str, Any]]:
     params = params or {}
+    if quality: params["quality"] = quality
     if method == "GET" and not bypass_cache and not OFFLINE_MODE:
         cached = await _itunes_cache.get(endpoint, params)
         if cached: return cached
@@ -162,17 +163,17 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
     return None
 
 
-async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50, official: bool = False) -> Optional[
+async def search_itunes(term: str, entity: Optional[str] = None, limit: int = 50, official: bool = False, quality: str = None) -> Optional[
     Dict[str, Any]]:
     return await fetch_itunes("search",
                               {"term": term, "media": "music", "limit": limit, "entity": entity} if entity else {
-                                  "term": term, "media": "music", "limit": limit}, official=official)
+                                  "term": term, "media": "music", "limit": limit}, official=official, quality=quality)
 
 
 async def lookup_itunes(id: Union[int, str], entity: Optional[str] = None, bypass_cache: bool = False,
-                        official: bool = False) -> Optional[Dict[str, Any]]:
+                        official: bool = False, quality: str = None) -> Optional[Dict[str, Any]]:
     return await fetch_itunes("lookup", {"id": id, "entity": entity} if entity else {"id": id},
-                              bypass_cache=bypass_cache, official=official)
+                              bypass_cache=bypass_cache, official=official, quality=quality)
 
 
 async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, mirror_url: str,
@@ -183,39 +184,51 @@ async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str
     return await fetch_itunes("mirror/set", method="POST", payload=payload)
 
 
+def extract_file_id(url: Optional[str]) -> Optional[str]:
+    if not url: return None
+    if '<token>/' in url:
+        return url.split('<token>/')[-1]
+    return url
+
+
 async def get_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, quality: str = None) -> Optional[
     Dict[str, Any]]:
-    params = {"entityType": entity_type, "entityId": str(entity_id), "urlType": url_type}
-    if quality: params["quality"] = quality
     logger.info(f"Checking mirror for {entity_type} {entity_id} {url_type} ({quality})")
-    return await fetch_itunes("mirror/get", params=params)
+    # New 3rah API: mirrorUrls are included in lookup response
+    data = await lookup_itunes(entity_id, entity=entity_type, quality=quality)
+    if data and data.get("results"):
+        entity = data["results"][0]
+        return entity.get("mirrorUrls")
+    return None
 
 
 async def get_cached_audio(track_id: Union[int, str], quality: str = None) -> Optional[str]:
-    data = await get_mirror('track', track_id, 'audioUrl', quality=quality or "192")
-    if data and data.get("mirrors", {}).get('audioUrl'):
-        if str(data["mirrors"]['audioUrl']['quality']) != str(quality or "192"):
+    mirrors = await get_mirror('track', track_id, 'audioUrl', quality=quality or "192")
+    if mirrors and mirrors.get('audioUrl'):
+        audio_mirror = mirrors['audioUrl']
+        if str(audio_mirror.get('quality', '')) != str(quality or "192"):
             return None
-        url = data["mirrors"]['audioUrl']['url']
+        url = audio_mirror.get('url')
+        if not url: return None
         logger.info(f"Cached audio found for {track_id}: {url}")
-        return url.split('<token>/')[1] if '<token>' in url else url
+        return extract_file_id(url)
     logger.info(f"No cached audio for {track_id} with quality {quality or '192'}")
     return None
 
 
 async def get_cached_artwork(entity_type: str, entity_id: Union[int, str]) -> Optional[str]:
-    data = await get_mirror(entity_type, entity_id, 'artworkUrl')
-    if data and data.get("mirrors", {}).get('artworkUrl'):
-        url = data["mirrors"]['artworkUrl']['url']
-        return url.split('<token>/')[1] if '<token>' in url else url
+    mirrors = await get_mirror(entity_type, entity_id, 'artworkUrl')
+    if mirrors and mirrors.get('artworkUrl'):
+        url = mirrors['artworkUrl'].get('url')
+        return extract_file_id(url)
     return None
 
 
 async def get_cached_preview(track_id: Union[int, str]) -> Optional[str]:
-    data = await get_mirror('track', track_id, 'previewUrl')
-    if data and data.get("mirrors", {}).get('previewUrl'):
-        url = data["mirrors"]['previewUrl']['url']
-        return url.split('<token>/')[1] if '<token>' in url else url
+    mirrors = await get_mirror('track', track_id, 'previewUrl')
+    if mirrors and mirrors.get('previewUrl'):
+        url = mirrors['previewUrl'].get('url')
+        return extract_file_id(url)
     return None
 
 
