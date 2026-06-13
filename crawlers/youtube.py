@@ -278,6 +278,7 @@ async def search_youtube_track(t_name: str, a_name: str, collection_name: str, y
     
     best_result = None
     best_score = -1.0
+    best_title_sim = 0.0
     successful_methods = []
     
     # Try each method in order
@@ -359,6 +360,7 @@ def _sync_search_youtube(t_name: str, a_name: str, collection_name: str, ye: str
 
         best_match_id = None
         highest_score = -1.0
+        best_title = ""
 
         for res in results:
             res_title = res.get("title", "")
