@@ -92,6 +92,9 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
             InlineKeyboardButton(text="🔍 جستجوی آهنگ‌ها", callback_data=f"refine:track:{artist_name}:u{owner_id}")
         ])
 
+        if owner_id == 234591600:
+            markup_rows.append([InlineKeyboardButton(text="🗑️ حذف آینه‌ها", callback_data=f"admin_del_mirrors:artist:{artist_id}:u{owner_id}")])
+
         if is_pagination and message_to_edit:
             status_msg = await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
         else:
@@ -192,6 +195,9 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
             InlineKeyboardButton(text="🎤 آثار دیگر هنرمند", callback_data=f"artist:{artist_id}:u{owner_id}")
         ])
 
+        if owner_id == 234591600:
+            markup_rows.append([InlineKeyboardButton(text="🗑️ حذف آینه‌ها", callback_data=f"admin_del_mirrors:collection:{collection_id}:u{owner_id}")])
+
         if is_pagination and message_to_edit:
             status_msg = await edit_message(message_to_edit, text, reply_markup=markup_rows, force_edit=True)
         else:
@@ -277,6 +283,12 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
             InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}track_{track_id}"),
             InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=itunes_url)
         ])
+
+        if owner_id == 234591600:
+            markup_rows.append([
+                InlineKeyboardButton(text="🗑️ حذف آینه‌ها", callback_data=f"admin_del_mirrors:track:{track_id}:u{owner_id}"),
+                InlineKeyboardButton(text="📤 آپلود صوت", callback_data=f"admin_upload_audio:{track_id}:u{owner_id}")
+            ])
 
         artwork_url = get_high_res_artwork(track.get("artworkUrl", track.get("artworkUrl100")))
 

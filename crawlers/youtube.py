@@ -216,55 +216,88 @@ def _search_with_ytdlp(search_query: str, method: int) -> Optional[dict]:
     return None
 
 
-def _calculate_relevance_score(video_info: dict, t_name: str, a_name: str, collection_name: str, ye: str) -> float:
+def _calculate_relevance_score(video_info: dict, t_name: str, a_name: str, collection_name: str, ye: str,
+                               duration_ms: int = 0) -> float:
     """
     Calculate relevance score for a search result.
     """
-    title = video_info.get('title', '')
-    channel = video_info.get('channel', '')
-    uploader = video_info.get('uploader', '')
-    upload_date = video_info.get('upload_date', '')
-    
+    if not isinstance(video_info, dict):
+        return 0.0
+    title = video_info.get('title') or ''
+    channel = video_info.get('channel') or ''
+    uploader = video_info.get('uploader') or ''
+    upload_date = video_info.get('upload_date') or ''
+    try:
+        video_duration = int(video_info.get('duration') or 0) * 1000
+    except (ValueError, TypeError):
+        video_duration = 0
+
     score = 0.0
-    
-    # Title matching (45% weight)
-    score += _get_similarity(t_name, title) * 0.45
-    
-    # Artist/channel matching (35% weight)
-    artist_text = f"{channel} {uploader}"
-    score += _get_similarity(a_name, artist_text) * 0.35
-    
-    # Album/collection matching (15% weight)
+    title_sim = _get_similarity(t_name, title)
+    artist_sim = _get_similarity(a_name, f"{channel} {uploader}")
+
+    # Penalize if title is very different
+    if title_sim < 0.4:
+        return 0.0
+
+    # Title matching (40% weight)
+    score += title_sim * 0.40
+
+    # Artist/channel matching (30% weight)
+    score += artist_sim * 0.30
+
+    # Duration matching (20% weight)
+    if duration_ms > 0 and video_duration > 0:
+        diff = abs(duration_ms - video_duration)
+        if diff < 5000:  # Within 5 seconds
+            score += 0.20
+        elif diff < 15000:  # Within 15 seconds
+            score += 0.10
+        elif diff > 60000:  # More than a minute difference
+            score -= 0.20  # Penalty
+    elif duration_ms > 0:
+        # If we have target duration but result doesn't have it (unlikely with yt-dlp)
+        pass
+    else:
+        # If no target duration, redistribute weight to title and artist
+        score += title_sim * 0.10
+        score += artist_sim * 0.10
+
+    # Album/collection matching (5% weight)
     if collection_name:
-        # Check if collection name appears in title or description
         description = video_info.get('description', '')
         if collection_name.lower() in title.lower() or collection_name.lower() in description.lower():
-            score += 0.15
-    
+            score += 0.05
+
     # Year matching (5% weight)
     if ye and upload_date:
         video_year = upload_date[:4] if len(upload_date) >= 4 else ''
         if str(ye) == video_year:
             score += 0.05
-    
+
+    # Final threshold check: if score is too low, it's probably unrelated
+    if score < 0.45:
+        return 0.0
+
     return score
 
 
-async def search_youtube_track(t_name: str, a_name: str, collection_name: str, ye: str) -> Optional[str]:
+async def search_youtube_track(t_name: str, a_name: str, collection_name: str, ye: str,
+                               duration_ms: int = 0) -> Optional[str]:
     """
     Search for a YouTube track using multiple methods (same as download).
     Returns video ID or None.
     """
     global SEARCH_METHOD_ORDER
-    
+
     if OFFLINE_MODE:
         logger.info("Offline mode: skipping YouTube search")
         return None
-    
+
     # First try YTMusic as it's faster for searches
     try:
         loop = asyncio.get_event_loop()
-        ytmusic_id = await loop.run_in_executor(None, _sync_search_youtube, t_name, a_name, collection_name, ye)
+        ytmusic_id = await loop.run_in_executor(None, _sync_search_youtube, t_name, a_name, collection_name, ye, duration_ms)
         if ytmusic_id:
             logger.info(f"✅ YTMusic search successful: {ytmusic_id}")
             return ytmusic_id
@@ -290,11 +323,11 @@ async def search_youtube_track(t_name: str, a_name: str, collection_name: str, y
             
             if result and result.get('id'):
                 # Calculate relevance score
-                score = _calculate_relevance_score(result, t_name, a_name, collection_name, ye)
-                
+                score = _calculate_relevance_score(result, t_name, a_name, collection_name, ye, duration_ms)
+
                 logger.debug(f"Method {method} found: {result.get('title', 'N/A')} (score: {score:.2f})")
-                
-                if score > best_score:
+
+                if score > 0 and score > best_score:
                     best_score = score
                     best_result = result.get('id')
                     successful_methods.append(method)
@@ -334,13 +367,16 @@ def _get_similarity(a: str, b: str) -> float:
     return fuzz.WRatio(str(a), str(b)) / 100.0
 
 
-def _sync_search_youtube(t_name: str, a_name: str, collection_name: str, ye: str) -> Optional[str]:
+def _sync_search_youtube(t_name: str, a_name: str, collection_name: str, ye: str, duration_ms: int = 0) -> Optional[str]:
     """
     Original YTMusic search as fallback.
     """
     global YT
     if YT is None:
-        YT = YTMusic(proxies={"https": PROXY, "http": PROXY})
+        try:
+            YT = YTMusic(proxies={"https": PROXY, "http": PROXY})
+        except:
+            return None
 
     search_query = f"{t_name} {a_name} {collection_name}".strip()
 
@@ -354,23 +390,47 @@ def _sync_search_youtube(t_name: str, a_name: str, collection_name: str, ye: str
         highest_score = -1.0
 
         for res in results:
-            res_title = res.get("title", "")
+            if not isinstance(res, dict):
+                continue
+            res_title = res.get("title") or ""
             artists = res.get("artists", [])
-            res_artist = ", ".join([a.get("name", "") for a in artists]) if artists else ""
+            res_artist = ", ".join([a.get("name", "") for a in artists if isinstance(a, dict)]) if artists else ""
             album_data = res.get("album") or {}
-            res_album = album_data.get("name", "")
-            res_year = res.get("year", "")
+            res_album = album_data.get("name") or "" if isinstance(album_data, dict) else str(album_data)
+            res_year = res.get("year") or ""
+
+            res_duration_str = res.get("duration") or "0:00"
+            res_duration_ms = 0
+            if isinstance(res_duration_str, str) and ":" in res_duration_str:
+                parts = res_duration_str.split(":")
+                try:
+                    if len(parts) == 2: res_duration_ms = (int(parts[0]) * 60 + int(parts[1])) * 1000
+                    elif len(parts) == 3: res_duration_ms = (int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])) * 1000
+                except: res_duration_ms = 0
+
+            title_sim = _get_similarity(t_name, res_title)
+            if title_sim < 0.4: continue
 
             score = 0.0
-            score += _get_similarity(t_name, res_title) * 0.45
-            score += _get_similarity(a_name, res_artist) * 0.35
-            score += _get_similarity(collection_name, res_album) * 0.15
+            score += title_sim * 0.40
+            score += _get_similarity(a_name, res_artist) * 0.30
+
+            if duration_ms > 0 and res_duration_ms > 0:
+                diff = abs(duration_ms - res_duration_ms)
+                if diff < 5000: score += 0.20
+                elif diff < 15000: score += 0.10
+                elif diff > 60000: score -= 0.20
+            else:
+                score += title_sim * 0.10
+                score += _get_similarity(a_name, res_artist) * 0.10
+
+            score += _get_similarity(collection_name, res_album) * 0.05
 
             if ye and res_year:
                 if str(ye) == str(res_year):
                     score += 0.05
 
-            if score > highest_score:
+            if score > 0.45 and score > highest_score:
                 highest_score = score
                 best_match_id = res.get("videoId")
 

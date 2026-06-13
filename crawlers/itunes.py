@@ -191,6 +191,15 @@ async def get_mirror(entity_type: str, entity_id: Union[int, str], url_type: str
     return await fetch_itunes("mirror/get", params=params)
 
 
+async def delete_mirror(entity_type: str, entity_id: Union[int, str], url_type: str = None,
+                        quality: str = None) -> Optional[Dict[str, Any]]:
+    payload = {"entityType": entity_type, "entityId": str(entity_id)}
+    if url_type: payload["urlType"] = url_type
+    if quality: payload["quality"] = quality
+    logger.info(f"Deleting mirror(s) for {entity_type} {entity_id}")
+    return await fetch_itunes("mirror/delete", method="POST", payload=payload)
+
+
 async def get_cached_audio(track_id: Union[int, str], quality: str = None) -> Optional[str]:
     data = await get_mirror('track', track_id, 'audioUrl', quality=quality or "192")
     if data and data.get("mirrors", {}).get('audioUrl'):

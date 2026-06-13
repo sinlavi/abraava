@@ -944,7 +944,11 @@ function attachMirrors(array &$entity, string $type, string $id, ?string $reques
 
 function setMirrorUrl(SQLite3 $db, string $type, string $id, string $urlType, string $mirrorUrl, ?string $quality = null): array {
     if (!in_array($urlType, ['artworkUrl','previewUrl','audioUrl'])) return ['success' => false, 'error' => 'Invalid urlType'];
-    if (!filter_var($mirrorUrl, FILTER_VALIDATE_URL)) return ['success' => false, 'error' => 'Invalid URL'];
+
+    $isValidUrl = filter_var($mirrorUrl, FILTER_VALIDATE_URL);
+    $isTelegramUrl = strpos($mirrorUrl, 'tg://') === 0;
+
+    if (!$isValidUrl && !$isTelegramUrl) return ['success' => false, 'error' => 'Invalid URL'];
     
     $id = normalizeId($id);
     ensureEntityExists($db, $type, $id);
@@ -1537,6 +1541,7 @@ function handleRequest(): void {
                 break;
                 
             case '/mirror/delete':
+            case '/mirror/remove':
                 if (!in_array($method, ['POST', 'DELETE'])) throw new Exception('Method not allowed', 405);
                 $response = deleteMirrorUrl($db, $params['entityType'] ?? '', $params['entityId'] ?? '',
                                            $params['urlType'] ?? null, $params['quality'] ?? null);
