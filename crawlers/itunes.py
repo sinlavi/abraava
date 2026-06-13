@@ -181,7 +181,11 @@ async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str
     payload = {"entityType": entity_type, "entityId": str(entity_id), "urlType": url_type, "mirrorUrl": mirror_url}
     if quality: payload["quality"] = quality
     logger.info(f"Setting mirror: {entity_type} {entity_id} {url_type} -> {mirror_url} ({quality})")
-    return await fetch_itunes("mirror/set", method="POST", payload=payload)
+    result = await fetch_itunes("mirror/set", method="POST", payload=payload)
+    if result and result.get("success"):
+        logger.info(f"Mirror set successful for {entity_id}, refreshing cache...")
+        await lookup_itunes(entity_id, entity=entity_type, bypass_cache=True, quality=quality)
+    return result
 
 
 def extract_file_id(url: Optional[str]) -> Optional[str]:
