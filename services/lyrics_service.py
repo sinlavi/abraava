@@ -102,7 +102,10 @@ class LyricsService:
             # 5. Cache it (both locally and on 3rah API)
             await self._cache_lyrics(track_id, lyrics_dict, title, artist)
         else:
-            logger.warning(f"No lyrics found for {track_id} from any source")
+            logger.warning(f"No lyrics found for {track_id} from any source. Marking as Instrumental/Not exists.")
+            lyrics_dict = {"synced": "Instrumental/Not exists", "plain": "Instrumental/Not exists"}
+            # Cache the "not found" state
+            await self._cache_lyrics(track_id, lyrics_dict, title, artist)
 
         return lyrics_dict
 

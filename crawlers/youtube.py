@@ -294,9 +294,11 @@ async def search_youtube_track(t_name: str, a_name: str, collection_name: str, y
                 
                 logger.debug(f"Method {method} found: {result.get('title', 'N/A')} (score: {score:.2f})")
                 
+                title_sim = _get_similarity(t_name, result.get('title', ''))
                 if score > best_score:
                     best_score = score
                     best_result = result.get('id')
+                    best_title_sim = title_sim
                     successful_methods.append(method)
                     
                     # Update method order (bring successful method to front)
@@ -320,7 +322,12 @@ async def search_youtube_track(t_name: str, a_name: str, collection_name: str, y
                 SEARCH_METHOD_ORDER.append(method)
     
     if best_result:
-        logger.info(f"Search successful with methods: {successful_methods}, best score: {best_score:.2f}")
+        # Title similarity check for the best result
+        if best_score < 0.45 or best_title_sim < 0.4:
+            logger.warning(f"Best match found but score too low (score: {best_score:.2f}, title_sim: {best_title_sim:.2f}): {t_name} - {a_name}")
+            return None
+
+        logger.info(f"Search successful with methods: {successful_methods}, best score: {best_score:.2f}, title_sim: {best_title_sim:.2f}")
         return best_result
     else:
         logger.warning(f"No search results found for: {t_name} - {a_name}")
@@ -373,6 +380,13 @@ def _sync_search_youtube(t_name: str, a_name: str, collection_name: str, ye: str
             if score > highest_score:
                 highest_score = score
                 best_match_id = res.get("videoId")
+                best_title = res_title
+
+        if best_match_id:
+            title_sim = _get_similarity(t_name, best_title)
+            if highest_score < 0.45 or title_sim < 0.4:
+                logger.warning(f"YTMusic best match score too low (score: {highest_score:.2f}, title_sim: {title_sim:.2f})")
+                return None
 
         return best_match_id
 
