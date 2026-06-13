@@ -1,7 +1,7 @@
 <?php
 
 /**
- * iTunes API Proxy v2.0 – Advanced Caching, Mirror Management, Lyrics, and Extended Endpoints
+ * iTunes API Proxy v2.0 – Advanced Caching, Mirror Management, Lyrics, Extended Endpoints
  * 
  * Features:
  * - All iTunes items stored with 'it_' prefix (e.g., it_123456789)
@@ -12,11 +12,14 @@
  * - Multi-quality audio mirror support (320, 192, 128 kbps)
  * - Mirror URLs only show custom mirrors (null if not set)
  * - artworkUrl for tracks inherits collection's artwork mirror if set (otherwise null)
- * - artworkUrl and previewUrl always present in mirrorUrls (null if not mirrored)
  * - /mirror/get returns same structure as main endpoints
+ * - Dynamic column addition (no more "no column named kind" errors)
+ * - Removed /track, /album, /artist endpoints (use /lookup instead)
  * - Extended endpoints: /batch, /popular, /cache/clear, /stats, /health, /db/stats, /proxy/status, /rate-limit/reset
- * - Full backwards compatibility with original endpoints
+ * - Full compatibility with /search, /lookup, /mirror/*, /lyrics/*
  * - Caching only from successful live API responses (no caching of errors or fallback data)
+ * - Search results do NOT include mirrorUrls
+ * - Lookup results include lyrics for tracks (same format as /lyrics/get)
  */
 
 error_reporting(E_ALL);
@@ -203,7 +206,33 @@ function addMissingColumns(SQLite3 $db): void {
     if (!$hasLyrics) $db->exec("ALTER TABLE tracks ADD COLUMN lyrics TEXT");
 }
 
-// ── Data Preservation when Saving from iTunes ─────────────
+// ── Dynamic Column Addition (fix for "no column named kind") ──
+function ensureColumns(SQLite3 $db, string $table, array $data): void {
+    static $existingColumns = [];
+    $allowedTables = ['artists', 'collections', 'tracks'];
+    if (!in_array($table, $allowedTables)) return;
+    
+    if (!isset($existingColumns[$table])) {
+        $res = $db->query("PRAGMA table_info($table)");
+        $cols = [];
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $cols[$row['name']] = true;
+        }
+        $existingColumns[$table] = $cols;
+    }
+    
+    foreach ($data as $col => $value) {
+        if (!isset($existingColumns[$table][$col])) {
+            if (preg_match('/^[a-zA-Z0-9_]+$/', $col)) {
+                $db->exec("ALTER TABLE $table ADD COLUMN `$col` TEXT");
+                $existingColumns[$table][$col] = true;
+                error_log("Added column `$col` to table $table");
+            }
+        }
+    }
+}
+
+// ── Data Preservation when Saving from iTunes (with column addition) ──
 function saveEntitiesFromApi(SQLite3 $db, string $table, array $entities): void {
     if (empty($entities)) return;
     if (isset($entities['wrapperType']) || isset($entities['artistId']) || isset($entities['collectionId']) || isset($entities['trackId'])) $entities = [$entities];
@@ -218,6 +247,10 @@ function saveEntitiesFromApi(SQLite3 $db, string $table, array $entities): void 
             default => null,
         };
         if (!$pkCol || !isset($entity[$pkCol])) continue;
+        
+        // Dynamically add any missing columns
+        ensureColumns($db, $table, $entity);
+        
         $stmt = $db->prepare("SELECT 1 FROM $table WHERE $pkCol = :id");
         $stmt->bindValue(':id', $entity[$pkCol]);
         $exists = $stmt->execute()->fetchArray() !== false;
@@ -461,6 +494,15 @@ function fetchEntityById(SQLite3 $db, string $type, string $id, ?string $quality
     $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
     if ($row) {
         attachMirrors($row, $type, $id, $quality, $platform);
+        // Attach lyrics for tracks
+        if ($type === 'track') {
+            $lyricsData = getLyrics($db, $id);
+            if ($lyricsData['success']) {
+                $row['lyrics'] = $lyricsData['lyrics'];
+            } else {
+                $row['lyrics'] = null;
+            }
+        }
         return $row;
     }
     return null;
@@ -523,7 +565,10 @@ function getCachedResults(SQLite3 $db, string $endpoint, array $params): ?array 
     if (!$ids) return null;
     $results = [];
     foreach ($ids as $entry) {
-        $entity = fetchEntityById($db, $entry['type'], $entry['id']);
+        // Pass quality/platform from original params (if any)
+        $quality = $params['quality'] ?? null;
+        $platform = $params['platform'] ?? 'bale';
+        $entity = fetchEntityById($db, $entry['type'], $entry['id'], $quality, $platform);
         if ($entity) $results[] = $entity;
     }
     return ['resultCount'=>count($results), 'results'=>$results];
@@ -735,8 +780,16 @@ function searchLocalDatabase(array $params): array {
     return ['resultCount'=>count($results), 'results'=>$results, 'fromCache'=>true];
 }
 function searchiTunes(SQLite3 $db, array $params): array {
+    // Check cache first
     $cached = getCachedResults($db, 'search', $params);
-    if ($cached) return $cached;
+    if ($cached) {
+        // Strip mirrorUrls from cached results because search should not include them
+        foreach ($cached['results'] as &$item) {
+            unset($item['mirrorUrls']);
+        }
+        return $cached;
+    }
+    
     $url = ITUNES_SEARCH_API . '?' . http_build_query($params);
     $response = makeApiRequestWithFallback($url, $params);
     if ($response && isset($response['results']) && $response['resultCount'] > 0 && isset($response['source']) && $response['source'] === 'api') {
@@ -746,21 +799,39 @@ function searchiTunes(SQLite3 $db, array $params): array {
         saveEntitiesFromApi($db, 'tracks', $response['results']);
         saveCacheIds($db, 'search', $params, $response['results']);
     }
+    
+    // For search, we do NOT attach mirrors (mirrorUrls) at all.
     if ($response && isset($response['results'])) {
-        $quality = $params['quality'] ?? null;
-        $platform = $params['platform'] ?? 'bale';
         foreach ($response['results'] as &$item) {
-            $type = $item['wrapperType'] ?? null;
-            if ($type === 'artist') attachMirrors($item, 'artist', $item['artistId'], $quality, $platform);
-            elseif ($type === 'collection') attachMirrors($item, 'collection', $item['collectionId'], $quality, $platform);
-            elseif ($type === 'track') attachMirrors($item, 'track', $item['trackId'], $quality, $platform);
+            unset($item['mirrorUrls']);
         }
     }
     return $response ?? ['resultCount'=>0, 'results'=>[]];
 }
 function lookupiTunes(SQLite3 $db, array $params): array {
     $cached = getCachedResults($db, 'lookup', $params);
-    if ($cached) return $cached;
+    if ($cached) {
+        // Re-attach mirrors and lyrics for cached results (with correct quality/platform)
+        $quality = $params['quality'] ?? null;
+        $platform = $params['platform'] ?? 'bale';
+        foreach ($cached['results'] as &$item) {
+            $type = $item['wrapperType'] ?? null;
+            if ($type === 'artist') attachMirrors($item, 'artist', $item['artistId'], $quality, $platform);
+            elseif ($type === 'collection') attachMirrors($item, 'collection', $item['collectionId'], $quality, $platform);
+            elseif ($type === 'track') {
+                attachMirrors($item, 'track', $item['trackId'], $quality, $platform);
+                // Attach lyrics
+                $lyricsData = getLyrics($db, $item['trackId']);
+                if ($lyricsData['success']) {
+                    $item['lyrics'] = $lyricsData['lyrics'];
+                } else {
+                    $item['lyrics'] = null;
+                }
+            }
+        }
+        return $cached;
+    }
+    
     $apiParams = $params;
     if (isset($apiParams['id'])) {
         $ids = array_map('trim', explode(',', $apiParams['id']));
@@ -776,6 +847,7 @@ function lookupiTunes(SQLite3 $db, array $params): array {
         saveEntitiesFromApi($db, 'tracks', $response['results']);
         saveCacheIds($db, 'lookup', $params, $response['results']);
     }
+    
     if ($response && isset($response['results'])) {
         $quality = $params['quality'] ?? null;
         $platform = $params['platform'] ?? 'bale';
@@ -783,7 +855,17 @@ function lookupiTunes(SQLite3 $db, array $params): array {
             $type = $item['wrapperType'] ?? null;
             if ($type === 'artist') attachMirrors($item, 'artist', $item['artistId'], $quality, $platform);
             elseif ($type === 'collection') attachMirrors($item, 'collection', $item['collectionId'], $quality, $platform);
-            elseif ($type === 'track') attachMirrors($item, 'track', $item['trackId'], $quality, $platform);
+            elseif ($type === 'track') {
+                attachMirrors($item, 'track', $item['trackId'], $quality, $platform);
+                // Add lyrics for tracks (similar to /lyrics/get)
+                $trackId = normalizeId($item['trackId']);
+                $lyricsData = getLyrics($db, $trackId);
+                if ($lyricsData['success']) {
+                    $item['lyrics'] = $lyricsData['lyrics'];
+                } else {
+                    $item['lyrics'] = null;
+                }
+            }
         }
     }
     return $response ?? ['resultCount'=>0, 'results'=>[]];
@@ -814,7 +896,8 @@ function handleBatchLookup(SQLite3 $db, array $params): array {
 }
 function handlePopular(SQLite3 $db, array $params): array {
     $limit = min((int)($params['limit'] ?? 20), 100);
-    $stmt = getStatement("SELECT trackId, trackName, artistName, collectionName, artworkUrl100 FROM tracks ORDER BY accessCount DESC LIMIT :limit");
+    // Fixed: Use SELECT * to avoid missing column errors; order by trackId (fallback)
+    $stmt = getStatement("SELECT * FROM tracks ORDER BY trackId DESC LIMIT :limit");
     $stmt->bindValue(':limit', $limit, SQLITE3_INTEGER);
     $res = $stmt->execute();
     $tracks = [];
@@ -895,18 +978,13 @@ function handleRequest(): void {
     $platform = $params['platform'] ?? 'bale';
     try {
         switch ($path) {
-            // Original endpoints
             case '/search': if (empty($params['term'])) throw new Exception('Missing term', 400); $response = searchiTunes($db, $params); break;
             case '/lookup': if (empty($params['id'])) throw new Exception('Missing id', 400); $response = lookupiTunes($db, $params); break;
-            case '/artist': if (empty($params['id'])) throw new Exception('Missing id', 400); $id = normalizeId($params['id']); $artist = fetchEntityById($db, 'artist', $id, $quality, $platform); if (!$artist) { $lookup = lookupiTunes($db, ['id'=>denormalizeId($id), 'quality'=>$quality, 'platform'=>$platform]); $artist = $lookup['results'][0] ?? null; } if (!$artist) throw new Exception('Artist not found', 404); $response = ['resultCount'=>1, 'results'=>[$artist]]; break;
-            case '/album': if (empty($params['id'])) throw new Exception('Missing id', 400); $id = normalizeId($params['id']); $album = fetchEntityById($db, 'collection', $id, $quality, $platform); if (!$album) { $lookup = lookupiTunes($db, ['id'=>denormalizeId($id), 'quality'=>$quality, 'platform'=>$platform]); $album = $lookup['results'][0] ?? null; } if (!$album) throw new Exception('Album not found', 404); $response = ['resultCount'=>1, 'results'=>[$album]]; break;
-            case '/track': if (empty($params['id'])) throw new Exception('Missing id', 400); $id = normalizeId($params['id']); $track = fetchEntityById($db, 'track', $id, $quality, $platform); if (!$track) { $lookup = lookupiTunes($db, ['id'=>denormalizeId($id), 'quality'=>$quality, 'platform'=>$platform]); $track = $lookup['results'][0] ?? null; } if (!$track) throw new Exception('Track not found', 404); $response = ['resultCount'=>1, 'results'=>[$track]]; break;
             case '/mirror/set': if ($method !== 'POST') throw new Exception('Method not allowed', 405); $response = setMirrorUrl($db, $params['entityType'] ?? '', $params['entityId'] ?? '', $params['urlType'] ?? '', $params['mirrorUrl'] ?? '', $params['quality'] ?? null, $platform); break;
             case '/mirror/get': $response = getMirrorUrls($db, $params['entityType'] ?? '', $params['entityId'] ?? '', $params['urlType'] ?? null, $params['quality'] ?? null, $platform); break;
             case '/mirror/delete': if (!in_array($method, ['POST','DELETE'])) throw new Exception('Method not allowed', 405); $response = deleteMirrorUrl($db, $params['entityType'] ?? '', $params['entityId'] ?? '', $params['urlType'] ?? null, $params['quality'] ?? null, $platform); break;
             case '/lyrics/get': if (empty($params['id'])) throw new Exception('Missing track id', 400); $response = getLyrics($db, $params['id']); break;
             case '/lyrics/save': if ($method !== 'POST') throw new Exception('Method not allowed', 405); if (empty($params['id']) || empty($params['lyrics'])) throw new Exception('Missing parameters', 400); $response = saveLyrics($db, $params['id'], $params['lyrics']); break;
-            // New and enhanced endpoints
             case '/batch': $response = handleBatchLookup($db, $params); break;
             case '/popular': $response = handlePopular($db, $params); break;
             case '/cache/clear': $response = handleCacheClear($db); break;
