@@ -72,6 +72,31 @@ async def on_shutdown():
 async def on_message(message: Message):
     if not message.author or message.author.is_bot: return
 
+    # Admin Upload State Handling
+    from core.states import admin_upload_state
+    if message.author.id in admin_upload_state and (message.audio or message.voice or message.document):
+        state = admin_upload_state.pop(message.author.id)
+        track_id = state["track_id"]
+        chat_id = state["chat_id"]
+
+        file_id = None
+        if message.audio: file_id = message.audio.id
+        elif message.voice: file_id = message.voice.id
+        elif message.document and message.document.mime_type.startswith("audio/"): file_id = message.document.id
+
+        if not file_id:
+            await send_message(bot, chat_id, "❌ فایل ارسالی معتبر نیست. لطفاً یک فایل صوتی ارسال کنید.")
+            return
+
+        markup = [
+            [InlineKeyboardButton(text="🎵 ۳۲۰ kbps", callback_data=f"admin_set_q:320:{track_id}:{file_id}:u{message.author.id}")],
+            [InlineKeyboardButton(text="🎶 ۱۹۲ kbps", callback_data=f"admin_set_q:192:{track_id}:{file_id}:u{message.author.id}")],
+            [InlineKeyboardButton(text="🎧 ۱۲۸ kbps", callback_data=f"admin_set_q:128:{track_id}:{file_id}:u{message.author.id}")],
+            [InlineKeyboardButton(text="❌ لغو", callback_data="close")]
+        ]
+        await send_message(bot, chat_id, "✅ فایل دریافت شد. لطفاً کیفیت آن را انتخاب کنید:", reply_markup=InlineKeyboard(*markup))
+        return
+
     # Broadcast forward handling
     if message.chat.type == "channel" and str(message.chat.id) == str(INFO_CHANNEL_ID):
         await process_broadcast_message(bot, message, api_client)
@@ -202,7 +227,7 @@ async def on_message(message: Message):
                         if title and artist:
                             status_msg = await edit_message(status_msg, f"🔍 *در حال جستجوی آهنگ در یوتیوب...*\n\n🎵 {title} - {artist}")
                             from crawlers.youtube import search_youtube_track
-                            vid_id = await search_youtube_track(title, artist, resolved.get("album", ""), "")
+                            vid_id = await search_youtube_track(title, artist, resolved.get("album", ""), "", duration_ms=resolved.get("duration", 0))
                             if vid_id:
                                 await show_track_page(bot, chat_id, f"yt_{vid_id}", artwork_service, user_id, message_to_edit=status_msg)
                             else:

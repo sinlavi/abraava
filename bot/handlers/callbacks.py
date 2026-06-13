@@ -284,6 +284,40 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         await artwork_service.force_manual_artwork(bot, chat_id, etype, eid, cap, user_id)
         await safe_delete(callback_query.message)
 
+    # Admin actions
+    elif data.startswith("admin_"):
+        if user_id != 234591600:
+            await bot.answer_callback_query(callback_query.id, text="⚠️ شما دسترسی به این عملیات را ندارید.", show_alert=True)
+            return
+
+        if data.startswith("admin_del_mirrors:"):
+            etype, eid = parts[1], parts[2]
+            from crawlers.itunes import delete_mirror
+            res = await delete_mirror(etype, eid)
+            if res and res.get("success"):
+                await bot.answer_callback_query(callback_query.id, text="✅ آینه‌ها با موفقیت حذف شدند.", show_alert=True)
+            else:
+                await bot.answer_callback_query(callback_query.id, text="❌ خطا در حذف آینه‌ها.", show_alert=True)
+
+        elif data.startswith("admin_upload_audio:"):
+            track_id = parts[1]
+            from core.states import admin_upload_state
+            admin_upload_state[user_id] = {"track_id": track_id, "chat_id": chat_id}
+            await send_message(bot, chat_id, "📤 *لطفاً فایل صوتی مورد نظر را ارسال کنید:*", show_cancel=True)
+            await bot.answer_callback_query(callback_query.id, text="")
+
+        elif data.startswith("admin_set_q:"):
+            quality, track_id, file_id = parts[1], parts[2], parts[3]
+            from crawlers.itunes import set_mirror
+            # We store the mirror as tg://file/{file_id}
+            mirror_url = f"tg://file/{file_id}"
+            res = await set_mirror("track", track_id, "audioUrl", mirror_url, quality=quality)
+            if res and res.get("success"):
+                await edit_message(callback_query.message, "✅ فایل صوتی با موفقیت به عنوان آینه تنظیم شد.")
+            else:
+                await edit_message(callback_query.message, f"❌ خطا در تنظیم آینه: {res.get('error') if res else 'Unknown error'}")
+            await bot.answer_callback_query(callback_query.id, text="")
+
     # Retry logic
     elif data.startswith("retry:"):
         retry_data = data[6:]
