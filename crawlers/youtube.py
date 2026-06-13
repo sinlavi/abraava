@@ -221,11 +221,16 @@ def _calculate_relevance_score(video_info: dict, t_name: str, a_name: str, colle
     """
     Calculate relevance score for a search result.
     """
-    title = video_info.get('title', '')
-    channel = video_info.get('channel', '')
-    uploader = video_info.get('uploader', '')
-    upload_date = video_info.get('upload_date', '')
-    video_duration = int(video_info.get('duration', 0)) * 1000
+    if not isinstance(video_info, dict):
+        return 0.0
+    title = video_info.get('title') or ''
+    channel = video_info.get('channel') or ''
+    uploader = video_info.get('uploader') or ''
+    upload_date = video_info.get('upload_date') or ''
+    try:
+        video_duration = int(video_info.get('duration') or 0) * 1000
+    except (ValueError, TypeError):
+        video_duration = 0
 
     score = 0.0
     title_sim = _get_similarity(t_name, title)
@@ -368,7 +373,10 @@ def _sync_search_youtube(t_name: str, a_name: str, collection_name: str, ye: str
     """
     global YT
     if YT is None:
-        YT = YTMusic(proxies={"https": PROXY, "http": PROXY})
+        try:
+            YT = YTMusic(proxies={"https": PROXY, "http": PROXY})
+        except:
+            return None
 
     search_query = f"{t_name} {a_name} {collection_name}".strip()
 
@@ -382,19 +390,23 @@ def _sync_search_youtube(t_name: str, a_name: str, collection_name: str, ye: str
         highest_score = -1.0
 
         for res in results:
-            res_title = res.get("title", "")
+            if not isinstance(res, dict):
+                continue
+            res_title = res.get("title") or ""
             artists = res.get("artists", [])
-            res_artist = ", ".join([a.get("name", "") for a in artists]) if artists else ""
+            res_artist = ", ".join([a.get("name", "") for a in artists if isinstance(a, dict)]) if artists else ""
             album_data = res.get("album") or {}
-            res_album = album_data.get("name", "")
-            res_year = res.get("year", "")
+            res_album = album_data.get("name") or "" if isinstance(album_data, dict) else str(album_data)
+            res_year = res.get("year") or ""
 
-            res_duration_str = res.get("duration", "0:00")
+            res_duration_str = res.get("duration") or "0:00"
             res_duration_ms = 0
-            if ":" in res_duration_str:
+            if isinstance(res_duration_str, str) and ":" in res_duration_str:
                 parts = res_duration_str.split(":")
-                if len(parts) == 2: res_duration_ms = (int(parts[0]) * 60 + int(parts[1])) * 1000
-                elif len(parts) == 3: res_duration_ms = (int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])) * 1000
+                try:
+                    if len(parts) == 2: res_duration_ms = (int(parts[0]) * 60 + int(parts[1])) * 1000
+                    elif len(parts) == 3: res_duration_ms = (int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])) * 1000
+                except: res_duration_ms = 0
 
             title_sim = _get_similarity(t_name, res_title)
             if title_sim < 0.4: continue

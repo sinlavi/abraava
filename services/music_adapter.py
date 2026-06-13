@@ -70,12 +70,20 @@ class MusicAdapter:
         return sp_data
 
     def _ytm_to_itunes(self, ytm_data: Dict[str, Any], entity_type: str) -> Dict[str, Any]:
+        if not isinstance(ytm_data, dict):
+            return {}
         if entity_type == "track":
             artists = ytm_data.get("artists")
             if not artists and "author" in ytm_data:
-                artist_name = ytm_data["author"].replace(" - Topic", "")
+                artist_name = str(ytm_data["author"]).replace(" - Topic", "")
             elif artists:
-                artist_name = ", ".join([a["name"].replace(" - Topic", "") for a in artists])
+                artist_names = []
+                for a in artists:
+                    if isinstance(a, dict) and a.get("name"):
+                        artist_names.append(a["name"].replace(" - Topic", ""))
+                    elif isinstance(a, str):
+                        artist_names.append(a.replace(" - Topic", ""))
+                artist_name = ", ".join(artist_names) if artist_names else "Unknown"
             else:
                 artist_name = "Unknown"
 

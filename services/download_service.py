@@ -177,7 +177,7 @@ class DownloadService:
                                                    status_prefix, reply_markup, is_batch)
             logger.info(f"Searching YouTube for track {track_id}: {track.get('trackName')} - {track.get('artistName')}")
             video_id = await search_youtube_track(track.get("trackName", ""), track.get("artistName", ""),
-                                                  track.get("collectionName", ""), track.get("releaseDate", "")[:4],
+                                                  track.get("collectionName", ""), (track.get("releaseDate") or "")[:4],
                                                   duration_ms=duration_ms)
 
             if not video_id:
@@ -277,7 +277,7 @@ class DownloadService:
             "🎵 نام آهنگ": track_name_link,
             "🎤 نام آپلودر" if is_sc else "🎤 نام هنرمند": artist_link,
             "💿 نام آلبوم": coll_link if not is_sc else None,
-            "📅 سال انتشار": str(track.get('releaseDate', ''))[:4] if track.get('releaseDate') else None,
+            "📅 سال انتشار": str(track.get('releaseDate') or "")[:4] if track.get('releaseDate') else None,
             "🎸 سبک": track.get('primaryGenreName'),
             "⏱️ مدت زمان": duration_text if not is_sc else None,
             "📀 کیفیت دانلود": f"{quality_value} kbps"

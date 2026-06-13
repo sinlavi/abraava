@@ -153,7 +153,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         coll_id = parts[1]
         if coll_id.isdigit(): coll_id = int(coll_id)
         tracks_data = await crawlers.utils.get_or_crawl_collection_tracks(coll_id)
-        if tracks_data and tracks_data.get("results"):
+        if tracks_data and tracks_data.get("results") and len(tracks_data["results"]) > 0:
             track_id = tracks_data["results"][0].get("trackId")
             if track_id: await show_track_page(bot, chat_id, track_id, artwork_service, user_id)
             else: await bot.answer_callback_query(callback_query.id, text="❌ خطایی رخ داد", show_alert=True)
