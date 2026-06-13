@@ -177,7 +177,8 @@ class DownloadService:
                                                    status_prefix, reply_markup, is_batch)
             logger.info(f"Searching YouTube for track {track_id}: {track.get('trackName')} - {track.get('artistName')}")
             video_id = await search_youtube_track(track.get("trackName", ""), track.get("artistName", ""),
-                                                  track.get("collectionName", ""), (track.get("releaseDate") or "")[:4])
+                                                  track.get("collectionName", ""), (track.get("releaseDate") or "")[:4],
+                                                  target_duration_ms=duration_ms)
 
             if not video_id:
                 status_msg = await self._update_status(chat_id, status_msg, "❌ منبعی برای ترک خواسته شده پیدا نشد.", status_prefix,
