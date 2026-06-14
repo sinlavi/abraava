@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ابرآوا پلیر</title>
+    <!-- Bale Mini-App SDK -->
+    <script src="https://tapi.bale.ai/miniapp.js?3"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            background-color: #121212;
+            color: white;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+            overflow: hidden;
+        }
+        .spotify-gradient {
+            background: linear-gradient(to bottom, #404040, #121212);
+        }
+        .safe-bottom {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #121212;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 2px;
+        }
+        .blur-bg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-size: cover;
+            background-position: center;
+            filter: blur(60px) brightness(0.4);
+            z-index: -1;
+            transform: scale(1.2);
+            transition: background-image 0.5s ease-in-out;
+        }
+        .view-transition {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            background: white;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen">
+
+    <main id="main-content" class="flex-grow overflow-y-auto pb-32 px-4 pt-6">
+    </main>
+
+    <nav class="fixed bottom-0 left-0 right-0 bg-black/80 backdrop-blur-lg border-t border-[#282828] flex justify-around items-center py-3 z-30 safe-bottom">
+        <button onclick="renderHome()" class="flex flex-col items-center space-y-1 text-gray-400 hover:text-white transition">
+            <i data-lucide="home"></i>
+            <span class="text-[10px]">خانه</span>
+        </button>
+        <button onclick="renderSearch()" class="flex flex-col items-center space-y-1 text-gray-400 hover:text-white transition">
+            <i data-lucide="search"></i>
+            <span class="text-[10px]">جستجو</span>
+        </button>
+        <button onclick="renderLibrary()" class="flex flex-col items-center space-y-1 text-gray-400 hover:text-white transition">
+            <i data-lucide="library"></i>
+            <span class="text-[10px]">کتابخانه</span>
+        </button>
+    </nav>
+
+    <div id="mini-player" class="fixed bottom-[64px] left-2 right-2 bg-[#1db954] rounded-lg px-3 py-2 flex items-center justify-between z-40 shadow-2xl hidden transform transition-all active:scale-95" onclick="openFullPlayer()">
+        <div class="flex items-center space-x-3 space-x-reverse truncate flex-grow">
+            <img id="mini-artwork" src="" class="w-10 h-10 rounded object-cover shadow-lg">
+            <div class="truncate text-right">
+                <div id="mini-title" class="text-xs font-bold truncate text-black">نام آهنگ</div>
+                <div id="mini-artist" class="text-[10px] text-black/80 truncate">نام هنرمند</div>
+            </div>
+        </div>
+        <div class="flex items-center space-x-4 space-x-reverse pr-2">
+            <button id="mini-play-btn" class="text-black hover:scale-110 transition" onclick="event.stopPropagation(); togglePlay()">
+                <i data-lucide="play" class="w-6 h-6 fill-current"></i>
+            </button>
+        </div>
+        <div class="absolute bottom-0 left-0 h-[2px] bg-white/50 rounded-b-lg" id="mini-progress" style="width: 0%"></div>
+    </div>
+
+    <div id="full-player" class="fixed inset-0 bg-[#121212] z-50 flex flex-col transform translate-y-full transition-transform duration-500 ease-in-out hidden overflow-hidden">
+        <div class="blur-bg" id="full-bg"></div>
+
+        <div class="flex justify-between items-center p-6 mb-4">
+            <button onclick="closeFullPlayer()" class="p-2 rounded-full hover:bg-white/10 transition"><i data-lucide="chevron-down"></i></button>
+            <div class="text-center truncate px-4">
+                <span class="text-[10px] font-bold uppercase tracking-widest text-gray-300 block mb-1">در حال پخش</span>
+                <span id="player-context" class="text-xs font-bold text-white truncate">نام آلبوم</span>
+            </div>
+            <button class="p-2 rounded-full hover:bg-white/10 transition"><i data-lucide="more-horizontal"></i></button>
+        </div>
+
+        <div class="flex-grow flex flex-col items-center justify-center px-8">
+            <div class="w-full aspect-square relative mb-12 group">
+                <img id="full-artwork" src="" class="w-full h-full rounded-lg shadow-2xl object-cover transition-transform duration-500 group-hover:scale-105">
+            </div>
+            <div class="w-full text-right flex justify-between items-end">
+                <div class="truncate flex-grow">
+                    <h1 id="full-title" class="text-2xl font-black mb-1 truncate">نام آهنگ</h1>
+                    <p id="full-artist" class="text-lg text-gray-300 font-medium truncate">نام هنرمند</p>
+                </div>
+                <button class="text-green-500 mr-4"><i data-lucide="heart" class="w-7 h-7"></i></button>
+            </div>
+        </div>
+
+        <div class="w-full px-8 mt-4">
+            <input type="range" id="progress-bar" class="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-white hover:accent-green-500" value="0" step="0.1">
+            <div class="flex justify-between text-[10px] font-bold text-gray-400 mt-3 tabular-nums">
+                <span id="current-time">0:00</span>
+                <span id="total-time">0:00</span>
+            </div>
+        </div>
+
+        <div class="flex justify-between items-center px-8 py-10 safe-bottom">
+            <button class="text-gray-400 hover:text-green-500 transition"><i data-lucide="shuffle" class="w-5 h-5"></i></button>
+            <button id="prev-btn" class="text-white hover:scale-110 transition"><i data-lucide="skip-back" class="w-8 h-8 fill-current"></i></button>
+            <button id="main-play-btn" class="bg-white text-black rounded-full p-5 hover:scale-105 transition shadow-xl" onclick="togglePlay()">
+                <i data-lucide="play" class="w-10 h-10 fill-current"></i>
+            </button>
+            <button id="next-btn" class="text-white hover:scale-110 transition"><i data-lucide="skip-forward" class="w-8 h-8 fill-current"></i></button>
+            <button class="text-gray-400 hover:text-green-500 transition"><i data-lucide="repeat" class="w-5 h-5"></i></button>
+        </div>
+    </div>
+
+    <audio id="audio-player"></audio>
+
+    <script>
+        const API_BASE = "https://3rah.ir/music";
+        const mainContent = document.getElementById('main-content');
+        const audio = document.getElementById('audio-player');
+        let currentTrack = null;
+        let viewHistory = [];
+
+        if (window.Bale && window.Bale.WebApp) {
+            const webApp = window.Bale.WebApp;
+            webApp.expand();
+            webApp.ready();
+            webApp.setHeaderColor('#121212');
+            webApp.BackButton.onClick(handleBack);
+        }
+
+        function handleBack() {
+            if (document.getElementById('full-player').style.transform === 'translateY(0px)') {
+                closeFullPlayer();
+            } else if (viewHistory.length > 1) {
+                viewHistory.pop();
+                const prevView = viewHistory[viewHistory.length - 1];
+                if (prevView.type === 'home') renderHome(false);
+                else if (prevView.type === 'search') renderSearch(false);
+                else if (prevView.type === 'artist') renderArtist(prevView.id, false);
+                else if (prevView.type === 'album') renderAlbum(prevView.id, false);
+                if (viewHistory.length <= 1 && window.Bale && window.Bale.WebApp) {
+                    window.Bale.WebApp.BackButton.hide();
+                }
+            }
+        }
+
+        function pushHistory(view) {
+            if (viewHistory.length > 0) {
+                const last = viewHistory[viewHistory.length - 1];
+                if (last.type === view.type && last.id === view.id) return;
+            }
+            viewHistory.push(view);
+            if (viewHistory.length > 1 && window.Bale && window.Bale.WebApp) {
+                window.Bale.WebApp.BackButton.show();
+            }
+        }
+
+        async function fetchAPI(endpoint, params = {}) {
+            const url = new URL(`${API_BASE}/${endpoint}`);
+            Object.keys(params).forEach(key => url.searchParams.append(key, params[key]));
+            try {
+                const response = await fetch(url, {
+                    headers: { 'Accept': 'application/json', 'Platform': 'bale' }
+                });
+                return await response.json();
+            } catch (e) {
+                console.error("API Error:", e);
+                return { results: [] };
+            }
+        }
+
+        function setView(html) {
+            mainContent.innerHTML = `<div class="view-transition">${html}</div>`;
+            lucide.createIcons();
+            mainContent.scrollTop = 0;
+        }
+
+        async function renderHome(saveHistory = true) {
+            if (saveHistory) pushHistory({ type: 'home' });
+            else if (!saveHistory && viewHistory.length === 0 && window.Bale && window.Bale.WebApp) window.Bale.WebApp.BackButton.hide();
+
+            setView(`
+                <div class="mb-8">
+                    <div class="flex justify-between items-center mb-6">
+                        <h1 class="text-2xl font-black">شب بخیر</h1>
+                        <button class="p-2"><i data-lucide="settings" class="w-6 h-6"></i></button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3" id="popular-container">
+                        <div class="col-span-2 flex justify-center py-12">
+                            <div class="animate-spin rounded-full h-8 w-8 border-t-2 border-green-500"></div>
+                        </div>
+                    </div>
+                </div>
+                <h2 class="text-xl font-bold mb-4">پیشنهاد برای شما</h2>
+                <div class="flex overflow-x-auto space-x-4 space-x-reverse pb-4 no-scrollbar" id="featured-container">
+                </div>
+            `);
+
+            const data = await fetchAPI('popular', { limit: 6 });
+            const popularContainer = document.getElementById('popular-container');
+            if (data.results && data.results.length > 0) {
+                popularContainer.innerHTML = data.results.map(item => `
+                    <div class="bg-[#282828]/50 flex items-center space-x-3 space-x-reverse rounded overflow-hidden hover:bg-[#282828] transition cursor-pointer" onclick="playTrack('${item.trackId}')">
+                        <img src="${item.artworkUrl100 || item.artworkUrl60}" class="w-14 h-14 object-cover shadow-lg">
+                        <span class="text-xs font-bold truncate flex-grow pl-2">${item.trackName}</span>
+                    </div>
+                `).join('');
+            } else {
+                popularContainer.innerHTML = '<p class="col-span-2 text-center text-gray-500 py-4">داده‌ای یافت نشد.</p>';
+            }
+            lucide.createIcons();
+        }
+
+        function renderSearch(saveHistory = true) {
+            if (saveHistory) pushHistory({ type: 'search' });
+            setView(`
+                <div class="mb-8">
+                    <h1 class="text-3xl font-black mb-6">جستجو</h1>
+                    <div class="relative sticky top-0 z-10 bg-[#121212] py-2">
+                        <input type="text" id="search-input" placeholder="آهنگ، هنرمند یا آلبوم..."
+                               class="w-full bg-white rounded-md py-3 px-12 focus:outline-none text-black font-bold text-sm">
+                        <i data-lucide="search" class="absolute left-auto right-4 top-1/2 -translate-y-1/2 text-black w-5 h-5"></i>
+                    </div>
+                </div>
+                <div id="search-results" class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-gradient-to-br from-pink-500 to-rose-600 h-24 rounded-lg p-3 relative overflow-hidden">
+                            <span class="font-bold text-sm">پاپ</span>
+                            <i data-lucide="music" class="absolute -bottom-2 -left-2 w-16 h-16 opacity-20 rotate-12"></i>
+                        </div>
+                        <div class="bg-gradient-to-br from-purple-500 to-indigo-600 h-24 rounded-lg p-3 relative overflow-hidden">
+                            <span class="font-bold text-sm">راک</span>
+                            <i data-lucide="guitar" class="absolute -bottom-2 -left-2 w-16 h-16 opacity-20 rotate-12"></i>
+                        </div>
+                        <div class="bg-gradient-to-br from-green-500 to-teal-600 h-24 rounded-lg p-3 relative overflow-hidden">
+                            <span class="font-bold text-sm">سنتی</span>
+                            <i data-lucide="mic-2" class="absolute -bottom-2 -left-2 w-16 h-16 opacity-20 rotate-12"></i>
+                        </div>
+                        <div class="bg-gradient-to-br from-orange-500 to-amber-600 h-24 rounded-lg p-3 relative overflow-hidden">
+                            <span class="font-bold text-sm">جدیدترین‌ها</span>
+                            <i data-lucide="zap" class="absolute -bottom-2 -left-2 w-16 h-16 opacity-20 rotate-12"></i>
+                        </div>
+                    </div>
+                </div>
+            `);
+            const input = document.getElementById('search-input');
+            let timeout = null;
+            input.addEventListener('input', (e) => {
+                clearTimeout(timeout);
+                if (!e.target.value) return;
+                timeout = setTimeout(() => performSearch(e.target.value), 500);
+            });
+            lucide.createIcons();
+        }
+
+        async function performSearch(term) {
+            const container = document.getElementById('search-results');
+            container.innerHTML = '<div class="flex justify-center py-20"><div class="animate-spin rounded-full h-8 w-8 border-t-2 border-green-500"></div></div>';
+            const data = await fetchAPI('search', { term, limit: 20 });
+            if (data.results && data.results.length > 0) {
+                container.innerHTML = data.results.map(item => renderListItem(item)).join('');
+            } else {
+                container.innerHTML = '<p class="text-center text-gray-500 py-10">نتیجه‌ای یافت نشد.</p>';
+            }
+            lucide.createIcons();
+        }
+
+        function renderListItem(item) {
+            const isArtist = item.wrapperType === 'artist';
+            const isAlbum = item.wrapperType === 'collection';
+            let id, title, subtitle, img, clickAction;
+            if (isArtist) {
+                id = item.artistId; title = item.artistName; subtitle = "هنرمند";
+                img = item.artworkUrl100 || 'https://via.placeholder.com/150';
+                clickAction = `renderArtist('${id}')`;
+            } else if (isAlbum) {
+                id = item.collectionId; title = item.collectionName; subtitle = `آلبوم • ${item.artistName}`;
+                img = item.artworkUrl100; clickAction = `renderAlbum('${id}')`;
+            } else {
+                id = item.trackId; title = item.trackName; subtitle = item.artistName;
+                img = item.artworkUrl60; clickAction = `playTrack('${id}')`;
+            }
+            return `
+                <div class="flex items-center space-x-4 space-x-reverse p-2 hover:bg-[#282828] rounded-md cursor-pointer transition active:scale-95" onclick="${clickAction}">
+                    <img src="${img}" class="w-14 h-14 ${isArtist ? 'rounded-full' : 'rounded-md'} object-cover shadow-lg border border-white/5">
+                    <div class="flex-grow truncate text-right">
+                        <div class="font-bold text-sm truncate">${title}</div>
+                        <div class="text-[11px] text-gray-400 mt-1 truncate">${subtitle}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function renderArtist(id, saveHistory = true) {
+            if (saveHistory) pushHistory({ type: 'artist', id });
+            setView('<div class="flex justify-center py-40"><div class="animate-spin rounded-full h-8 w-8 border-t-2 border-green-500"></div></div>');
+            const data = await fetchAPI('lookup', { id, entity: 'album,song', limit: 20 });
+            if (!data.results || data.results.length === 0) {
+                setView('<div class="text-center py-40 text-gray-500">هنرمند یافت نشد.</div>');
+                return;
+            }
+            const artist = data.results[0];
+            const albums = data.results.filter(i => i.wrapperType === 'collection');
+            const topTracks = data.results.filter(i => i.wrapperType === 'track');
+            const html = `
+                <div class="relative -mx-4 -mt-6 mb-8">
+                    <div class="h-[300px] bg-cover bg-center" style="background-image: url('${artist.artworkUrl100 || ''}')">
+                        <div class="absolute inset-0 bg-gradient-to-t from-[#121212] via-[#121212]/20 to-transparent"></div>
+                    </div>
+                    <div class="absolute bottom-6 right-6 text-right w-full pr-12">
+                        <h1 class="text-5xl font-black mb-3 drop-shadow-2xl">${artist.artistName}</h1>
+                        <div class="flex items-center space-x-2 space-x-reverse">
+                            <span class="text-xs font-bold text-gray-300 bg-white/10 px-2 py-1 rounded">${artist.primaryGenreName || 'موسیقی'}</span>
+                        </div>
+                    </div>
+                    <button class="absolute top-6 right-6 bg-black/40 backdrop-blur-md rounded-full p-3 hover:bg-black/60 transition" onclick="handleBack()">
+                        <i data-lucide="arrow-right"></i>
+                    </button>
+                </div>
+                <div class="px-2">
+                    <h2 class="text-xl font-black mb-4">آهنگ‌های برتر</h2>
+                    <div class="space-y-1 mb-10">
+                        ${topTracks.map((track, idx) => `
+                            <div class="flex items-center space-x-4 space-x-reverse p-3 hover:bg-[#282828] rounded-md cursor-pointer transition active:bg-[#333]" onclick="playTrack('${track.trackId}')">
+                                <span class="text-gray-500 text-xs w-4">${idx + 1}</span>
+                                <img src="${track.artworkUrl60}" class="w-10 h-10 rounded">
+                                <div class="flex-grow truncate text-right pl-4">
+                                    <div class="text-sm font-bold truncate">${track.trackName}</div>
+                                    <div class="text-[10px] text-gray-500 mt-0.5">آهنگ</div>
+                                </div>
+                                <i data-lucide="more-vertical" class="text-gray-500 w-4 h-4"></i>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <h2 class="text-xl font-black mb-4">دیسکوگرافی</h2>
+                    <div class="flex overflow-x-auto space-x-4 space-x-reverse pb-8 no-scrollbar">
+                        ${albums.map(album => `
+                            <div class="flex-shrink-0 w-40 bg-[#181818] p-3 rounded-xl hover:bg-[#282828] transition cursor-pointer" onclick="renderAlbum('${album.collectionId}')">
+                                <img src="${album.artworkUrl100}" class="w-full aspect-square rounded-lg shadow-xl mb-3 object-cover">
+                                <div class="text-[13px] font-bold truncate text-right">${album.collectionName}</div>
+                                <div class="text-[10px] text-gray-500 text-right mt-1">${album.releaseDate ? album.releaseDate.substring(0, 4) : ''} • آلبوم</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+            setView(html);
+        }
+
+        async function renderAlbum(id, saveHistory = true) {
+            if (saveHistory) pushHistory({ type: 'album', id });
+            setView('<div class="flex justify-center py-40"><div class="animate-spin rounded-full h-8 w-8 border-t-2 border-green-500"></div></div>');
+            const data = await fetchAPI('lookup', { id, entity: 'song' });
+            if (!data.results || data.results.length === 0) {
+                setView('<div class="text-center py-40 text-gray-500">آلبوم یافت نشد.</div>');
+                return;
+            }
+            const album = data.results[0];
+            const tracks = data.results.slice(1).filter(i => i.wrapperType === 'track');
+            const html = `
+                <div class="spotify-gradient -mx-4 -mt-6 p-8 pb-10 text-right flex flex-col items-center">
+                    <button class="self-start bg-black/40 backdrop-blur-md rounded-full p-2 mb-6" onclick="handleBack()">
+                        <i data-lucide="arrow-right"></i>
+                    </button>
+                    <img src="${album.artworkUrl100}" class="w-56 h-56 rounded-lg shadow-[0_20px_50px_rgba(0,0,0,0.5)] mb-8 object-cover">
+                    <div class="w-full">
+                        <h1 class="text-2xl font-black mb-4 w-full text-right">${album.collectionName}</h1>
+                        <div class="flex items-center space-x-2 space-x-reverse w-full text-right mb-6" onclick="renderArtist('${album.artistId}')">
+                            <img src="${album.artworkUrl60}" class="w-6 h-6 rounded-full border border-white/10">
+                            <span class="text-sm font-black hover:underline cursor-pointer">${album.artistName}</span>
+                        </div>
+                        <div class="text-[11px] font-bold text-gray-400 w-full text-right flex items-center space-x-2 space-x-reverse">
+                            <span>${album.releaseDate ? album.releaseDate.substring(0, 4) : ''}</span>
+                            <span class="w-1 h-1 bg-gray-500 rounded-full"></span>
+                            <span>${album.trackCount} آهنگ</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-6">
+                    <div class="flex items-center justify-between mb-6 px-2">
+                        <div class="flex items-center space-x-6 space-x-reverse">
+                            <button class="text-green-500"><i data-lucide="heart" class="w-7 h-7"></i></button>
+                            <button class="text-gray-400"><i data-lucide="download-circle" class="w-7 h-7"></i></button>
+                        </div>
+                        <button class="bg-[#1db954] text-black rounded-full p-4 shadow-xl hover:scale-105 transition" onclick="playTrack('${tracks[0].trackId}')">
+                            <i data-lucide="play" class="w-7 h-7 fill-current"></i>
+                        </button>
+                    </div>
+                    <div class="space-y-1">
+                        ${tracks.map((track, index) => `
+                            <div class="flex items-center space-x-4 space-x-reverse p-3 hover:bg-[#282828] rounded-md cursor-pointer transition active:bg-[#333]" onclick="playTrack('${track.trackId}')">
+                                <div class="text-gray-500 text-xs w-4 text-center tabular-nums">${index + 1}</div>
+                                <div class="flex-grow truncate text-right pl-4">
+                                    <div class="text-sm font-bold truncate">${track.trackName}</div>
+                                    <div class="text-[10px] text-gray-500 mt-1">${track.artistName}</div>
+                                </div>
+                                <button class="text-gray-500"><i data-lucide="more-horizontal" class="w-5 h-5"></i></button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+            setView(html);
+        }
+
+        function renderLibrary() {
+            setView(`
+                <h1 class="text-3xl font-black mb-8">کتابخانه شما</h1>
+                <div class="flex flex-col items-center justify-center py-20 text-center">
+                    <div class="bg-[#282828] p-6 rounded-full mb-6"><i data-lucide="plus" class="w-10 h-10 text-gray-400"></i></div>
+                    <h3 class="font-bold mb-2">اولین پلی‌لیست خود را بسازید</h3>
+                    <p class="text-xs text-gray-400 mb-8 px-10 leading-relaxed">خیلی ساده است، ما به شما کمک می‌کنیم.</p>
+                    <button class="bg-white text-black font-black px-8 py-3 rounded-full text-sm active:scale-95 transition">ساخت پلی‌لیست</button>
+                </div>
+            `);
+        }
+
+        async function playTrack(id) {
+            const miniPlayer = document.getElementById('mini-player');
+            miniPlayer.classList.remove('hidden');
+            document.getElementById('mini-title').textContent = "در حال بارگذاری...";
+            document.getElementById('mini-artist').textContent = "";
+            const data = await fetchAPI('lookup', { id });
+            if (!data.results || data.results.length === 0) { alert('آهنگ یافت نشد.'); return; }
+            const track = data.results[0];
+            let streamUrl = track.previewUrl;
+            if (track.mirrorUrls && track.mirrorUrls.audioUrl && track.mirrorUrls.audioUrl.url) {
+                streamUrl = track.mirrorUrls.audioUrl.url;
+            }
+            if (!streamUrl) { alert('منبع پخش برای این آهنگ در دسترس نیست.'); return; }
+            currentTrack = track;
+            audio.src = streamUrl;
+            audio.play().then(() => { updatePlayerUI(); }).catch(e => {
+                if (streamUrl !== track.previewUrl && track.previewUrl) {
+                    audio.src = track.previewUrl; audio.play().then(() => updatePlayerUI());
+                } else { alert('خطا در پخش آهنگ.'); }
+            });
+        }
+
+        function updatePlayerUI() {
+            if (!currentTrack) return;
+            const artwork = currentTrack.artworkUrl100 || currentTrack.artworkUrl60;
+            document.getElementById('mini-artwork').src = artwork;
+            document.getElementById('mini-title').textContent = currentTrack.trackName;
+            document.getElementById('mini-artist').textContent = currentTrack.artistName;
+            document.getElementById('full-artwork').src = artwork;
+            document.getElementById('full-title').textContent = currentTrack.trackName;
+            document.getElementById('full-artist').textContent = currentTrack.artistName;
+            document.getElementById('full-bg').style.backgroundImage = `url('${artwork}')`;
+            document.getElementById('player-context').textContent = currentTrack.collectionName || currentTrack.artistName;
+            updatePlayButtons();
+            lucide.createIcons();
+        }
+
+        function togglePlay() {
+            if (audio.paused) audio.play(); else audio.pause();
+            updatePlayButtons();
+        }
+
+        function updatePlayButtons() {
+            const icon = audio.paused ? 'play' : 'pause';
+            document.getElementById('mini-play-btn').innerHTML = `<i data-lucide="${icon}" class="w-6 h-6 fill-current"></i>`;
+            document.getElementById('main-play-btn').innerHTML = `<i data-lucide="${icon}" class="w-10 h-10 fill-current"></i>`;
+            lucide.createIcons();
+        }
+
+        function openFullPlayer() {
+            const player = document.getElementById('full-player');
+            player.classList.remove('hidden');
+            setTimeout(() => { player.style.transform = 'translateY(0)'; }, 10);
+        }
+
+        function closeFullPlayer() {
+            const player = document.getElementById('full-player');
+            player.style.transform = 'translateY(100%)';
+            setTimeout(() => { player.classList.add('hidden'); }, 500);
+        }
+
+        audio.addEventListener('timeupdate', () => {
+            if (isNaN(audio.duration)) return;
+            const progress = (audio.currentTime / audio.duration) * 100;
+            document.getElementById('progress-bar').value = progress || 0;
+            document.getElementById('mini-progress').style.width = `${progress}%`;
+            document.getElementById('current-time').textContent = formatTime(audio.currentTime);
+            document.getElementById('total-time').textContent = formatTime(audio.duration);
+        });
+
+        audio.addEventListener('ended', () => { updatePlayButtons(); });
+
+        document.getElementById('progress-bar').addEventListener('input', (e) => {
+            const time = (e.target.value / 100) * audio.duration;
+            audio.currentTime = time;
+        });
+
+        function formatTime(seconds) {
+            if (isNaN(seconds)) return '0:00';
+            const min = Math.floor(seconds / 60);
+            const sec = Math.floor(seconds % 60);
+            return `${min}:${sec < 10 ? '0' : ''}${sec}`;
+        }
+
+        renderHome(true);
+    </script>
+</body>
+</html>
