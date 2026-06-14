@@ -369,7 +369,9 @@ function setMirrorUrl(SQLite3 $db, string $type, string $id, string $urlType, st
     };
     if ($table) {
         $pk = $type . 'Id';
-        $db->exec("INSERT OR IGNORE INTO $table ($pk) VALUES ('" . $db->escapeString($id) . "')");
+        $stmt_skeleton = getStatement("INSERT OR IGNORE INTO $table ($pk) VALUES (:id)");
+        $stmt_skeleton->bindValue(':id', $id);
+        $stmt_skeleton->execute();
     }
 
     $actualUrlType = getAudioUrlTypeWithQuality($urlType, $quality);

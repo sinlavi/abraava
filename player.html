@@ -155,12 +155,19 @@
         let currentTrack = null;
         let viewHistory = [];
 
-        if (window.Bale && window.Bale.WebApp) {
-            const webApp = window.Bale.WebApp;
-            webApp.expand();
-            webApp.ready();
-            webApp.setHeaderColor('#121212');
-            webApp.BackButton.onClick(handleBack);
+        // Initialize Bale WebApp
+        window.BaleWebApp = window.BaleWebApp || {};
+        const webApp = window.Bale?.WebApp || window.Telegram?.WebApp || window.BaleWebApp;
+
+        if (webApp && typeof webApp.ready === 'function') {
+            try {
+                webApp.expand();
+                webApp.ready();
+                if (typeof webApp.setHeaderColor === 'function') webApp.setHeaderColor('#121212');
+                if (webApp.BackButton) webApp.BackButton.onClick(handleBack);
+            } catch (e) {
+                console.error("SDK Init Error:", e);
+            }
         }
 
         function handleBack() {
@@ -173,8 +180,8 @@
                 else if (prevView.type === 'search') renderSearch(false);
                 else if (prevView.type === 'artist') renderArtist(prevView.id, false);
                 else if (prevView.type === 'album') renderAlbum(prevView.id, false);
-                if (viewHistory.length <= 1 && window.Bale && window.Bale.WebApp) {
-                    window.Bale.WebApp.BackButton.hide();
+                if (viewHistory.length <= 1 && webApp.BackButton) {
+                    webApp.BackButton.hide();
                 }
             }
         }
@@ -185,8 +192,8 @@
                 if (last.type === view.type && last.id === view.id) return;
             }
             viewHistory.push(view);
-            if (viewHistory.length > 1 && window.Bale && window.Bale.WebApp) {
-                window.Bale.WebApp.BackButton.show();
+            if (viewHistory.length > 1 && webApp.BackButton) {
+                webApp.BackButton.show();
             }
         }
 
@@ -212,7 +219,7 @@
 
         async function renderHome(saveHistory = true) {
             if (saveHistory) pushHistory({ type: 'home' });
-            else if (!saveHistory && viewHistory.length === 0 && window.Bale && window.Bale.WebApp) window.Bale.WebApp.BackButton.hide();
+            else if (!saveHistory && viewHistory.length === 0 && webApp.BackButton) webApp.BackButton.hide();
 
             setView(`
                 <div class="mb-8">
