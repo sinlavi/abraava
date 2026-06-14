@@ -217,7 +217,7 @@ class DownloadService:
                     logger.info(f"Uploading fresh audio: {track.get('trackName')} ({quality_value}kbps)")
                     msg = await self.bot.send_audio(chat_id, audio=f, caption=caption,
                                                     reply_markup=InlineKeyboard(*markup))
-                    if msg and track_id and not str(track_id).startswith(("yt_", "sc_", "sp_", "it_")):
+                    if msg and track_id:
                         await set_mirror('track', str(track_id), 'audioUrl',
                                          f'https://tapi.bale.ai/file/bot<token>/{msg.audio.id}',
                                          quality=quality_value)
