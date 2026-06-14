@@ -116,14 +116,15 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
 
     session = await HttpClient.get_session()
 
-    is_mirror = endpoint.startswith("mirror")
-    max_attempts = 1 if is_mirror else 3
+    # Endpoints that are specific to 3rah API and not available on official iTunes
+    is_3rah_specific = any(endpoint.startswith(p) for p in ["mirror", "lyrics", "track/save", "song/save", "collection/save", "album/save", "artist/save"])
+    max_attempts = 1 if is_3rah_specific else 3
 
     for attempt in range(max_attempts):
-        if official:
+        if official and not is_3rah_specific:
             base_url = "https://itunes.apple.com"
         else:
-            base_url = endpoint_manager.get_endpoint() if not is_mirror else ITUNES_BASE_URL
+            base_url = endpoint_manager.get_endpoint() if not is_3rah_specific else ITUNES_BASE_URL
         api_path = f"/{endpoint}" if not endpoint.startswith("/") else endpoint
         url = f"{base_url}{api_path}"
 
@@ -143,12 +144,12 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
                             text = await resp.text()
                             data = json.loads(text)
 
-                        if not is_mirror:
+                        if not is_3rah_specific:
                             await _itunes_cache.set(endpoint, params, data)
                             endpoint_manager.report_success(base_url)
                         return data
                     else:
-                        if not is_mirror: endpoint_manager.report_failure(base_url)
+                        if not is_3rah_specific: endpoint_manager.report_failure(base_url)
             else:
                 async with getattr(session, method.lower())(url, params=params, json=payload, headers=headers,
                                                             ssl=False, proxy=current_proxy, timeout=10) as resp:
@@ -156,9 +157,9 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
                     if resp.status == 200: return await resp.json()
         except Exception as e:
             logger.error(f"iTunes fetch failed (attempt {attempt + 1}): {e}")
-            if not is_mirror: endpoint_manager.report_failure(base_url)
+            if not is_3rah_specific: endpoint_manager.report_failure(base_url)
 
-        if not is_mirror: await asyncio.sleep(0.5)
+        if not is_3rah_specific: await asyncio.sleep(0.5)
 
     return None
 

@@ -24,12 +24,9 @@ class ArtworkService:
         ts = self.auto_download_mode.get(user_id, 0)
         return time.time() < ts
 
-    async def get_cached_artwork_url(self, entity_type: str, entity_id: int) -> Optional[str]:
+    async def get_cached_artwork_url(self, entity_type: str, entity_id: Union[int, str]) -> Optional[str]:
         try:
             if not entity_id: return None
-            # Skip mirroring for external sources
-            if isinstance(entity_id, str) and entity_id.startswith(("yt_", "sc_", "sp_")):
-                return None
 
             mirrors = await get_mirror(entity_type, str(entity_id), 'artworkUrl')
             if mirrors and isinstance(mirrors, dict):
@@ -48,9 +45,6 @@ class ArtworkService:
     async def set_artwork_mirror(self, entity_type: str, entity_id: Union[int, str], file_id: str) -> bool:
         try:
             if not entity_id or not file_id: return False
-            # Skip mirroring for external sources
-            if isinstance(entity_id, str) and entity_id.startswith(("yt_", "sc_", "sp_")):
-                return False
 
             artwork_url = f'https://tapi.bale.ai/file/bot<token>/{file_id}'
             result = await set_mirror(entity_type, str(entity_id), 'artworkUrl', artwork_url)

@@ -359,6 +359,19 @@ function setMirrorUrl(SQLite3 $db, string $type, string $id, string $urlType, st
     if (!in_array($urlType, ['artworkUrl','previewUrl','audioUrl'])) return ['success'=>false, 'error'=>'Invalid urlType'];
     if (!filter_var($mirrorUrl, FILTER_VALIDATE_URL) && strpos($mirrorUrl, 'tg://') !== 0) return ['success'=>false, 'error'=>'Invalid URL'];
     $id = normalizeId($id);
+
+    // Ensure skeleton record exists
+    $table = match ($type) {
+        'artist' => 'artists',
+        'collection' => 'collections',
+        'track' => 'tracks',
+        default => null,
+    };
+    if ($table) {
+        $pk = $type . 'Id';
+        $db->exec("INSERT OR IGNORE INTO $table ($pk) VALUES ('" . $db->escapeString($id) . "')");
+    }
+
     $actualUrlType = getAudioUrlTypeWithQuality($urlType, $quality);
     $qualityVal = ($urlType === 'audioUrl') ? $quality : null;
     $stmt = getStatement("INSERT OR REPLACE INTO entityMirrors (entityType, entityId, urlType, mirrorUrl, quality, platform, updatedAt) VALUES (:t,:id,:ut,:url,:q,:p, datetime('now'))");
@@ -574,14 +587,19 @@ function getCachedResults(SQLite3 $db, string $endpoint, array $params): ?array 
     return ['resultCount'=>count($results), 'results'=>$results];
 }
 function cleanExpiredCache(SQLite3 $db): void {
-    static $last = null;
     $now = time();
-    if ($last === null || ($now - $last) > 1800) {
+    $stmt = getStatement("SELECT lastRequestTime FROM rateLimitLog WHERE apiName = 'system_cleanup' LIMIT 1");
+    $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
+    $lastCleanup = $row ? strtotime($row['lastRequestTime']) : 0;
+
+    if (($now - $lastCleanup) > 1800) {
         $db->exec("DELETE FROM requestCache WHERE expiresAt < datetime('now')");
         $db->exec("DELETE FROM offlineCache WHERE expiresAt < datetime('now')");
         $db->exec("DELETE FROM requestHistory WHERE requestTime < datetime('now', '-7 days')");
         $db->exec("UPDATE proxyStatus SET isBlocked = 0, blockedUntil = NULL WHERE blockedUntil < datetime('now', '-24 hours')");
-        $last = $now;
+
+        $stmt = getStatement("INSERT OR REPLACE INTO rateLimitLog (apiName, lastRequestTime) VALUES ('system_cleanup', datetime('now'))");
+        $stmt->execute();
     }
 }
 function saveToOfflineCache(string $type, string $id, array $data): void {
@@ -982,7 +1000,25 @@ function handleRequest(): void {
             case '/lookup': if (empty($params['id'])) throw new Exception('Missing id', 400); $response = lookupiTunes($db, $params); break;
             case '/mirror/set': if ($method !== 'POST') throw new Exception('Method not allowed', 405); $response = setMirrorUrl($db, $params['entityType'] ?? '', $params['entityId'] ?? '', $params['urlType'] ?? '', $params['mirrorUrl'] ?? '', $params['quality'] ?? null, $platform); break;
             case '/mirror/get': $response = getMirrorUrls($db, $params['entityType'] ?? '', $params['entityId'] ?? '', $params['urlType'] ?? null, $params['quality'] ?? null, $platform); break;
-            case '/mirror/delete': if (!in_array($method, ['POST','DELETE'])) throw new Exception('Method not allowed', 405); $response = deleteMirrorUrl($db, $params['entityType'] ?? '', $params['entityId'] ?? '', $params['urlType'] ?? null, $params['quality'] ?? null, $platform); break;
+            case '/mirror/delete':
+            case '/mirror/remove': if (!in_array($method, ['POST','DELETE'])) throw new Exception('Method not allowed', 405); $response = deleteMirrorUrl($db, $params['entityType'] ?? '', $params['entityId'] ?? '', $params['urlType'] ?? null, $params['quality'] ?? null, $platform); break;
+            case '/track/save':
+            case '/song/save':
+                if ($method !== 'POST') throw new Exception('Method not allowed', 405);
+                saveEntitiesFromApi($db, 'tracks', $params);
+                $response = ['success' => true, 'message' => 'Track metadata saved'];
+                break;
+            case '/collection/save':
+            case '/album/save':
+                if ($method !== 'POST') throw new Exception('Method not allowed', 405);
+                saveEntitiesFromApi($db, 'collections', $params);
+                $response = ['success' => true, 'message' => 'Collection metadata saved'];
+                break;
+            case '/artist/save':
+                if ($method !== 'POST') throw new Exception('Method not allowed', 405);
+                saveEntitiesFromApi($db, 'artists', $params);
+                $response = ['success' => true, 'message' => 'Artist metadata saved'];
+                break;
             case '/lyrics/get': if (empty($params['id'])) throw new Exception('Missing track id', 400); $response = getLyrics($db, $params['id']); break;
             case '/lyrics/save': if ($method !== 'POST') throw new Exception('Method not allowed', 405); if (empty($params['id']) || empty($params['lyrics'])) throw new Exception('Missing parameters', 400); $response = saveLyrics($db, $params['id'], $params['lyrics']); break;
             case '/batch': $response = handleBatchLookup($db, $params); break;
@@ -998,4 +1034,6 @@ function handleRequest(): void {
     } catch (Exception $e) { respond(['success'=>false, 'error'=>$e->getMessage()], $e->getCode() ?: 500); }
     respond($response);
 }
-try { handleRequest(); } catch (Throwable $e) { http_response_code(500); echo json_encode(['success'=>false, 'error'=>'Internal server error', 'message'=>$e->getMessage()]); }
+if (php_sapi_name() !== 'cli') {
+    try { handleRequest(); } catch (Throwable $e) { http_response_code(500); echo json_encode(['success'=>false, 'error'=>'Internal server error', 'message'=>$e->getMessage()]); }
+}
