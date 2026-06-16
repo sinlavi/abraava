@@ -8,12 +8,20 @@ class UserRegistrationService:
         self.api_client = api_client
         self.user_settings_service = user_settings_service
 
-    async def register_user(self, message):
+    async def register_user(self, message, user_id=None):
         user = message.author
-        settings = await self.user_settings_service.get_settings(user.id)
+        if user_id is None:
+            user_id = user.id
+            if (not user_id or user_id == 0) and message.chat.type == "private":
+                user_id = message.chat.id
+
+        if not user_id or user_id == 0:
+            return
+
+        settings = await self.user_settings_service.get_settings(user_id)
 
         user_data = {
-            'user_id': user.id,
+            'user_id': user_id,
             'username': user.username or '',
             'first_name': user.first_name or '',
             'last_name': user.last_name or '',
@@ -31,6 +39,6 @@ class UserRegistrationService:
 
         result = await self.api_client.register_user(user_data)
         if result.get('success'):
-            logger.info(f"User {user.id} registered/updated")
+            logger.info(f"User {user_id} registered/updated")
         else:
-            logger.error(f"Failed to register user {user.id}: {result.get('message')}")
+            logger.error(f"Failed to register user {user_id}: {result.get('message')}")
