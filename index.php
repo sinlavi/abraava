@@ -2,6 +2,7 @@
 
 /**
  * iTunes API Proxy v2.0 – Advanced Caching, Mirror Management, Lyrics, Extended Endpoints
+ * + Download Manager v1.0 – Queue tracks by ID, album, artist; manage download states.
  * 
  * Features:
  * - All iTunes items stored with 'it_' prefix (e.g., it_123456789)
@@ -20,6 +21,17 @@
  * - Caching only from successful live API responses (no caching of errors or fallback data)
  * - Search results do NOT include mirrorUrls
  * - Lookup results include lyrics for tracks (same format as /lyrics/get)
+ * 
+ * Download Manager (BATCH CAPABLE with 'id' supporting multiple):
+ * - /download/add – Add tracks by trackId, albumId, or artistId (all child tracks)
+ * - /download/queue – Get the full download queue (supports filters: status, limit, offset)
+ * - /download/status – Get status of a specific download (by id or trackId)
+ * - /download/update – Batch update download status, file path, error messages (supports id (multi), ids, trackIds, filterStatus)
+ * - /download/delete – Batch delete download entries (supports id (multi), ids, trackIds, status, all)
+ * - Download states: pending, downloading, paused, completed, failed, stopped
+ * - Tracks are automatically resolved from local DB or iTunes API when adding albums/artists
+ * - Prevent duplicate tracks in queue (skip existing non-terminal entries)
+ * - Download queue items return full track data (mirrors, lyrics) like search/lookup
  */
 
 error_reporting(E_ALL);
@@ -27,7 +39,7 @@ ini_set('display_errors', 0);
 ini_set('log_errors', 1);
 
 // ── Configuration ──────────────────────────────────────────
-define('DB_PATH', __DIR__ . '/itu1nes.db');
+define('DB_PATH', __DIR__ . '/itunes.db');
 define('CACHE_DURATION', 21600);               // 6 hours
 define('ITUNES_SEARCH_API', 'https://itunes.apple.com/search');
 define('ITUNES_LOOKUP_API', 'https://itunes.apple.com/lookup');
@@ -48,6 +60,14 @@ define('OFFLINE_FALLBACK_ENABLED', true);
 define('SMART_CACHE_PRELOAD', true);
 define('SUPPORTED_AUDIO_QUALITIES', ['320', '192', '128']);
 define('DEFAULT_AUDIO_QUALITY', '192');
+
+// Download manager configuration
+define('DOWNLOAD_STATUS_PENDING', 'pending');
+define('DOWNLOAD_STATUS_DOWNLOADING', 'downloading');
+define('DOWNLOAD_STATUS_PAUSED', 'paused');
+define('DOWNLOAD_STATUS_COMPLETED', 'completed');
+define('DOWNLOAD_STATUS_FAILED', 'failed');
+define('DOWNLOAD_STATUS_STOPPED', 'stopped');
 
 // SQLite3 constants fallback
 if (!defined('SQLITE3_ASSOC')) define('SQLITE3_ASSOC', 1);
@@ -114,7 +134,7 @@ function getStatement(string $sql): SQLite3Stmt {
     return $statements[$hash];
 }
 
-// ── Schema & Migrations ───────────────────────────────────
+// ── Schema & Migrations (including download queue tables) ──
 function initDatabase(SQLite3 $db): void {
     static $initialized = false;
     if ($initialized) return;
@@ -152,6 +172,25 @@ function initDatabase(SQLite3 $db): void {
         entityId TEXT NOT NULL, data TEXT NOT NULL, createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         expiresAt DATETIME, UNIQUE(entityType, entityId)
     )");
+    // Download manager tables
+    $db->exec("CREATE TABLE IF NOT EXISTS download_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trackId TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        filePath TEXT,
+        quality TEXT,
+        platform TEXT DEFAULT 'bale',
+        addedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        startedAt DATETIME,
+        completedAt DATETIME,
+        errorMessage TEXT,
+        retryCount INTEGER DEFAULT 0,
+        priority INTEGER DEFAULT 0,
+        FOREIGN KEY (trackId) REFERENCES tracks(trackId) ON DELETE CASCADE
+    )");
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_download_status ON download_queue(status)");
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_download_track ON download_queue(trackId)");
+    
     $db->exec('CREATE INDEX IF NOT EXISTS idx_mirrors_lookup ON entityMirrors(entityType, entityId)');
     $db->exec('CREATE INDEX IF NOT EXISTS idx_cache_lookup ON requestCache(endpoint, params)');
     $db->exec('CREATE INDEX IF NOT EXISTS idx_offline_entity ON offlineCache(entityType, entityId)');
@@ -235,25 +274,45 @@ function ensureColumns(SQLite3 $db, string $table, array $data): void {
 // ── Data Preservation when Saving from iTunes (with column addition) ──
 function saveEntitiesFromApi(SQLite3 $db, string $table, array $entities): void {
     if (empty($entities)) return;
-    if (isset($entities['wrapperType']) || isset($entities['artistId']) || isset($entities['collectionId']) || isset($entities['trackId'])) $entities = [$entities];
+    if (isset($entities['wrapperType']) || isset($entities['artistId']) || isset($entities['collectionId']) || isset($entities['trackId'])) {
+        $entities = [$entities];
+    }
+
+    // Map table name to expected wrapperType
+    $expectedWrapper = match ($table) {
+        'artists'     => 'artist',
+        'collections' => 'collection',
+        'tracks'      => 'track',
+        default       => null,
+    };
+    if ($expectedWrapper === null) {
+        return; // unknown table, skip
+    }
+
     $db->exec('BEGIN TRANSACTION');
     foreach ($entities as $entity) {
         if (!is_array($entity)) continue;
+        // Skip if wrapperType doesn't match the expected one for this table
+        if (isset($entity['wrapperType']) && $entity['wrapperType'] !== $expectedWrapper) {
+            continue;
+        }
+
         normalizeIdsInArray($entity);
         $pkCol = match ($table) {
-            'artists' => 'artistId',
+            'artists'     => 'artistId',
             'collections' => 'collectionId',
-            'tracks' => 'trackId',
-            default => null,
+            'tracks'      => 'trackId',
+            default       => null,
         };
         if (!$pkCol || !isset($entity[$pkCol])) continue;
-        
+
         // Dynamically add any missing columns
         ensureColumns($db, $table, $entity);
-        
+
         $stmt = $db->prepare("SELECT 1 FROM $table WHERE $pkCol = :id");
         $stmt->bindValue(':id', $entity[$pkCol]);
         $exists = $stmt->execute()->fetchArray() !== false;
+
         if (!$exists) {
             $columns = array_keys($entity);
             $placeholders = array_map(fn($c) => ":$c", $columns);
@@ -267,14 +326,18 @@ function saveEntitiesFromApi(SQLite3 $db, string $table, array $entities): void 
         } else {
             $updates = [];
             foreach ($entity as $col => $val) {
-                if ($col !== $pkCol && $col !== 'lyrics') $updates[] = "`$col` = :$col";
+                if ($col !== $pkCol && $col !== 'lyrics') {
+                    $updates[] = "`$col` = :$col";
+                }
             }
             if (!empty($updates)) {
                 $sql = "UPDATE $table SET " . implode(',', $updates) . " WHERE $pkCol = :id";
                 $upd = $db->prepare($sql);
-                foreach ($entity as $col => $val) if ($col !== $pkCol && $col !== 'lyrics') {
-                    $type = is_int($val) ? SQLITE3_INTEGER : (is_float($val) ? SQLITE3_FLOAT : SQLITE3_TEXT);
-                    $upd->bindValue(":$col", $val, $type);
+                foreach ($entity as $col => $val) {
+                    if ($col !== $pkCol && $col !== 'lyrics') {
+                        $type = is_int($val) ? SQLITE3_INTEGER : (is_float($val) ? SQLITE3_FLOAT : SQLITE3_TEXT);
+                        $upd->bindValue(":$col", $val, $type);
+                    }
                 }
                 $upd->bindValue(':id', $entity[$pkCol]);
                 $upd->execute();
@@ -960,6 +1023,445 @@ function handleResetRateLimit(SQLite3 $db): array {
     return ['success' => true, 'message' => 'Rate limit counters reset'];
 }
 
+// ── Download Manager Functions ────────────────────────────
+
+/**
+ * Resolve track IDs from various input types (trackId, albumId, artistId)
+ * Returns array of normalized track IDs.
+ */
+function resolveTrackIdsFromInput(SQLite3 $db, array $params): array {
+    $trackIds = [];
+    
+    // Direct track IDs
+    if (!empty($params['trackId'])) {
+        $ids = is_array($params['trackId']) ? $params['trackId'] : explode(',', $params['trackId']);
+        foreach ($ids as $tid) {
+            $trackIds[] = normalizeId(trim($tid));
+        }
+    }
+    
+    // Album ID: fetch all tracks from the collection (local DB or iTunes)
+    if (!empty($params['albumId'])) {
+        $albumId = normalizeId($params['albumId']);
+        // First try local DB
+        $stmt = getStatement("SELECT trackId FROM tracks WHERE collectionId = :aid");
+        $stmt->bindValue(':aid', $albumId);
+        $res = $stmt->execute();
+        $found = false;
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $trackIds[] = $row['trackId'];
+            $found = true;
+        }
+        if (!$found) {
+            // Lookup album from iTunes and save tracks, then fetch again
+            $lookup = lookupiTunes($db, ['id' => denormalizeId($albumId), 'entity' => 'song']);
+            if (!empty($lookup['results'])) {
+                // Re-fetch from DB
+                $stmt2 = getStatement("SELECT trackId FROM tracks WHERE collectionId = :aid");
+                $stmt2->bindValue(':aid', $albumId);
+                $res2 = $stmt2->execute();
+                while ($row = $res2->fetchArray(SQLITE3_ASSOC)) {
+                    $trackIds[] = $row['trackId'];
+                }
+            }
+        }
+    }
+    
+    // Artist ID: fetch all tracks by that artist
+    if (!empty($params['artistId'])) {
+        $artistId = normalizeId($params['artistId']);
+        // Search local DB for tracks with this artistId
+        $stmt = getStatement("SELECT trackId FROM tracks WHERE artistId = :aid");
+        $stmt->bindValue(':aid', $artistId);
+        $res = $stmt->execute();
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $trackIds[] = $row['trackId'];
+        }
+    }
+    
+    return array_unique($trackIds);
+}
+
+/**
+ * Add tracks to download queue.
+ * @param SQLite3 $db
+ * @param array $params trackId, albumId, artistId, quality, platform, priority, skipExisting
+ * @return array
+ */
+function handleDownloadAdd(SQLite3 $db, array $params): array {
+    $trackIds = resolveTrackIdsFromInput($db, $params);
+    if (empty($trackIds)) {
+        throw new Exception('No tracks resolved. Provide trackId, albumId, or artistId.', 400);
+    }
+    
+    $quality = $params['quality'] ?? DEFAULT_AUDIO_QUALITY;
+    $platform = $params['platform'] ?? 'bale';
+    $priority = (int)($params['priority'] ?? 0);
+    $skipExisting = filter_var($params['skipExisting'] ?? true, FILTER_VALIDATE_BOOL);
+    
+    $added = [];
+    $skipped = [];
+    $failed = [];
+    
+    $db->exec('BEGIN TRANSACTION');
+    foreach ($trackIds as $tid) {
+        // Prevent duplicate: skip if already in queue with non-terminal status
+        if ($skipExisting) {
+            $stmt = getStatement("SELECT id, status FROM download_queue WHERE trackId = :tid AND status NOT IN ('completed', 'failed', 'stopped')");
+            $stmt->bindValue(':tid', $tid);
+            $existing = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
+            if ($existing) {
+                $skipped[] = [
+                    'trackId' => denormalizeId($tid),
+                    'reason' => 'Already in queue with status ' . $existing['status']
+                ];
+                continue;
+            }
+        }
+        
+        // Ensure track exists in tracks table (fetch if missing)
+        $track = fetchEntityById($db, 'track', $tid, $quality, $platform);
+        if (!$track) {
+            // Try to lookup from iTunes
+            $lookup = lookupiTunes($db, ['id' => denormalizeId($tid)]);
+            if (empty($lookup['results'])) {
+                $failed[] = [
+                    'trackId' => denormalizeId($tid),
+                    'reason' => 'Track not found in iTunes'
+                ];
+                continue;
+            }
+            $track = $lookup['results'][0];
+        }
+        
+        // Insert into download queue
+        $stmt = getStatement("INSERT INTO download_queue (trackId, status, quality, platform, priority, addedAt) 
+                              VALUES (:tid, :status, :qual, :plat, :prio, datetime('now'))");
+        $stmt->bindValue(':tid', $tid);
+        $stmt->bindValue(':status', DOWNLOAD_STATUS_PENDING);
+        $stmt->bindValue(':qual', $quality);
+        $stmt->bindValue(':plat', $platform);
+        $stmt->bindValue(':prio', $priority, SQLITE3_INTEGER);
+        $stmt->execute();
+        
+        $downloadId = $db->lastInsertRowID();
+        
+        // Attach full track details (mirrors, lyrics) to the response
+        $trackData = fetchEntityById($db, 'track', $tid, $quality, $platform);
+        if (!$trackData) {
+            $trackData = $track; // fallback to the track we already have
+            attachMirrors($trackData, 'track', $tid, $quality, $platform);
+            $lyricsData = getLyrics($db, $tid);
+            if ($lyricsData['success']) $trackData['lyrics'] = $lyricsData['lyrics'];
+        }
+        
+        $added[] = [
+            'downloadId' => $downloadId,
+            'trackId' => denormalizeId($tid),
+            'track' => $trackData
+        ];
+    }
+    $db->exec('COMMIT');
+    
+    return [
+        'success' => true,
+        'added_count' => count($added),
+        'skipped_count' => count($skipped),
+        'failed_count' => count($failed),
+        'added' => $added,
+        'skipped' => $skipped,
+        'failed' => $failed
+    ];
+}
+
+/**
+ * Get download queue with optional filters.
+ * Returns each item as a full track object (mirrors, lyrics) plus download metadata.
+ */
+function handleDownloadQueue(SQLite3 $db, array $params): array {
+    $status = $params['status'] ?? null;
+    $limit = min((int)($params['limit'] ?? 100), 500);
+    $offset = (int)($params['offset'] ?? 0);
+    $quality = $params['quality'] ?? null;
+    $platform = $params['platform'] ?? 'bale';
+    
+    $sql = "SELECT d.* FROM download_queue d";
+    $countSql = "SELECT COUNT(*) as total FROM download_queue d";
+    
+    if ($status && in_array($status, [DOWNLOAD_STATUS_PENDING, DOWNLOAD_STATUS_DOWNLOADING, DOWNLOAD_STATUS_PAUSED, DOWNLOAD_STATUS_COMPLETED, DOWNLOAD_STATUS_FAILED, DOWNLOAD_STATUS_STOPPED])) {
+        $sql .= " WHERE d.status = :status";
+        $countSql .= " WHERE d.status = :status";
+    }
+    
+    $sql .= " ORDER BY d.priority DESC, d.addedAt ASC LIMIT :limit OFFSET :offset";
+    
+    $stmt = getStatement($sql);
+    $countStmt = getStatement($countSql);
+    
+    if ($status) {
+        $stmt->bindValue(':status', $status);
+        $countStmt->bindValue(':status', $status);
+    }
+    $stmt->bindValue(':limit', $limit, SQLITE3_INTEGER);
+    $stmt->bindValue(':offset', $offset, SQLITE3_INTEGER);
+    
+    $res = $stmt->execute();
+    $items = [];
+    while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+        $tid = $row['trackId'];
+        // Fetch full track data with mirrors and lyrics
+        $trackData = fetchEntityById($db, 'track', $tid, $quality, $platform);
+        if (!$trackData) {
+            // Fallback: only trackId known
+            $trackData = ['trackId' => denormalizeId($tid)];
+        }
+        // Merge download metadata with track data
+        $downloadMeta = [
+            'download_id' => $row['id'],
+            'download_status' => $row['status'],
+            'file_path' => $row['filePath'],
+            'quality' => $row['quality'],
+            'platform' => $row['platform'],
+            'added_at' => $row['addedAt'],
+            'started_at' => $row['startedAt'],
+            'completed_at' => $row['completedAt'],
+            'error_message' => $row['errorMessage'],
+            'retry_count' => $row['retryCount'],
+            'priority' => $row['priority']
+        ];
+        $items[] = array_merge($trackData, $downloadMeta);
+    }
+    
+    $totalRes = $countStmt->execute();
+    $total = $totalRes->fetchArray(SQLITE3_ASSOC)['total'] ?? 0;
+    
+    return [
+        'success' => true,
+        'total' => (int)$total,
+        'limit' => $limit,
+        'offset' => $offset,
+        'items' => $items
+    ];
+}
+
+/**
+ * Get status of a specific download entry (by id or trackId).
+ * Returns full track data + download metadata.
+ */
+function handleDownloadStatus(SQLite3 $db, array $params): array {
+    $id = $params['id'] ?? null;
+    $trackId = $params['trackId'] ?? null;
+    $quality = $params['quality'] ?? null;
+    $platform = $params['platform'] ?? 'bale';
+    
+    if (!$id && !$trackId) {
+        throw new Exception('Missing id or trackId parameter', 400);
+    }
+    
+    if ($id) {
+        $stmt = getStatement("SELECT * FROM download_queue WHERE id = :id");
+        $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
+    } else {
+        $tid = normalizeId($trackId);
+        $stmt = getStatement("SELECT * FROM download_queue WHERE trackId = :tid ORDER BY id DESC LIMIT 1");
+        $stmt->bindValue(':tid', $tid);
+    }
+    
+    $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
+    if (!$row) {
+        return ['success' => false, 'error' => 'Download entry not found'];
+    }
+    
+    $tid = $row['trackId'];
+    $trackData = fetchEntityById($db, 'track', $tid, $quality, $platform);
+    if (!$trackData) {
+        $trackData = ['trackId' => denormalizeId($tid)];
+    }
+    
+    $downloadMeta = [
+        'download_id' => $row['id'],
+        'download_status' => $row['status'],
+        'file_path' => $row['filePath'],
+        'quality' => $row['quality'],
+        'platform' => $row['platform'],
+        'added_at' => $row['addedAt'],
+        'started_at' => $row['startedAt'],
+        'completed_at' => $row['completedAt'],
+        'error_message' => $row['errorMessage'],
+        'retry_count' => $row['retryCount'],
+        'priority' => $row['priority']
+    ];
+    
+    return [
+        'success' => true,
+        'download' => array_merge($trackData, $downloadMeta)
+    ];
+}
+
+/**
+ * Batch update download entries.
+ * Supports:
+ * - Single: id + status/filePath/errorMessage
+ * - Multiple IDs: id = "1,2,3" or id = [1,2,3] (renamed from 'ids')
+ * - Multiple IDs also via 'ids' (backward compatibility)
+ * - By track IDs: trackIds = ["123","456"] + status
+ * - By current status: filterStatus = "pending" + status = "downloading"
+ */
+/**
+ * Batch update download entries.
+ */
+function handleDownloadUpdate(SQLite3 $db, array $params): array {
+    $idParam = $params['id'] ?? $params['ids'] ?? null;
+    $trackIdsRaw = $params['trackIds'] ?? [];
+    $filterStatus = $params['filterStatus'] ?? null;
+    $status = $params['status'] ?? null;
+    $filePath = $params['filePath'] ?? null;
+    $errorMessage = $params['errorMessage'] ?? null;
+
+    // 1. Resolve Target IDs
+    $targetIds = [];
+    if ($idParam !== null) {
+        $idArray = is_array($idParam) ? $idParam : explode(',', (string)$idParam);
+        $targetIds = array_map('intval', $idArray);
+    } elseif (!empty($trackIdsRaw)) {
+        $trackIds = is_array($trackIdsRaw) ? $trackIdsRaw : explode(',', (string)$trackIdsRaw);
+        $normalizedIds = array_map('normalizeId', $trackIds);
+        $placeholders = implode(',', array_fill(0, count($normalizedIds), '?'));
+        $stmt = $db->prepare("SELECT id FROM download_queue WHERE trackId IN ($placeholders)");
+        foreach ($normalizedIds as $i => $tid) $stmt->bindValue($i + 1, $tid);
+        $res = $stmt->execute();
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) $targetIds[] = $row['id'];
+    } elseif ($filterStatus !== null) {
+        $stmt = $db->prepare("SELECT id FROM download_queue WHERE status = :status");
+        $stmt->bindValue(':status', $filterStatus);
+        $res = $stmt->execute();
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) $targetIds[] = $row['id'];
+    }
+
+    if (empty($targetIds)) {
+        return ['success' => true, 'updated_count' => 0, 'message' => 'No matching entries found'];
+    }
+
+    // 2. Build Update Clause
+    $updates = [];
+    $bindings = [];
+    if ($status !== null && $status !== '') {
+        $allowed = [DOWNLOAD_STATUS_PENDING, DOWNLOAD_STATUS_DOWNLOADING, DOWNLOAD_STATUS_PAUSED, DOWNLOAD_STATUS_COMPLETED, DOWNLOAD_STATUS_FAILED, DOWNLOAD_STATUS_STOPPED];
+        if (!in_array($status, $allowed)) throw new Exception('Invalid status', 400);
+        $updates[] = "status = :status";
+        $bindings[':status'] = $status;
+        if ($status === DOWNLOAD_STATUS_DOWNLOADING) $updates[] = "startedAt = COALESCE(startedAt, datetime('now'))";
+        if ($status === DOWNLOAD_STATUS_COMPLETED) {
+            $updates[] = "completedAt = datetime('now')";
+            $updates[] = "errorMessage = NULL";
+        }
+    }
+    if ($filePath !== null) { $updates[] = "filePath = :filePath"; $bindings[':filePath'] = $filePath; }
+    if ($errorMessage !== null) {
+        $updates[] = "errorMessage = :errorMessage";
+        $bindings[':errorMessage'] = $errorMessage;
+        if ($status === null) { $updates[] = "status = :failStatus"; $bindings[':failStatus'] = DOWNLOAD_STATUS_FAILED; }
+    }
+
+    if (empty($updates)) throw new Exception('Nothing to update', 400);
+
+    // 3. Execution
+    $placeholders = implode(',', array_fill(0, count($targetIds), '?'));
+    $sql = "UPDATE download_queue SET " . implode(', ', $updates) . " WHERE id IN ($placeholders)";
+    $stmt = $db->prepare($sql);
+    
+    // Bind data
+    foreach ($bindings as $key => $val) $stmt->bindValue($key, $val);
+    
+    // Bind IDs (the bug fix: ensured this loop was correct and applied to the final stmt)
+    foreach ($targetIds as $i => $id) $stmt->bindValue($i + count($bindings) + 1, $id, SQLITE3_INTEGER);
+    
+    $result = $stmt->execute();
+    return ['success' => true, 'updated_count' => count($targetIds), 'message' => 'Updated successfully'];
+}
+/**
+ * Batch delete download entries.
+ * Supports:
+ * - Single: id or trackId
+ * - Multiple IDs: id = "1,2,3" or id = [1,2,3] (renamed from 'ids')
+ * - Multiple IDs also via 'ids' (backward compatibility)
+ * - By track IDs: trackIds = ["123","456"]
+ * - By status: status = "completed"
+ * - All: all = true
+ */
+function handleDownloadDelete(SQLite3 $db, array $params): array {
+    $idParam = $params['id'] ?? null;
+    $idsParam = $params['ids'] ?? null;
+    $trackIdsRaw = $params['trackIds'] ?? [];
+    $status = $params['status'] ?? null;
+    $all = filter_var($params['all'] ?? false, FILTER_VALIDATE_BOOL);
+    
+    // Single parameters for backward compatibility
+    $singleId = $params['id'] ?? null;
+    $singleTrackId = $params['trackId'] ?? null;
+    
+    if (!$idParam && !$idsParam && !$trackIdsRaw && !$status && !$all && !$singleId && !$singleTrackId) {
+        throw new Exception('No deletion criteria: provide id, trackId, ids, trackIds, status, or all', 400);
+    }
+    
+    $sql = "DELETE FROM download_queue";
+    $bindings = [];
+    $conditions = [];
+    
+    if ($all) {
+        // Delete everything, no WHERE
+    } elseif ($idParam !== null) {
+        // id can be a string like "1,2,3" or an array
+        if (is_array($idParam)) {
+            $idsArray = array_map('intval', $idParam);
+        } else {
+            $idsArray = array_map('intval', explode(',', $idParam));
+        }
+        $placeholders = implode(',', array_fill(0, count($idsArray), '?'));
+        $conditions[] = "id IN ($placeholders)";
+        $bindings = array_merge($bindings, $idsArray);
+    } elseif (!empty($idsParam)) {
+        // Legacy 'ids' parameter
+        if (is_array($idsParam)) {
+            $idsArray = array_map('intval', $idsParam);
+        } else {
+            $idsArray = array_map('intval', explode(',', $idsParam));
+        }
+        $placeholders = implode(',', array_fill(0, count($idsArray), '?'));
+        $conditions[] = "id IN ($placeholders)";
+        $bindings = array_merge($bindings, $idsArray);
+    } elseif (!empty($trackIdsRaw)) {
+        $trackIds = is_array($trackIdsRaw) ? $trackIdsRaw : explode(',', $trackIdsRaw);
+        $normalized = array_map('normalizeId', $trackIds);
+        $placeholders = implode(',', array_fill(0, count($normalized), '?'));
+        $conditions[] = "trackId IN ($placeholders)";
+        $bindings = array_merge($bindings, $normalized);
+    } elseif ($status) {
+        $conditions[] = "status = ?";
+        $bindings[] = $status;
+    } elseif ($singleId) {
+        $conditions[] = "id = ?";
+        $bindings[] = (int)$singleId;
+    } elseif ($singleTrackId) {
+        $conditions[] = "trackId = ?";
+        $bindings[] = normalizeId($singleTrackId);
+    }
+    
+    if (!empty($conditions)) {
+        $sql .= " WHERE " . implode(' AND ', $conditions);
+    }
+    
+    $stmt = getStatement($sql);
+    foreach ($bindings as $idx => $val) {
+        $type = is_int($val) ? SQLITE3_INTEGER : SQLITE3_TEXT;
+        $stmt->bindValue($idx + 1, $val, $type);
+    }
+    $stmt->execute();
+    $deleted = $db->changes();
+    
+    return ['success' => true, 'deleted_count' => $deleted];
+}
+
 // ── HTTP Request Handling ─────────────────────────────────
 function enableCompression(): void {
     if (ENABLE_GZIP && !headers_sent() && extension_loaded('zlib') && strpos($_SERVER['HTTP_ACCEPT_ENCODING'] ?? '', 'gzip') !== false) {
@@ -996,6 +1498,7 @@ function handleRequest(): void {
     $platform = $params['platform'] ?? 'bale';
     try {
         switch ($path) {
+            // Original endpoints
             case '/search': if (empty($params['term'])) throw new Exception('Missing term', 400); $response = searchiTunes($db, $params); break;
             case '/lookup': if (empty($params['id'])) throw new Exception('Missing id', 400); $response = lookupiTunes($db, $params); break;
             case '/mirror/set': if ($method !== 'POST') throw new Exception('Method not allowed', 405); $response = setMirrorUrl($db, $params['entityType'] ?? '', $params['entityId'] ?? '', $params['urlType'] ?? '', $params['mirrorUrl'] ?? '', $params['quality'] ?? null, $platform); break;
@@ -1029,6 +1532,29 @@ function handleRequest(): void {
             case '/db/stats': $response = handleStats($db); break;
             case '/proxy/status': $response = handleProxyStatus($db); break;
             case '/rate-limit/reset': $response = handleResetRateLimit($db); break;
+            
+            // Download manager endpoints (batch capable with 'id' supporting multiples)
+            case '/download/add':
+                if ($method !== 'POST') throw new Exception('Method not allowed', 405);
+                $response = handleDownloadAdd($db, $params);
+                break;
+            case '/download/queue':
+                if ($method !== 'GET') throw new Exception('Method not allowed', 405);
+                $response = handleDownloadQueue($db, $params);
+                break;
+            case '/download/status':
+                if ($method !== 'GET') throw new Exception('Method not allowed', 405);
+                $response = handleDownloadStatus($db, $params);
+                break;
+            case '/download/update':
+                if (!in_array($method, ['POST', 'PUT'])) throw new Exception('Method not allowed', 405);
+                $response = handleDownloadUpdate($db, $params);
+                break;
+            case '/download/delete':
+                if (!in_array($method, ['POST', 'DELETE'])) throw new Exception('Method not allowed', 405);
+                $response = handleDownloadDelete($db, $params);
+                break;
+                
             default: throw new Exception('Endpoint not found', 404);
         }
     } catch (Exception $e) { respond(['success'=>false, 'error'=>$e->getMessage()], $e->getCode() ?: 500); }
@@ -1037,3 +1563,4 @@ function handleRequest(): void {
 if (php_sapi_name() !== 'cli') {
     try { handleRequest(); } catch (Throwable $e) { http_response_code(500); echo json_encode(['success'=>false, 'error'=>'Internal server error', 'message'=>$e->getMessage()]); }
 }
+
