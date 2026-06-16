@@ -78,11 +78,13 @@ async def on_message(message: Message):
         return
 
     user_id = message.author.id
+    if (not user_id or user_id == 0) and message.chat.type == "private":
+        user_id = message.chat.id
     chat_id = message.chat.id
     text = message.content or ""
 
     # Register user
-    await registration_service.register_user(message)
+    await registration_service.register_user(message, user_id=user_id)
 
     if message.chat.type == "channel": return
 
