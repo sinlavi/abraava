@@ -9,7 +9,8 @@ class APIClient:
         self.token = token
 
     async def _request(self, action: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        session = await HttpClient.get_session()
+        from core.config import PROXY_3RAH
+        session = await HttpClient.get_session(use_proxy=PROXY_3RAH)
         headers = {
             'Authorization': f'Bearer {self.token}',
             'Content-Type': 'application/json'

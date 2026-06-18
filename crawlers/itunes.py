@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any, Literal, List, Union, Tuple
 from pathlib import Path
 import aiosqlite
 
-from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY, FOOTER
+from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY, FOOTER, PROXY_3RAH
 from core.logger import logger
 from core.http_client import HttpClient
 from balethon.objects import Message
@@ -114,8 +114,6 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
 
     if OFFLINE_MODE: return None
 
-    session = await HttpClient.get_session()
-
     # Endpoints that are specific to 3rah API and not available on official iTunes
     is_3rah_specific = any(endpoint.startswith(p) for p in ["mirror", "lyrics", "track/save", "song/save", "collection/save", "album/save", "artist/save"])
     max_attempts = 1 if is_3rah_specific else 3
@@ -128,12 +126,19 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
         api_path = f"/{endpoint}" if not endpoint.startswith("/") else endpoint
         url = f"{base_url}{api_path}"
 
+        # Determine proxy usage
+        use_proxy = True
+        if "3rah.ir" in base_url:
+            use_proxy = PROXY_3RAH
+
+        session = await HttpClient.get_session(use_proxy=use_proxy)
+
         headers = {"User-Agent": random.choice(USER_AGENTS)}
         logger.info(f"iTunes/3rah Request [{method}]: {url} - Params: {params}")
         try:
             # Note: HttpClient session already uses ProxyConnector if PROXY is SOCKS
             # We only pass proxy to session call if it's an HTTP proxy
-            current_proxy = PROXY if PROXY and not PROXY.startswith("socks") else None
+            current_proxy = PROXY if (use_proxy and PROXY and not PROXY.startswith("socks")) else None
             if method == "GET":
                 async with session.get(url, params=params, headers=headers, ssl=False, proxy=current_proxy, timeout=10) as resp:
                     logger.info(f"iTunes/3rah Response [{resp.status}]: {url}")
