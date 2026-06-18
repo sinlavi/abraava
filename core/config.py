@@ -12,7 +12,7 @@ DEEP_LINK_BASE = f"https://ble.ir/{BOT_USERNAME.lstrip('@')}?start="
 
 # Connection Settings
 PROXY = os.getenv("proxy", "socks5h://127.0.0.1:1080")
-PROXY_3RAH = os.getenv("PROXY_3RAH", "False").lower() == "true"
+PROXY_3RAH = os.getenv("PROXY_3RAH", "True").lower() == "true"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Set global proxy environment variables
