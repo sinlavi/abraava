@@ -12,7 +12,17 @@ DEEP_LINK_BASE = f"https://ble.ir/{BOT_USERNAME.lstrip('@')}?start="
 
 # Connection Settings
 PROXY = os.getenv("proxy", "socks5h://127.0.0.1:1080")
+PROXY_3RAH = os.getenv("PROXY_3RAH", "False").lower() == "true"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+# Set global proxy environment variables
+if PROXY:
+    os.environ["HTTP_PROXY"] = PROXY
+    os.environ["HTTPS_PROXY"] = PROXY
+    if not PROXY_3RAH:
+        no_proxy = os.environ.get("NO_PROXY", "")
+        if "3rah.ir" not in no_proxy:
+            os.environ["NO_PROXY"] = f"{no_proxy},3rah.ir".strip(",")
 
 # Database and Channel IDs
 DB_CHANNEL_ID = os.getenv("DB_CHANNEL_ID")

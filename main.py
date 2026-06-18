@@ -1,10 +1,5 @@
-from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN, PROXY
+from core.config import BOT_TOKEN, INFO_CHANNEL_ID, OFFLINE_MODE, API_BASE_URL, API_TOKEN, PROXY, PROXY_3RAH
 import os
-
-# Set global proxy environment variables
-if PROXY:
-    os.environ["HTTP_PROXY"] = PROXY
-    os.environ["HTTPS_PROXY"] = PROXY
 
 from balethon import Client
 from balethon.objects import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboard
