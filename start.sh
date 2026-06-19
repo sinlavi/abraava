@@ -1,8 +1,10 @@
 #!/bin/bash
+set -x
 
-# Start D-Bus if needed (sometimes helps with warp-svc)
+# Setup D-Bus
 mkdir -p /run/dbus
-dbus-daemon --system --fork --readonly
+dbus-uuidgen > /var/lib/dbus/machine-id
+dbus-daemon --system --fork --nopidfile
 
 # Start the WARP service
 warp-svc &
@@ -17,32 +19,42 @@ for i in {1..30}; do
     sleep 1
 done
 
-# Register WARP (ignore if already registered)
+# Register WARP
+echo "Registering WARP..."
 warp-cli --accept-tos registration new || true
 
-# Set WARP to proxy mode
+# Configure WARP
+echo "Configuring WARP..."
 warp-cli --accept-tos mode proxy
-
-# Set Proxy port explicitly just in case
 warp-cli --accept-tos proxy port 1080
 
 # Connect to WARP
+echo "Connecting to WARP..."
 warp-cli --accept-tos connect
 
 # Wait for WARP to connect
-echo "Waiting for WARP to connect..."
+echo "Waiting for WARP connection status..."
 for i in {1..30}; do
-    if warp-cli --accept-tos status | grep -q "Connected"; then
+    STATUS=$(warp-cli --accept-tos status)
+    echo "$STATUS"
+    if echo "$STATUS" | grep -q "Connected"; then
         echo "WARP is connected."
         break
     fi
-    warp-cli --accept-tos status
     sleep 2
 done
 
 # Verify connection via proxy
 echo "Verifying connection through proxy..."
-curl --socks5-hostname 127.0.0.1:1080 -I https://www.google.com
+for i in {1..5}; do
+    if curl --socks5-hostname 127.0.0.1:1080 -I https://www.google.com; then
+        echo "Proxy connectivity verified."
+        break
+    fi
+    echo "Proxy not ready yet, retrying..."
+    sleep 5
+done
 
 # Start the bot
+echo "Starting the bot..."
 python main.py
