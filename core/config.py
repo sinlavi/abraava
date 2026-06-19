@@ -11,7 +11,7 @@ FOOTER = f'\n\n{INFO_CHANNEL_USERNAME}\n{BOT_USERNAME}'
 DEEP_LINK_BASE = f"https://ble.ir/{BOT_USERNAME.lstrip('@')}?start="
 
 # Connection Settings
-PROXY = os.getenv("proxy", "socks5h://127.0.0.1:1080")
+PROXY = os.getenv("PROXY")
 PROXY_3RAH = os.getenv("PROXY_3RAH", "True").lower() == "true"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
