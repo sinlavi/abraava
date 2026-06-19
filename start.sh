@@ -1,10 +1,30 @@
 #!/bin/bash
 set -x
 
-# Setup D-Bus
+# Ensure D-Bus directories exist
+mkdir -p /var/run/dbus
 mkdir -p /run/dbus
+
+# Clean up old D-Bus sockets
+rm -f /var/run/dbus/system_bus_socket
+rm -f /run/dbus/system_bus_socket
+
+# Generate D-Bus machine ID
 dbus-uuidgen > /var/lib/dbus/machine-id
-dbus-daemon --system --fork --nopidfile
+
+# Start D-Bus daemon
+# The --system flag usually looks for /var/run/dbus/system_bus_socket
+dbus-daemon --system --fork
+
+# Wait for D-Bus socket to appear and ensure symlink compatibility
+for i in {1..10}; do
+    if [ -S /var/run/dbus/system_bus_socket ]; then
+        echo "D-Bus socket found at /var/run/dbus/system_bus_socket"
+        ln -sf /var/run/dbus/system_bus_socket /run/dbus/system_bus_socket
+        break
+    fi
+    sleep 1
+done
 
 # Start the WARP service
 warp-svc &
@@ -44,14 +64,17 @@ for i in {1..30}; do
     sleep 2
 done
 
+# Final check of settings
+warp-cli --accept-tos settings
+
 # Verify connection via proxy
 echo "Verifying connection through proxy..."
-for i in {1..5}; do
+for i in {1..10}; do
     if curl --socks5-hostname 127.0.0.1:1080 -I https://www.google.com; then
         echo "Proxy connectivity verified."
         break
     fi
-    echo "Proxy not ready yet, retrying..."
+    echo "Proxy not ready yet (or connection failed), retrying..."
     sleep 5
 done
 
