@@ -3,7 +3,7 @@ from models.schemas import DownloadQuality
 from bot.handlers.details import show_artist_page, show_collection_page, show_track_page
 from bot.handlers.search_results import send_search_results, send_external_search_results
 from bot.handlers.album_download import download_album
-from bot.handlers.search import handle_search
+from bot.handlers.search import handle_search, quick_search, PENDING_SEARCHES
 from bot.handlers.preview import send_voice_preview
 from bot.handlers.lyrics import handle_lyrics_request
 import crawlers.utils
@@ -200,6 +200,21 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
                                               search_cache_service, user_id, callback_query.message)
         else:
             await bot.answer_callback_query(callback_query.id, text="جستجو منقضی شده است", show_alert=True)
+
+    elif data.startswith("search_chat:"):
+        query_id = parts[1]
+        search_info = PENDING_SEARCHES.pop(query_id, None)
+        if search_info:
+            await safe_delete(callback_query.message)
+            type_, term = search_info["type"], search_info["term"]
+            is_quick, reply_to = search_info["is_quick"], search_info["reply_to"]
+
+            if is_quick:
+                await quick_search(bot, chat_id, user_id, term, api_client, user_settings_service, download_service, reply_to=reply_to)
+            else:
+                await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE, reply_to=reply_to)
+        else:
+            await bot.answer_callback_query(callback_query.id, text="⚠️ این درخواست منقضی شده است.", show_alert=True)
 
     # Downloads
     elif data.startswith("download:"):

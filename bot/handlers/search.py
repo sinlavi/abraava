@@ -4,10 +4,33 @@ from core.logger import logger
 from utils.messages import send_message, edit_message, safe_delete
 from crawlers.itunes import search_itunes
 from bot.handlers.search_results import send_search_results, send_external_search_results
+from bot.keyboards import get_search_choice_keyboard
 from services.music_adapter import MusicAdapter
 import asyncio
+import uuid
+import time
 
 music_adapter = MusicAdapter()
+
+PENDING_SEARCHES = {}
+
+async def ask_search_choice(bot: Client, chat_id: int, user_id: int, type_: str, term: str, is_quick=False, reply_to=None):
+    # Cleanup old searches (older than 1 hour)
+    now = time.time()
+    expired = [k for k, v in PENDING_SEARCHES.items() if now - v.get("timestamp", 0) > 3600]
+    for k in expired: PENDING_SEARCHES.pop(k, None)
+
+    query_id = uuid.uuid4().hex[:10]
+    PENDING_SEARCHES[query_id] = {
+        "type": type_,
+        "term": term,
+        "is_quick": is_quick,
+        "reply_to": reply_to,
+        "timestamp": now
+    }
+
+    text = "🔍 *کجا می‌خواهید جستجو کنید؟*\n\nمی‌توانید در محیط گرافیکی مینی‌اپ جستجو کنید یا نتایج را همین‌جا در چت ببینید."
+    await send_message(bot, chat_id, text, reply_markup=get_search_choice_keyboard(user_id, query_id), reply_to_message_id=reply_to)
 
 async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, term: str,
                         api_client, search_cache_service, offline_mode=False, reply_to=None):
