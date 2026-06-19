@@ -45,6 +45,7 @@ artwork_service = ArtworkService(api_client, user_settings_service)
 rate_limiter = RateLimiter()
 download_rate_limiter = DownloadRateLimiter()
 album_tracker = AlbumDownloadTracker(api_client)
+from health_check import start_health_check
 tagging_service = TaggingService()
 error_notifier = BaleUploadErrorNotifier(api_client)
 
@@ -249,6 +250,7 @@ def signal_handler(sig, frame):
     sys.exit(0)
 
 if __name__ == "__main__":
+    start_health_check()
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
