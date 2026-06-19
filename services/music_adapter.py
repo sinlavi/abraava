@@ -1,11 +1,17 @@
 import asyncio
-from typing import List, Dict, Any, Optional
+import logging
+import random
+from typing import Optional, List, Dict, Any
+
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from ytmusicapi import YTMusic
 import yt_dlp
-from core.config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, PROXY
-from core.logger import logger
+
+from core.config import SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, PROXY, OFFLINE_MODE
+from crawlers.youtube import search_youtube_track
+
+logger = logging.getLogger("ABRAAVA:MUSIC_ADAPTER")
 
 YT_METADATA_METHODS = [1, 2, 3]
 SC_METADATA_METHODS = [1, 2]
@@ -15,7 +21,7 @@ class MusicAdapter:
         self.sp = None
         if SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET:
             try:
-                proxies = {"http": PROXY, "https": PROXY}
+                proxies = {"https": PROXY, "http": PROXY} if PROXY else None
                 auth_manager = SpotifyClientCredentials(
                     client_id=SPOTIFY_CLIENT_ID,
                     client_secret=SPOTIFY_CLIENT_SECRET,
@@ -23,265 +29,14 @@ class MusicAdapter:
                 )
                 self.sp = spotipy.Spotify(auth_manager=auth_manager, proxies=proxies)
             except Exception as e:
-                logger.error(f"Failed to initialize Spotify: {e}")
+                logger.error(f"Spotify initialization error: {e}")
 
-        self.ytm = YTMusic(proxies={"https": PROXY, "http": PROXY})
-
-    def _sp_to_itunes(self, sp_data: Dict[str, Any], entity_type: str) -> Dict[str, Any]:
-        if entity_type == "track":
-            album = sp_data.get("album", {})
-            return {
-                "wrapperType": "track",
-                "trackId": f"sp_{sp_data['id']}",
-                "trackName": sp_data["name"],
-                "artistId": f"sp_{sp_data['artists'][0]['id']}" if sp_data.get("artists") else None,
-                "artistName": ", ".join([a["name"] for a in sp_data["artists"]]) if sp_data.get("artists") else "Unknown",
-                "collectionId": f"sp_{album['id']}" if album.get("id") else None,
-                "collectionName": album.get("name", "Unknown"),
-                "artworkUrl100": album["images"][0]["url"] if album.get("images") else None,
-                "trackTimeMillis": sp_data.get("duration_ms", 0),
-                "releaseDate": album.get("release_date", ""),
-                "primaryGenreName": None, # Spotify doesn't provide genre at track level easily
-                "trackViewUrl": sp_data["external_urls"].get("spotify"),
-                "previewUrl": sp_data.get("preview_url")
-            }
-        elif entity_type == "album":
-            return {
-                "wrapperType": "collection",
-                "collectionId": f"sp_{sp_data['id']}",
-                "collectionName": sp_data["name"],
-                "artistId": f"sp_{sp_data['artists'][0]['id']}" if sp_data.get("artists") else None,
-                "artistName": ", ".join([a["name"] for a in sp_data["artists"]]) if sp_data.get("artists") else "Unknown",
-                "artworkUrl100": sp_data["images"][0]["url"] if sp_data.get("images") else None,
-                "trackCount": sp_data.get("total_tracks", 0),
-                "releaseDate": sp_data.get("release_date", ""),
-                "primaryGenreName": ", ".join(sp_data.get("genres", [])),
-                "collectionViewUrl": sp_data["external_urls"].get("spotify")
-            }
-        elif entity_type == "artist":
-            return {
-                "wrapperType": "artist",
-                "artistId": f"sp_{sp_data['id']}",
-                "artistName": sp_data["name"],
-                "primaryGenreName": ", ".join(sp_data.get("genres", [])),
-                "artistLinkUrl": sp_data["external_urls"].get("spotify"),
-                "artworkUrl100": sp_data["images"][0]["url"] if sp_data.get("images") else None
-            }
-        return sp_data
-
-    def _ytm_to_itunes(self, ytm_data: Dict[str, Any], entity_type: str) -> Dict[str, Any]:
-        if entity_type == "track":
-            artists = ytm_data.get("artists")
-            if not artists and "author" in ytm_data:
-                artist_name = ytm_data["author"].replace(" - Topic", "")
-            elif artists:
-                artist_name = ", ".join([a["name"].replace(" - Topic", "") for a in artists])
-            else:
-                artist_name = "Unknown"
-
-            album = ytm_data.get("album")
-            if isinstance(album, dict):
-                album_name = album.get("name")
-            else:
-                album_name = album if album else None
-
-            thumbnails = ytm_data.get("thumbnails", [])
-            artwork_url = thumbnails[-1]["url"] if thumbnails else None
-            if artwork_url and "w120-h120" in artwork_url:
-                artwork_url = artwork_url.replace("w120-h120", "w1000-h1000")
-
-            # Extract videoId properly
-            v_id = ytm_data.get('videoId') or ytm_data.get('id')
-
-            duration = ytm_data.get("duration_seconds") or ytm_data.get("duration") or 0
-            if isinstance(duration, str):
-                # Handle cases where duration might be like "4:24"
-                if ":" in duration:
-                    parts = duration.split(":")
-                    if len(parts) == 2: duration = int(parts[0]) * 60 + int(parts[1])
-                    elif len(parts) == 3: duration = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-                else:
-                    try: duration = int(duration)
-                    except: duration = 0
-
-            return {
-                "wrapperType": "track",
-                "trackId": f"yt_{v_id}" if v_id else None,
-                "trackName": ytm_data.get("title", "Unknown"),
-                "artistName": artist_name,
-                "collectionName": album_name,
-                "artworkUrl100": artwork_url,
-                "trackTimeMillis": duration * 1000,
-                "releaseDate": str(ytm_data.get("year", "")) if ytm_data.get("year") else None,
-                "trackViewUrl": f"https://music.youtube.com/watch?v={v_id}" if v_id else None
-            }
-        elif entity_type == "album":
-            thumbnails = ytm_data.get("thumbnails", [])
-            artist_name = ytm_data.get("artist", "Unknown").replace(" - Topic", "")
-            return {
-                "wrapperType": "collection",
-                "collectionId": f"yt_{ytm_data['browseId']}",
-                "collectionName": ytm_data["title"],
-                "artistName": artist_name,
-                "artworkUrl100": thumbnails[-1]["url"] if thumbnails else None,
-                "releaseDate": ytm_data.get("year", ""),
-                "collectionViewUrl": f"https://music.youtube.com/browse/{ytm_data['browseId']}"
-            }
-        return ytm_data
-
-    def _sc_to_itunes(self, sc_data: Dict[str, Any]) -> Dict[str, Any]:
-        return {
-            "wrapperType": "track",
-            "trackId": f"sc_{sc_data['id']}",
-            "trackName": sc_data.get("title", "Unknown"),
-            "artistName": sc_data.get("uploader", sc_data.get("uploader_id", "Unknown")),
-            "artworkUrl100": sc_data.get("thumbnail"),
-            "trackTimeMillis": 0, # Duration removed as per request
-            "releaseDate": sc_data.get("upload_date", "")[:4] if sc_data.get("upload_date") else None,
-            "trackViewUrl": sc_data.get("webpage_url") or sc_data.get("url")
-        }
-
-    async def search_spotify(self, term: str, entity_type: str = "track", limit: int = 20) -> List[Dict[str, Any]]:
-        if not self.sp:
-            logger.warning("Spotify not initialized")
-            return []
-        logger.info(f"Searching Spotify for {entity_type}: {term}")
-        loop = asyncio.get_event_loop()
-        try:
-            type_map = {"track": "track", "album": "album", "artist": "artist"}
-            results = await loop.run_in_executor(None, lambda: self.sp.search(q=term, limit=limit, type=type_map.get(entity_type, "track")))
-
-            items = []
-            if entity_type == "track": items = results.get("tracks", {}).get("items", [])
-            elif entity_type == "album": items = results.get("albums", {}).get("items", [])
-            elif entity_type == "artist": items = results.get("artists", {}).get("items", [])
-
-            results = [self._sp_to_itunes(item, entity_type) for item in items]
-            if results:
-                from crawlers.itunes import save_metadata
-                asyncio.create_task(save_metadata(entity_type, results))
-            return results
-        except Exception as e:
-            logger.error(f"Spotify search error: {e}")
-            return []
-
-    async def search_ytm(self, term: str, entity_type: str = "track", limit: int = 20) -> List[Dict[str, Any]]:
-        logger.info(f"Searching YouTube Music for {entity_type}: {term}")
-        loop = asyncio.get_event_loop()
-        try:
-            filter_map = {"track": "songs", "album": "albums", "artist": "artists"}
-            yt_filter = filter_map.get(entity_type, "songs")
-
-            results = await loop.run_in_executor(None, lambda: self.ytm.search(term, filter=yt_filter, limit=limit))
-
-            # Fallback if filter returned nothing
-            if not results:
-                results = await loop.run_in_executor(None, lambda: self.ytm.search(term, limit=limit))
-                results = [r for r in results if r.get('resultType') in ['video', 'song']] if entity_type == 'track' else results
-
-            results = [self._ytm_to_itunes(item, entity_type) for item in results]
-            if results:
-                from crawlers.itunes import save_metadata
-                asyncio.create_task(save_metadata(entity_type, results))
-            return results
-        except Exception as e:
-            logger.error(f"YTM search error: {e}")
-            return []
-
-    async def search_sc(self, term: str, limit: int = 20) -> List[Dict[str, Any]]:
-        logger.info(f"Searching SoundCloud for: {term}")
-        ydl_opts = {'quiet': True, 'extract_flat': True}
-        loop = asyncio.get_event_loop()
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = await loop.run_in_executor(None, lambda: ydl.extract_info(f"scsearch{limit}:{term}", download=False))
-                if info and 'entries' in info:
-                    results = [self._sc_to_itunes(entry) for entry in info['entries']]
-                    if results:
-                        from crawlers.itunes import save_metadata
-                        asyncio.create_task(save_metadata('track', results))
-                    return results
-        except Exception as e:
-            logger.error(f"SoundCloud search error: {e}")
-        return []
-
-    async def get_sp_track(self, track_id: str) -> Optional[Dict[str, Any]]:
-        if not self.sp: return None
-        logger.info(f"Fetching Spotify track: {track_id}")
-        loop = asyncio.get_event_loop()
-        try:
-            # Strip prefix if present
-            if track_id.startswith("sp_"): track_id = track_id[3:]
-            track = await loop.run_in_executor(None, lambda: self.sp.track(track_id))
-            result = self._sp_to_itunes(track, "track")
-            if result:
-                from crawlers.itunes import save_metadata
-                asyncio.create_task(save_metadata('track', result))
-            return result
-        except Exception as e:
-            logger.error(f"Spotify get track error: {e}")
-            return None
-
-    async def get_sp_album(self, album_id: str) -> Optional[Dict[str, Any]]:
-        if not self.sp: return None
-        logger.info(f"Fetching Spotify album: {album_id}")
-        loop = asyncio.get_event_loop()
-        try:
-            if album_id.startswith("sp_"): album_id = album_id[3:]
-            album = await loop.run_in_executor(None, lambda: self.sp.album(album_id))
-            result = self._sp_to_itunes(album, "album")
-            if result:
-                from crawlers.itunes import save_metadata
-                asyncio.create_task(save_metadata('album', result))
-            return result
-        except Exception as e:
-            logger.error(f"Spotify get album error: {e}")
-            return None
-
-    async def get_sp_artist(self, artist_id: str) -> Optional[Dict[str, Any]]:
-        if not self.sp: return None
-        loop = asyncio.get_event_loop()
-        try:
-            if artist_id.startswith("sp_"): artist_id = artist_id[3:]
-            artist = await loop.run_in_executor(None, lambda: self.sp.artist(artist_id))
-            return self._sp_to_itunes(artist, "artist")
-        except Exception as e:
-            logger.error(f"Spotify get artist error: {e}")
-            return None
-
-    async def get_sp_artist_albums(self, artist_id: str) -> List[Dict[str, Any]]:
-        if not self.sp: return []
-        loop = asyncio.get_event_loop()
-        try:
-            if artist_id.startswith("sp_"): artist_id = artist_id[3:]
-            results = await loop.run_in_executor(None, lambda: self.sp.artist_albums(artist_id, album_type='album,single'))
-            return [self._sp_to_itunes(item, "album") for item in results.get("items", [])]
-        except Exception as e:
-            logger.error(f"Spotify get artist albums error: {e}")
-            return []
-
-    async def get_sp_album_tracks(self, album_id: str) -> List[Dict[str, Any]]:
-        if not self.sp: return []
-        loop = asyncio.get_event_loop()
-        try:
-            if album_id.startswith("sp_"): album_id = album_id[3:]
-            # Fetch album first to get common metadata like images
-            album = await loop.run_in_executor(None, lambda: self.sp.album(album_id))
-            images = album.get("images", [])
-            album_name = album.get("name")
-
-            results = await loop.run_in_executor(None, lambda: self.sp.album_tracks(album_id))
-            tracks = []
-            for item in results.get("items", []):
-                item["album"] = {"id": album_id, "images": images, "name": album_name}
-                tracks.append(self._sp_to_itunes(item, "track"))
-            return tracks
-        except Exception as e:
-            logger.error(f"Spotify get album tracks error: {e}")
-            return []
+        proxies = {"https": PROXY, "http": PROXY} if PROXY else None
+        self.ytm = YTMusic(proxies=proxies)
 
     def _get_ydl_opts(self, method, proxy=None):
-        opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': False, 'proxy': PROXY}
+        opts = {'quiet': True, 'no_check_certificate': True, 'extract_flat': False}
+        if PROXY: opts['proxy'] = PROXY
         if method == 3:
             opts['extractor_args'] = {"youtube": {"player_client": ["web", "mweb", "android_vr"]}}
         return opts
@@ -293,10 +48,9 @@ class MusicAdapter:
         url = f"https://www.youtube.com/watch?v={video_id}"
 
         loop = asyncio.get_event_loop()
-
         for method in list(YT_METADATA_METHODS):
             try:
-                opts = self._get_ydl_opts(method, PROXY)
+                opts = self._get_ydl_opts(method)
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
                     if info:
@@ -304,50 +58,37 @@ class MusicAdapter:
                             YT_METADATA_METHODS.remove(method)
                             YT_METADATA_METHODS.insert(0, method)
 
-                        result = {
-                            "wrapperType": "track",
-                            "trackId": f"yt_{video_id}",
-                            "trackName": info.get("title", "Unknown"),
-                            "artistName": info.get("uploader", info.get("artist", "Unknown")),
-                            "collectionName": info.get("album"),
-                            "artworkUrl100": info.get("thumbnail"),
-                            "trackTimeMillis": int(info.get("duration", 0)) * 1000,
-                            "releaseDate": info.get("upload_date", "")[:4],
-                            "trackViewUrl": url
-                        }
+                        result = self._yt_to_itunes(info)
                         if result:
                             from crawlers.itunes import save_metadata
-                            asyncio.create_task(save_metadata('track', result))
-                        return result
+                            await save_metadata(result, "track")
+                            return result
             except Exception as e:
-                logger.debug(f"YT Metadata method {method} failed: {e}")
-                if method in YT_METADATA_METHODS:
-                    YT_METADATA_METHODS.remove(method)
-                    YT_METADATA_METHODS.append(method)
-
-        # Final Fallback to YTM API
-        try:
-            track = await loop.run_in_executor(None, lambda: self.ytm.get_song(video_id))
-            details = track.get("videoDetails", {})
-            if details:
-                return {
-                    "wrapperType": "track",
-                    "trackId": f"yt_{video_id}",
-                    "trackName": details.get("title"),
-                    "artistName": details.get("author"),
-                    "artworkUrl100": details.get("thumbnail", {}).get("thumbnails", [{}])[-1].get("url"),
-                    "trackTimeMillis": int(details.get("lengthSeconds", 0)) * 1000,
-                    "trackViewUrl": url
-                }
-        except: pass
+                logger.warning(f"YouTube metadata fetch method {method} failed: {e}")
+                continue
         return None
+
+    def _yt_to_itunes(self, info: dict) -> dict:
+        return {
+            "wrapperType": "track",
+            "kind": "song",
+            "artistName": info.get("uploader", info.get("artist", "Unknown YouTube Artist")),
+            "trackName": info.get("title", "Unknown YouTube Track"),
+            "collectionName": info.get("album", ""),
+            "trackId": f"yt_{info.get('id')}",
+            "artworkUrl100": info.get("thumbnail"),
+            "trackTimeMillis": int(info.get("duration", 0)) * 1000,
+            "releaseDate": info.get("upload_date", ""),
+            "primaryGenreName": "YouTube"
+        }
 
     async def get_sc_track(self, sc_id: str) -> Optional[Dict[str, Any]]:
         global SC_METADATA_METHODS
         logger.info(f"Fetching SoundCloud metadata for: {sc_id}")
-        if sc_id.startswith("sc_"): sc_id = sc_id[3:]
-
-        if sc_id.isdigit():
+        if sc_id.startswith("sc_"):
+            sc_id = sc_id[3:]
+            url = f"https://soundcloud.com/{sc_id}"
+        elif sc_id.isdigit():
             url = f"https://api.soundcloud.com/tracks/{sc_id}"
         elif sc_id.startswith("http"):
             url = sc_id
@@ -355,10 +96,10 @@ class MusicAdapter:
             url = f"https://soundcloud.com/{sc_id}"
 
         loop = asyncio.get_event_loop()
-
         for method in list(SC_METADATA_METHODS):
             try:
-                opts = {'quiet': True, 'no_check_certificate': True, 'proxy': PROXY}
+                opts = {'quiet': True, 'no_check_certificate': True}
+                if PROXY: opts['proxy'] = PROXY
 
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
@@ -369,62 +110,90 @@ class MusicAdapter:
                         result = self._sc_to_itunes(info)
                         if result:
                             from crawlers.itunes import save_metadata
-                            asyncio.create_task(save_metadata('track', result))
-                        return result
+                            await save_metadata(result, "track")
+                            return result
             except Exception as e:
-                logger.debug(f"SC Metadata method {method} failed: {e}")
-                if method in SC_METADATA_METHODS:
-                    SC_METADATA_METHODS.remove(method)
-                    SC_METADATA_METHODS.append(method)
+                logger.warning(f"SoundCloud metadata fetch method {method} failed: {e}")
+                continue
         return None
 
-    async def get_yt_album(self, browse_id: str) -> Optional[Dict[str, Any]]:
-        loop = asyncio.get_event_loop()
-        try:
-            if browse_id.startswith("yt_"): browse_id = browse_id[3:]
-            album = await loop.run_in_executor(None, lambda: self.ytm.get_album(browse_id))
-            result = self._ytm_to_itunes(album, "album")
-            if result:
-                from crawlers.itunes import save_metadata
-                asyncio.create_task(save_metadata('album', result))
-            return result
-        except Exception as e:
-            logger.error(f"YTM get album error: {e}")
-            return None
+    def _sc_to_itunes(self, info: dict) -> dict:
+        return {
+            "wrapperType": "track",
+            "kind": "song",
+            "artistName": info.get("uploader", info.get("artist", "Unknown SoundCloud Artist")),
+            "trackName": info.get("title", "Unknown SoundCloud Track"),
+            "collectionName": info.get("album", ""),
+            "trackId": f"sc_{info.get('uploader_id')}/{info.get('display_id')}" if info.get('display_id') else f"sc_{info.get('id')}",
+            "artworkUrl100": info.get("thumbnail"),
+            "trackTimeMillis": int(info.get("duration", 0)) * 1000,
+            "releaseDate": info.get("upload_date", ""),
+            "primaryGenreName": "SoundCloud"
+        }
 
-    async def get_yt_album_tracks(self, browse_id: str) -> List[Dict[str, Any]]:
-        loop = asyncio.get_event_loop()
+    async def search_spotify(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+        if not self.sp: return []
         try:
-            if browse_id.startswith("yt_"): browse_id = browse_id[3:]
-            album = await loop.run_in_executor(None, lambda: self.ytm.get_album(browse_id))
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(None, lambda: self.sp.search(q=query, limit=limit, type="track"))
             tracks = []
-            album_name = album.get("title")
-            thumbnails = album.get("thumbnails", [])
-            for item in album.get("tracks", []):
-                # Inject missing info for normalization
-                item["album"] = {"name": album_name}
-                if not item.get("thumbnails"): item["thumbnails"] = thumbnails
-                tracks.append(self._ytm_to_itunes(item, "track"))
+            for item in results.get("tracks", {}).get("items", []):
+                tracks.append(self._sp_to_itunes(item, "track"))
             return tracks
         except Exception as e:
-            logger.error(f"YTM get album tracks error: {e}")
+            logger.error(f"Spotify search error: {e}")
             return []
 
-    def _it_to_itunes(self, it_data: Dict[str, Any]) -> Dict[str, Any]:
-        # Prefix IDs for official iTunes results
-        it_data = it_data.copy()
-        if "trackId" in it_data: it_data["trackId"] = f"it_{it_data['trackId']}"
-        if "collectionId" in it_data: it_data["collectionId"] = f"it_{it_data['collectionId']}"
-        if "artistId" in it_data: it_data["artistId"] = f"it_{it_data['artistId']}"
-        return it_data
+    async def get_sp_track(self, track_id: str) -> Optional[Dict[str, Any]]:
+        if not self.sp: return None
+        try:
+            if track_id.startswith("sp_"): track_id = track_id[3:]
+            loop = asyncio.get_event_loop()
+            item = await loop.run_in_executor(None, lambda: self.sp.track(track_id))
+            result = self._sp_to_itunes(item, "track")
+            if result:
+                from crawlers.itunes import save_metadata
+                await save_metadata(result, "track")
+            return result
+        except Exception as e:
+            logger.error(f"Spotify get track error: {e}")
+            return None
 
-    async def search_itunes_official(self, term: str, entity_type: str = "track", limit: int = 20) -> List[Dict[str, Any]]:
-        logger.info(f"Searching Official iTunes for {entity_type}: {term}")
-        from crawlers.itunes import search_itunes
-        type_map = {"track": "musicTrack", "album": "album", "artist": "musicArtist"}
-        entity = type_map.get(entity_type, "musicTrack")
+    def _sp_to_itunes(self, item: dict, type_: str) -> dict:
+        album = item.get("album") or {}
+        images = album.get("images") or item.get("images") or []
+        artwork = images[0].get("url") if images else None
 
-        results = await search_itunes(term, entity=entity, limit=limit, official=True)
-        if results and "results" in results:
-            return [self._it_to_itunes(item) for item in results["results"]]
-        return []
+        res = {
+            "wrapperType": "track" if type_ == "track" else "collection",
+            "kind": "song" if type_ == "track" else None,
+            "artistName": ", ".join([a.get("name") for a in item.get("artists", [])]),
+            "trackName": item.get("name"),
+            "collectionName": album.get("name", ""),
+            "trackId": f"sp_{item.get('id')}",
+            "collectionId": f"sp_{album.get('id')}" if album.get('id') else None,
+            "artworkUrl100": artwork,
+            "trackTimeMillis": item.get("duration_ms"),
+            "releaseDate": album.get("release_date"),
+            "primaryGenreName": "Spotify"
+        }
+        return res
+
+    async def get_sp_album_tracks(self, album_id: str) -> List[Dict[str, Any]]:
+        if not self.sp: return []
+        try:
+            if album_id.startswith("sp_"): album_id = album_id[3:]
+            loop = asyncio.get_event_loop()
+            album_info = await loop.run_in_executor(None, lambda: self.sp.album(album_id))
+            album_name = album_info.get("name")
+            images = album_info.get("images")
+
+            results = await loop.run_in_executor(None, lambda: self.sp.album_tracks(album_id))
+            tracks = []
+            for item in results.get("items", []):
+                item["album"] = {"id": album_id, "images": images, "name": album_name}
+                tracks.append(self._sp_to_itunes(item, "track"))
+            return tracks
+        except Exception as e:
+            logger.error(f"Spotify get album tracks error: {e}")
+            return []
