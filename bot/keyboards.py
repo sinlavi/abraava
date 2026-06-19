@@ -66,3 +66,11 @@ def get_confirmation_keyboard(setting_type, new_value, user_id: int = None):
             InlineKeyboardButton(text="❌ خیر، انصراف", callback_data=f"back_to_settings{suffix}")
         ]
     ]
+
+def get_search_choice_keyboard(user_id: int, query_id: str):
+    suffix = f":u{user_id}" if user_id else ""
+    return InlineKeyboard(
+        [InlineKeyboardButton(text="🔍 جستجو در مینی‌اپ", web_app="https://3rah.ir/music/ui")],
+        [InlineKeyboardButton(text="💬 جستجو در چت", callback_data=f"search_chat:{query_id}{suffix}")],
+        [create_close_button(user_id)]
+    )
