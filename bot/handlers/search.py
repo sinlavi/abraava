@@ -1,5 +1,3 @@
-from balethon import Client
-from balethon.objects import InlineKeyboardButton
 from core.logger import logger
 from utils.messages import send_message, edit_message, safe_delete
 from crawlers.itunes import search_itunes
@@ -11,98 +9,69 @@ import uuid
 import time
 
 music_adapter = MusicAdapter()
-
 PENDING_SEARCHES = {}
 
-async def ask_search_choice(bot: Client, chat_id: int, user_id: int, type_: str, term: str, is_quick=False, reply_to=None):
-    # Cleanup old searches (older than 1 hour)
+async def ask_search_choice(bot, chat_id, user_id, type_, term, is_quick=False, reply_to=None):
     now = time.time()
     expired = [k for k, v in PENDING_SEARCHES.items() if now - v.get("timestamp", 0) > 3600]
     for k in expired: PENDING_SEARCHES.pop(k, None)
-
     query_id = uuid.uuid4().hex[:10]
-    PENDING_SEARCHES[query_id] = {
-        "type": type_,
-        "term": term,
-        "is_quick": is_quick,
-        "reply_to": reply_to,
-        "timestamp": now
-    }
-
+    PENDING_SEARCHES[query_id] = {"type": type_, "term": term, "is_quick": is_quick, "reply_to": reply_to, "timestamp": now}
     text = "🔍 *کجا می‌خواهید جستجو کنید؟*\n\nمی‌توانید در محیط گرافیکی مینی‌اپ جستجو کنید یا نتایج را همین‌جا در چت ببینید."
     await send_message(bot, chat_id, text, reply_markup=get_search_choice_keyboard(user_id, query_id), reply_to_message_id=reply_to)
 
-async def handle_search(bot: Client, chat_id: int, user_id: int, type_: str, term: str,
-                        api_client, search_cache_service, offline_mode=False, reply_to=None):
+async def handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, offline_mode=False, reply_to=None):
     if type_ in ["ytm", "sc", "sp", "itunes_official"]:
         await handle_external_search(bot, chat_id, user_id, type_, term, search_cache_service, reply_to=reply_to)
         return
-
     type_fa_map = {"artist": "هنرمند", "album": "آلبوم", "track": "آهنگ", "collection": "آلبوم","all":"آهنگ، آلبوم، هنرمند"}
-    logger.info(f"Search: {type_} - {term}")
-
     status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجوی {type_fa_map.get(type_, type_)}: {term}...*", show_cancel=True, reply_to_message_id=reply_to)
-
     try:
         results = {}
         if not offline_mode:
             entity_map = {"artist": "musicArtist", "album": "album", "track": "musicTrack", "collection": "album","all":"musicTrack,album,musicArtist"}
-            entity = entity_map.get(type_)
-            itunes_results = await search_itunes(term, entity=entity, limit=50)
-            if itunes_results and int(itunes_results.get("resultCount") or 0) > 0:
-                results = itunes_results
-
+            itunes_results = await search_itunes(term, entity=entity_map.get(type_), limit=50)
+            if itunes_results and int(itunes_results.get("resultCount") or 0) > 0: results = itunes_results
         if results and int(results.get("resultCount") or 0) > 0:
             status_msg = await send_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg, reply_to=reply_to)
             await api_client.log_search(user_id, type_, term, int(results.get("resultCount") or 0))
         else:
-            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}:u{user_id}")]]
-            status_msg = await edit_message(status_msg, f"هیچ نتیجه‌ای برای '{term}' یافت نشد.", reply_markup=retry_markup)
+            retry_markup = [[{"text": "🔄 تلاش مجدد", "callback_data": f"retry:search_retry:{type_}:{term}:u{user_id}"}]]
+            await edit_message(status_msg, f"هیچ نتیجه‌ای برای '{term}' یافت نشد.", reply_markup=retry_markup)
     except Exception as e:
         logger.error(f"Search error: {e}")
-        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:{type_}:{term}:u{user_id}")]]
-        status_msg = await edit_message(status_msg, "خطا در جستجو.", reply_markup=retry_markup)
+        retry_markup = [[{"text": "🔄 تلاش مجدد", "callback_data": f"retry:search_retry:{type_}:{term}:u{user_id}"}]]
+        await edit_message(status_msg, "خطا در جستجو.", reply_markup=retry_markup)
 
-async def handle_external_search(bot: Client, chat_id: int, user_id: int, type_: str, term: str, search_cache_service, reply_to=None):
+async def handle_external_search(bot, chat_id, user_id, type_, term, search_cache_service, reply_to=None):
     source_map = {"ytm": "یوتیوب موزیک", "sc": "ساندکلاد", "sp": "اسپاتیفای", "itunes_official": "آیتیونز"}
     source_name = source_map.get(type_, "منابع خارجی")
     status_msg = await send_message(bot, chat_id, f"🔍 *در حال جستجو در {source_name}: {term}...*", show_cancel=True, reply_to_message_id=reply_to)
-
     try:
         results = []
-        if type_ == "ytm":
-            results = await music_adapter.search_ytm(term)
-        elif type_ == "sc":
-            results = await music_adapter.search_sc(term)
-        elif type_ == "sp":
-            results = await music_adapter.search_spotify(term)
-        elif type_ == "itunes_official":
-            results = await music_adapter.search_itunes_official(term)
-
-        if results:
-            status_msg = await send_external_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg, reply_to=reply_to)
-        else:
-            status_msg = await edit_message(status_msg, f"هیچ نتیجه‌ای در {source_name} یافت نشد.")
+        if type_ == "ytm": results = await music_adapter.search_ytm(term)
+        elif type_ == "sc": results = await music_adapter.search_sc(term)
+        elif type_ == "sp": results = await music_adapter.search_spotify(term)
+        elif type_ == "itunes_official": results = await music_adapter.search_itunes_official(term)
+        if results: await send_external_search_results(bot, chat_id, type_, term, results, 1, search_cache_service, user_id, message_to_edit=status_msg, reply_to=reply_to)
+        else: await edit_message(status_msg, f"هیچ نتیجه‌ای در {source_name} یافت نشد.")
     except Exception as e:
         logger.error(f"External search error: {e}")
-        status_msg = await edit_message(status_msg, f"خطا در جستجو در {source_name}.")
+        await edit_message(status_msg, f"خطا در جستجو در {source_name}.")
 
-async def quick_search(bot: Client, chat_id: int, user_id: int, term: str,
-                       api_client, user_settings_service, download_service, reply_to=None):
+async def quick_search(bot, chat_id, user_id, term, api_client, user_settings_service, download_service, reply_to=None):
     status_msg = await send_message(bot, chat_id, f"⚡ *جستجوی سریع {term}...*", show_cancel=True, reply_to_message_id=reply_to)
     try:
         results = await search_itunes(term, entity="musicTrack", limit=1)
         if results and int(results.get("resultCount") or 0) > 0:
             track = results["results"][0]
-            track_id = track.get('trackId')
-            status_msg, success = await download_service.download_and_send_track(chat_id, track_id, user_id, status_msg=status_msg)
+            status_msg, success = await download_service.download_and_send_track(chat_id, track.get('trackId'), user_id, status_msg=status_msg)
             await api_client.log_search(user_id, 'quick', term, 1)
-            if success:
-                await safe_delete(status_msg)
+            if success: await safe_delete(status_msg)
         else:
-            retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}:u{user_id}")]]
-            status_msg = await edit_message(status_msg, "نتیجه‌ای یافت نشد.", reply_markup=retry_markup)
+            retry_markup = [[{"text": "🔄 تلاش مجدد", "callback_data": f"retry:search_retry:track:{term}:u{user_id}"}]]
+            await edit_message(status_msg, "نتیجه‌ای یافت نشد.", reply_markup=retry_markup)
     except Exception as e:
         logger.error(f"Quick search error: {e}")
-        retry_markup = [[InlineKeyboardButton(text="🔄 تلاش مجدد", callback_data=f"retry:search_retry:track:{term}:u{user_id}")]]
-        status_msg = await edit_message(status_msg, f"خطا در جستجوی سریع: {e}", reply_markup=retry_markup)
+        retry_markup = [[{"text": "🔄 تلاش مجدد", "callback_data": f"retry:search_retry:track:{term}:u{user_id}"}]]
+        await edit_message(status_msg, f"خطا در جستجوی سریع: {e}", reply_markup=retry_markup)
