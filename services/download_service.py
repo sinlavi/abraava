@@ -297,7 +297,7 @@ class DownloadService:
         markup = []
         if not is_external:
             markup.append(
-                [InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://player.abraava.ir?id={track_id}")])
+                [InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://3rah.ir/music/ui?id={track_id}")])
 
         markup.append([InlineKeyboardButton(text="📋 کپی پیوند", copy_text=generate_deep_link("track", track_id))])
         markup.append([InlineKeyboardButton(text="🌐 اطلاعات بیشتر", url=source_url)])
