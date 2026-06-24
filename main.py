@@ -157,7 +157,10 @@ async def on_message(message: Message):
                 return
 
             settings = await user_settings_service.get_settings(user_id)
-            if (type_ == "quick" or settings.quick_mode) and not is_group:
+            is_command = text.startswith("/")
+            is_link = type_ in ["music_link", "direct_link"] or (term and isinstance(term, str) and term.startswith("http"))
+
+            if (type_ == "quick" or settings.quick_mode) and not is_group and not is_command and not is_link:
                 await ask_search_choice(bot, chat_id, user_id, type_, term, is_quick=True, reply_to=message.id)
             elif type_ == "quick" or settings.quick_mode:
                 await quick_search(bot, chat_id, user_id, term, api_client, user_settings_service, download_service, reply_to=message.id)
@@ -219,16 +222,16 @@ async def on_message(message: Message):
                 else:
                     await direct_download_service.ask_confirmation(chat_id, term, user_id=user_id, reply_to=message.id)
             elif type_ in ["track", "album", "artist", "ytm", "sc", "quick","all"]:
-                if not is_group:
+                if not is_group and not is_command and not is_link:
                     await ask_search_choice(bot, chat_id, user_id, type_, term, reply_to=message.id)
                 else:
                     await handle_search(bot, chat_id, user_id, type_, term, api_client, search_cache_service, OFFLINE_MODE, reply_to=message.id)
             else:
-                if text.startswith("/"):
+                if is_command:
                     await send_message(bot, chat_id, "⚠️ *دستور وارد شده معتبر نیست.*\n\nبرای مشاهده راهنما از /help استفاده کنید.")
                 else:
                     # Generic search fallback
-                    if not is_group:
+                    if not is_group and not is_link:
                         await ask_search_choice(bot, chat_id, user_id, "track", text, reply_to=message.id)
                     else:
                         await handle_search(bot, chat_id, user_id, "track", text, api_client, search_cache_service, OFFLINE_MODE, reply_to=message.id)
