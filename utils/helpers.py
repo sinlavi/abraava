@@ -1,7 +1,19 @@
 import hashlib
 import time
+import re
+from anyascii import anyascii
 from core.config import DEEP_LINK_BASE
 from typing import Any
+
+def has_persian(text: str) -> bool:
+    """Check if text contains Persian characters"""
+    if not text: return False
+    return bool(re.search(r'[\u0600-\u06FF]', text))
+
+def to_fingilish(text: str) -> str:
+    """Convert Persian text to Fingilish (ASCII)"""
+    if not text: return text
+    return anyascii(text)
 
 def format_duration(milliseconds):
     """Convert milliseconds to MM:SS format"""

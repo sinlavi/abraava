@@ -12,3 +12,4 @@ rapidfuzz
 spotipy
 pillow
 beautifulsoup4
+anyascii
