@@ -13,3 +13,5 @@ spotipy
 pillow
 beautifulsoup4
 anyascii
+PersianG2p
+hazm
