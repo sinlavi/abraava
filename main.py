@@ -30,7 +30,6 @@ from bot.handlers.details import show_track_page, show_collection_page, show_art
 from utils.parser import parse_search_query
 from utils.messages import send_message, edit_message, safe_delete
 from utils.validation import is_valid_message
-from utils.helpers import has_persian, to_fingilish
 
 import asyncio
 import signal
@@ -145,11 +144,6 @@ async def on_message(message: Message):
         if query:
             type_, term = query
 
-            # Convert term to fingilish if it contains persian characters and is NOT a link
-            is_link = type_ in ["music_link", "direct_link"] or (term and term.startswith("http"))
-            if term and has_persian(term) and not is_link:
-                term = to_fingilish(term)
-
             if term is None:
                 usage_map = {
                     "track": "🔍 *راهنمای جستجوی آهنگ:*\n\nکافیست نام آهنگ را مقابل دستور بنویسید.\nمثال: `/track محسن چاوشی`",
@@ -237,10 +231,6 @@ async def on_message(message: Message):
                     await send_message(bot, chat_id, "⚠️ *دستور وارد شده معتبر نیست.*\n\nبرای مشاهده راهنما از /help استفاده کنید.")
                 else:
                     # Generic search fallback
-                    is_plain_persian = has_persian(text)
-                    if is_plain_persian:
-                        text = to_fingilish(text)
-
                     if not is_group and not is_link:
                         await ask_search_choice(bot, chat_id, user_id, "track", text, reply_to=message.id)
                     else:
