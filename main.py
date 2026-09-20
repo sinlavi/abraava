@@ -21,10 +21,7 @@ from services.registration_service import UserRegistrationService
 from services.direct_download_service import DirectDownloadService
 from services.odesli_service import OdesliService
 
-from bot.handlers.commands import (
-    start_command, help_command, about_command,
-    my_command, popular_command, fresh_command, playlists_command, history_command
-)
+from bot.handlers.commands import start_command, help_command, about_command
 from bot.handlers.settings import settings_command, stats_command
 from bot.handlers.search import handle_search, quick_search, ask_search_choice
 from bot.handlers.callbacks import handle_callback
@@ -142,16 +139,6 @@ async def on_message(message: Message):
         else: await stats_command(bot, message, api_client, rate_limiter, download_rate_limiter)
     elif text.startswith("/about"):
         await about_command(bot, message)
-    elif text.startswith("/my"):
-        await my_command(bot, message)
-    elif text.startswith("/popular"):
-        await popular_command(bot, message, api_client)
-    elif text.startswith("/fresh"):
-        await fresh_command(bot, message, api_client)
-    elif text.startswith("/playlists"):
-        await playlists_command(bot, message, api_client)
-    elif text.startswith("/history"):
-        await history_command(bot, message, api_client)
     else:
         query = await parse_search_query(text)
         if query:

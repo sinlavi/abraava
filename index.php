@@ -4417,9 +4417,10 @@ function handleRequest(): void
     if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') respond([], 200);
 
     $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-    $basePath = '/mm/api';
-    if ($basePath !== '' && strpos($path, $basePath) === 0) {
-        $path = substr($path, strlen($basePath));
+    if (strpos($path, '/mm/api') === 0) {
+        $path = substr($path, strlen('/mm/api'));
+    } elseif (strpos($path, '/api') === 0) {
+        $path = substr($path, strlen('/api'));
     }
     $path = '/' . trim($path, '/');
     if ($path === '/') $path = '/';
