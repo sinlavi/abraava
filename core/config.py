@@ -33,8 +33,8 @@ ADMIN_IDS = [234591600]
 
 # API Settings
 PLATFORM = os.getenv("PLATFORM", "bale")
-ITUNES_BASE_URL = os.getenv("ITUNES_BASE_URL", "https://mm.3rah.ir/api")
-API_BASE_URL = os.getenv("API_BASE_URL", "https://mm.3rah.ir/api")
+ITUNES_BASE_URL = os.getenv("ITUNES_BASE_URL", "https://3rah.ir/mm/api")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://3rah.ir/mm/api")
 API_TOKEN = os.getenv("API_TOKEN", "YOUR_BOT_TOKEN_HERE")
 
 # Spotify Credentials
