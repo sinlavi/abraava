@@ -107,17 +107,19 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
                        method: Literal["GET", "POST", "PUT", "DELETE"] = "GET", payload: dict = None,
                        official: bool = False, quality: str = None) -> Optional[Dict[str, Any]]:
     params = params or {}
-    if quality: params["quality"] = quality
+    req_quality = quality or params.get("quality")
+    if req_quality:
+        params["quality"] = str(req_quality)
+
     if method == "GET" and not bypass_cache and not OFFLINE_MODE:
         cached = await _itunes_cache.get(endpoint, params)
         if cached: return cached
 
     if OFFLINE_MODE: return None
 
-    # Endpoints that are specific to 3rah API and not available on official iTunes
     is_3rah_specific = any(endpoint.startswith(p) for p in [
         "mirror", "lyrics", "track/save", "song/save", "collection/save", "album/save", "artist/save",
-        "popular", "fresh", "suggest", "like", "comment", "playlist", "library", "history", "follow"
+        "popular", "fresh", "suggest"
     ])
     max_attempts = 1 if is_3rah_specific else 3
 
@@ -140,8 +142,8 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
             "Platform": PLATFORM,
             "Authorization": f"Bearer {API_TOKEN}"
         }
-        if quality:
-            headers["Quality"] = str(quality)
+        if req_quality:
+            headers["Quality"] = str(req_quality)
 
         logger.info(f"iTunes/3rah Request [{method}]: {url} - Params: {params}")
         try:
@@ -228,26 +230,58 @@ async def get_mirror(entity_type: str, entity_id: Union[int, str], url_type: str
 
 
 async def get_cached_audio(track_id: Union[int, str], quality: str = None) -> Optional[str]:
-    attachments = await get_mirror('track', track_id, 'audioUrl', quality=quality or "192")
+    target_quality = str(quality or "192")
+    attachments = await get_mirror('track', track_id, 'audioUrl', quality=target_quality)
     if attachments and attachments.get('audioUrls'):
-        for item in attachments['audioUrls']:
+        audio_list = attachments['audioUrls']
+
+        # 1. Look for platform == PLATFORM (e.g. bale)
+        for item in audio_list:
             item_qual = str(item.get('quality', '192'))
-            if item_qual == str(quality or "192"):
+            if item_qual == target_quality and item.get('platform') == PLATFORM:
                 url = item.get('url')
                 if url:
-                    logger.info(f"Cached audio found for {track_id}: {url}")
+                    logger.info(f"Cached audio found on {PLATFORM} for {track_id}: {url}")
                     return extract_file_id(url)
-    logger.info(f"No cached audio for {track_id} with quality {quality or '192'}")
+
+        # 2. Fallback: look for platform == "telegram" and route through proxy
+        for item in audio_list:
+            item_qual = str(item.get('quality', '192'))
+            if item_qual == target_quality and item.get('platform') == 'telegram':
+                raw_url = item.get('url')
+                if raw_url:
+                    if raw_url.startswith('tg://file/'):
+                        file_id = raw_url.replace('tg://file/', '')
+                        tg_url = f"https://api.telegram.org/file/bot<token>/{file_id}"
+                    elif raw_url.startswith('http'):
+                        tg_url = raw_url
+                    else:
+                        tg_url = f"https://api.telegram.org/file/bot<token>/{raw_url}"
+
+                    proxy_url = f"https://3rah.ir/mm/api/proxy?url={tg_url}"
+                    logger.info(f"Cached Telegram audio found for {track_id}, using proxy: {proxy_url}")
+                    return proxy_url
+
+    logger.info(f"No cached audio for {track_id} with quality {target_quality}")
     return None
 
 
 async def get_cached_artwork(entity_type: str, entity_id: Union[int, str]) -> Optional[str]:
     attachments = await get_mirror(entity_type, entity_id, 'artworkUrl')
     if attachments and attachments.get('artworkUrls'):
-        for item in attachments['artworkUrls']:
+        artwork_list = attachments['artworkUrls']
+
+        # 1. Check for Bale platform first
+        for item in artwork_list:
+            if item.get('platform') == PLATFORM:
+                url = item.get('url')
+                if url: return extract_file_id(url)
+
+        # 2. Fallback to iTunes or any available platform
+        for item in artwork_list:
             url = item.get('url')
-            if url and (url.startswith('tg://') or '<token>' in url or 'bale' in url):
-                return extract_file_id(url)
+            if url: return extract_file_id(url)
+
     return None
 
 
