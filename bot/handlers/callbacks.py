@@ -47,21 +47,21 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
     parts = new_parts
     data = ":".join(parts)
 
-    if data == "close":
+    if data == "close" or data.startswith("close"):
         await safe_delete(callback_query.message)
         return
 
-    if data == "help_cmd":
+    if data == "help_cmd" or data.startswith("help_cmd"):
         from bot.handlers.commands import help_command
         await help_command(bot, callback_query.message, is_callback=True)
         return
 
-    if data == "ignore":
+    if data == "ignore" or data.startswith("ignore"):
         await bot.answer_callback_query(callback_query.id, text="")
         return
 
     # Hub and Discovery Callbacks
-    if data == "my_hub":
+    if data == "my_hub" or data.startswith("my_hub"):
         text = "👤 *مرکز مدیریت شخصی کاربر*\n\nاز این بخش می‌توانید به کتابخانه، لیست‌های پخش شخصی، هنرمندان دنبال شده و تاریخچه پخش خود دسترسی داشته باشید."
         await edit_message(callback_query.message, text, reply_markup=get_my_hub_keyboard(user_id))
         return
@@ -83,7 +83,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
         return
 
-    if data == "create_pl_prompt":
+    if data == "create_pl_prompt" or data.startswith("create_pl_prompt"):
         num_res = await api_client.get_my_playlists(user_id)
         count = len(num_res.get("playlists", [])) + 1 if num_res.get("success") else 1
         new_name = f"لیست پخش {count}"
@@ -108,7 +108,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
         return
 
-    if data == "my_playlists":
+    if data == "my_playlists" or data.startswith("my_playlists"):
         res = await api_client.get_my_playlists(user_id)
         playlists = res.get("playlists", []) if res.get("success") else []
         text = "🎶 *لیست‌های پخش شما:*\n\n"
@@ -127,7 +127,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
         return
 
-    if data == "my_artists":
+    if data == "my_artists" or data.startswith("my_artists"):
         res = await api_client.get_my_artists(user_id)
         artists = res.get("artists", []) if res.get("success") else []
         text = "🎤 *هنرمندان دنبال شده شما:*\n\n"
@@ -143,7 +143,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
         return
 
-    if data == "my_history":
+    if data == "my_history" or data.startswith("my_history"):
         res = await api_client.get_history(user_id, limit=10)
         history = res.get("history", []) if res.get("success") else []
         text = "📜 *تاریخچه پخش شما:*\n\n"
@@ -160,7 +160,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
         return
 
-    if data == "clear_history_prompt":
+    if data == "clear_history_prompt" or data.startswith("clear_history_prompt"):
         text = "❓ *آیا از پاک‌سازی تمام تاریخچه پخش خود اطمینان دارید؟*"
         markup = [
             [InlineKeyboardButton(text="✅ بله، پاک شود", callback_data=f"confirm_clear_history:u{user_id}"),
@@ -169,7 +169,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
         return
 
-    if data == "confirm_clear_history":
+    if data == "confirm_clear_history" or data.startswith("confirm_clear_history"):
         await api_client.clear_history(user_id)
         await bot.answer_callback_query(callback_query.id, text="✅ تاریخچه با موفقیت پاک شد.")
         text = "📜 تاریخچه پخش شما پاک شد."
@@ -177,7 +177,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
         return
 
-    if data == "popular_tracks":
+    if data == "popular_tracks" or data.startswith("popular_tracks"):
         res = await api_client.get_popular(limit=10)
         tracks = res.get("results", []) if res.get("success") else []
         text = "🔥 *محبوب‌ترین آهنگ‌ها:*\n\n"
@@ -192,7 +192,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
         return
 
-    if data == "fresh_tracks":
+    if data == "fresh_tracks" or data.startswith("fresh_tracks"):
         res = await api_client.get_fresh(limit=10)
         tracks = res.get("results", []) if res.get("success") else []
         text = "🆕 *تازه‌ترین آهنگ‌های اضافه شده:*\n\n"
@@ -347,25 +347,25 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         return
 
     # Settings menus with Confirmation
-    if data == "menu_quick_mode":
+    if data == "menu_quick_mode" or data.startswith("menu_quick_mode"):
         current = (await user_settings_service.get_settings(user_id)).quick_mode
         message = await edit_message(callback_query.message, f"⚡ *تغییر حالت سریع*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
                           reply_markup=get_confirmation_keyboard("quick_mode", not current, user_id=user_id))
         return
 
-    if data == "menu_artwork":
+    if data == "menu_artwork" or data.startswith("menu_artwork"):
         current = (await user_settings_service.get_settings(user_id)).show_artwork
         message = await edit_message(callback_query.message, f"🖼️ *تغییر نمایش کاور*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
                           reply_markup=get_confirmation_keyboard("show_artwork", not current, user_id=user_id))
         return
 
-    if data == "menu_auto_download":
+    if data == "menu_auto_download" or data.startswith("menu_auto_download"):
         current = (await user_settings_service.get_settings(user_id)).auto_download
         message = await edit_message(callback_query.message, f"⚡ *تغییر دانلود خودکار*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
                           reply_markup=get_confirmation_keyboard("auto_download", not current, user_id=user_id))
         return
 
-    if data == "menu_notifications":
+    if data == "menu_notifications" or data.startswith("menu_notifications"):
         current = (await user_settings_service.get_settings(user_id)).notifications
         message = await edit_message(callback_query.message, f"🔔 *تغییر اعلان‌ها*\n\nوضعیت فعلی: {'فعال' if current else 'غیرفعال'}\nآیا مایل به تغییر هستید؟",
                           reply_markup=get_confirmation_keyboard("notifications", not current, user_id=user_id))
@@ -393,7 +393,7 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
             await update_settings_msg(bot, callback_query.message, user_id, user_settings_service)
             return
 
-    if data == "show_quality_menu":
+    if data == "show_quality_menu" or data.startswith("show_quality_menu"):
         settings = await user_settings_service.get_settings(user_id)
         message = await edit_message(callback_query.message, "🎵 *کیفیت دانلود را انتخاب کنید:*",
                           reply_markup=get_quality_keyboard(settings.download_quality, user_id=user_id))
@@ -407,11 +407,11 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         await update_settings_msg(bot, callback_query.message, user_id, user_settings_service)
         return
 
-    if data == "back_to_settings":
+    if data == "back_to_settings" or data.startswith("back_to_settings"):
         await update_settings_msg(bot, callback_query.message, user_id, user_settings_service)
         return
 
-    if data == "show_stats":
+    if data == "show_stats" or data.startswith("show_stats"):
         from bot.handlers.settings import stats_command_logic
         await stats_command_logic(bot, callback_query.message, user_id, api_client, rate_limiter, download_rate_limiter)
         return

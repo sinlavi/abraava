@@ -17,7 +17,6 @@ class APIClient:
         data: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
-        session = await HttpClient.get_session(use_proxy=PROXY_3RAH)
         endpoint_path = endpoint if endpoint.startswith('/') else f"/{endpoint}"
         url = f"{self.base_url}{endpoint_path}"
 
@@ -29,30 +28,52 @@ class APIClient:
         if headers:
             req_headers.update(headers)
 
-        try:
-            method_upper = method.upper()
-            kwargs = {'headers': req_headers}
-            if params:
-                kwargs['params'] = {k: v for k, v in params.items() if v is not None}
-            if data and method_upper in ['POST', 'PUT', 'PATCH']:
-                kwargs['json'] = data
+        method_upper = method.upper()
 
-            async with getattr(session, method_upper.lower())(url, **kwargs) as resp:
-                try:
-                    res_json = await resp.json()
-                    if isinstance(res_json, dict):
-                        return res_json
-                    return {'success': resp.status < 400, 'data': res_json}
-                except Exception:
-                    text = await resp.text()
-                    return {'success': resp.status < 400, 'message': text}
-        except Exception as e:
-            logger.error(f"API Client [{method} {endpoint}] failed: {e}")
-            return {'success': False, 'message': str(e)}
+        # Attempt 1: Default session (proxied if PROXY_3RAH is True, else direct)
+        for use_proxy in ([PROXY_3RAH, False] if PROXY_3RAH else [False]):
+            try:
+                session = await HttpClient.get_session(use_proxy=use_proxy)
+                kwargs = {'headers': req_headers}
+                if params:
+                    kwargs['params'] = {k: v for k, v in params.items() if v is not None}
+                if data and method_upper in ['POST', 'PUT', 'PATCH']:
+                    kwargs['json'] = data
 
-    # Legacy Compatibility & Auth / User Profile Methods
+                async with getattr(session, method_upper.lower())(url, **kwargs) as resp:
+                    if resp.status == 503 and use_proxy:
+                        logger.warning(f"API Client [{method} {endpoint}] received 503 via proxy, retrying direct...")
+                        continue
+                    try:
+                        res_json = await resp.json()
+                        if isinstance(res_json, dict):
+                            return res_json
+                        return {'success': resp.status < 400, 'data': res_json}
+                    except Exception:
+                        text = await resp.text()
+                        return {'success': resp.status < 400, 'message': text}
+            except Exception as e:
+                logger.warning(f"API Client [{method} {endpoint}] attempt (use_proxy={use_proxy}) failed: {e}")
+                if use_proxy:
+                    continue
+                return {'success': False, 'message': str(e)}
+
+        return {'success': False, 'message': 'API request failed after retries'}
+
+    # Auth & Registration
     async def register_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
-        return await self._request('POST', '/auth/register', data=user_data)
+        res = await self._request('POST', '/auth/register', data=user_data)
+        if not res.get('success'):
+            msg = str(res.get('error') or res.get('message') or '').lower()
+            if 'already' in msg or 'taken' in msg:
+                # Login fallback
+                identifier = user_data.get('email') or user_data.get('username')
+                password = user_data.get('password')
+                login_res = await self._request('POST', '/auth/login', data={'identifier': identifier, 'password': password})
+                if login_res.get('success'):
+                    return login_res
+                return {'success': True, 'message': 'User already registered'}
+        return res
 
     async def get_user(self, user_id: int) -> Dict[str, Any]:
         return await self._request('GET', '/user', params={'id': user_id})
