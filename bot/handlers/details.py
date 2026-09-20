@@ -1,6 +1,6 @@
 from balethon.objects import InlineKeyboardButton, InlineKeyboard
 from core.config import ITEMS_PER_PAGE, DEEP_LINK_BASE
-from bot.keyboards import create_pagination_row, create_close_button
+from bot.keyboards import create_pagination_row, create_close_button, get_social_buttons_row, get_artist_social_row
 from utils.messages import send_message, edit_message, safe_delete
 from utils.helpers import get_high_res_artwork, format_duration, generate_deep_link
 from crawlers.utils import get_or_crawl_artist, get_or_crawl_artist_collections, get_or_crawl_collection, get_or_crawl_collection_tracks, get_track, format_artist_hashtag
@@ -10,7 +10,7 @@ import asyncio
 
 logger = logging.getLogger("ABRAAVA:DETAILS")
 
-async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False, reply_to=None):
+async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False, reply_to=None, api_client=None):
     if not is_pagination:
         if message_to_edit:
             status_msg = message_to_edit
@@ -20,7 +20,6 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
     else:
         status_msg = None
     try:
-        # Concurrent fetching for performance
         artist_task = asyncio.create_task(get_or_crawl_artist(artist_id=artist_id, force=force))
         collections_task = asyncio.create_task(get_or_crawl_artist_collections(artist_id))
 
@@ -47,6 +46,20 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         collections = collections_data["results"] if collections_data else []
 
         markup_rows = []
+
+        # Artist follow & social row
+        is_following = False
+        if api_client and owner_id:
+            try:
+                res = await api_client.get_my_artists(owner_id)
+                if res.get('success') and 'artists' in res:
+                    followed_ids = [str(a.get('artistId')) for a in res['artists']]
+                    if str(artist_id) in followed_ids:
+                        is_following = True
+            except Exception:
+                pass
+        markup_rows.append(get_artist_social_row(str(artist_id), is_following=is_following, user_id=owner_id))
+
         if collections:
             total_items = len(collections)
             total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
@@ -66,8 +79,6 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
                     except: track_count = 0
 
                     wrapper = coll.get('wrapperType')
-                    # Improved album detection: If it's a collection and has more than 1 track, it's an album.
-                    # Otherwise, if it's a track or a single-track collection, treat it as a single.
                     is_album = (wrapper == 'collection') and (track_count > 1)
                     is_single = not is_album
 
@@ -108,7 +119,7 @@ async def show_artist_page(bot, chat_id, artist_id, page, artwork_service, owner
         if status_msg: status_msg = await edit_message(status_msg, f"خطا در نمایش صفحه هنرمند: {e}", reply_markup=retry_markup)
         else: await send_message(bot, chat_id, f"خطا در نمایش صفحه هنرمند: {e}", reply_markup=retry_markup)
 
-async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False, reply_to=None):
+async def show_collection_page(bot, chat_id, collection_id, page, artwork_service, owner_id, message_to_edit=None, force=False, is_pagination=False, reply_to=None, api_client=None):
     if not is_pagination:
         if message_to_edit:
             status_msg = message_to_edit
@@ -118,7 +129,6 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
     else:
         status_msg = None
     try:
-        # Concurrent fetching for performance
         collection_task = asyncio.create_task(get_or_crawl_collection(collection_id, force))
         tracks_task = asyncio.create_task(get_or_crawl_collection_tracks(collection_id))
 
@@ -150,6 +160,23 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         if hashtags: text += f"\n{' '.join(hashtags)}\n"
 
         markup_rows = []
+
+        # Social interactive row
+        is_liked, like_count, is_in_lib = False, 0, False
+        if api_client and owner_id:
+            try:
+                l_res = await api_client.get_like_status("collection", collection_id, owner_id)
+                if l_res.get("success"):
+                    is_liked = bool(l_res.get("liked"))
+                    like_count = int(l_res.get("likeCount", 0))
+                lib_res = await api_client.get_library(owner_id, "collection")
+                if lib_res.get("success") and "items" in lib_res:
+                    lib_ids = [str(x.get("entityId")) for x in lib_res["items"]]
+                    if str(collection_id) in lib_ids: is_in_lib = True
+            except Exception:
+                pass
+        markup_rows.append(get_social_buttons_row("collection", str(collection_id), is_liked, like_count, is_in_lib, user_id=owner_id))
+
         if tracks:
             total_items = len(tracks)
             total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
@@ -209,7 +236,7 @@ async def show_collection_page(bot, chat_id, collection_id, page, artwork_servic
         if status_msg: status_msg = await edit_message(status_msg, f"خطا در نمایش صفحه آلبوم: {e}", reply_markup=retry_markup)
         else: await send_message(bot, chat_id, f"خطا در نمایش صفحه آلبوم: {e}", reply_markup=retry_markup)
 
-async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, message_to_edit=None, reply_to=None):
+async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, message_to_edit=None, reply_to=None, api_client=None):
     if not message_to_edit:
         status_msg = await send_message(bot, chat_id, "🔄 *در حال بارگذاری اطلاعات آهنگ...*", show_cancel=True, reply_to_message_id=reply_to)
     else:
@@ -260,6 +287,22 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
             dl_btns.append(InlineKeyboardButton(text="🎧 پیش‌نمایش", callback_data=f"preview:{track_id}:u{owner_id}"))
         markup_rows.append(dl_btns)
 
+        # Social interactive row (Likes, Library, Comments, Add to Playlist)
+        is_liked, like_count, is_in_lib = False, 0, False
+        if api_client and owner_id:
+            try:
+                l_res = await api_client.get_like_status("track", track_id, owner_id)
+                if l_res.get("success"):
+                    is_liked = bool(l_res.get("liked"))
+                    like_count = int(l_res.get("likeCount", 0))
+                lib_res = await api_client.get_library(owner_id, "track")
+                if lib_res.get("success") and "items" in lib_res:
+                    lib_ids = [str(x.get("entityId")) for x in lib_res["items"]]
+                    if str(track_id) in lib_ids: is_in_lib = True
+            except Exception:
+                pass
+        markup_rows.append(get_social_buttons_row("track", str(track_id), is_liked, like_count, is_in_lib, user_id=owner_id))
+
         # Lyrics button
         if not is_sc:
             markup_rows.append([InlineKeyboardButton(text="📜 متن آهنگ", callback_data=f"lyrics:{track_id}:u{owner_id}")])
@@ -274,7 +317,7 @@ async def show_track_page(bot, chat_id, track_id, artwork_service, owner_id, mes
         is_external = str(track_id).startswith(("yt_", "sc_", "sp_"))
 
         if not is_external:
-            markup_rows.append([InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://3rah.ir/music/ui?id={track_id}")])
+            markup_rows.append([InlineKeyboardButton(text="📂 نمایش در مینی اپ", web_app=f"https://mm.3rah.ir/ui?id={track_id}")])
 
         markup_rows.append([
             InlineKeyboardButton(text="📋 کپی پیوند", copy_text=f"{DEEP_LINK_BASE}track_{track_id}"),

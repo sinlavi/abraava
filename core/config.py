@@ -30,8 +30,9 @@ INFO_CHANNEL_ID = os.getenv("INFO_CHANNEL_ID", "5524168471")
 ADMIN_IDS = [234591600]
 
 # API Settings
-ITUNES_BASE_URL = os.getenv("ITUNES_BASE_URL", "https://3rah.ir/music")
-API_BASE_URL = os.getenv("API_BASE_URL", "https://3rah.ir/users/index.php")
+PLATFORM = os.getenv("PLATFORM", "bale")
+ITUNES_BASE_URL = os.getenv("ITUNES_BASE_URL", "https://mm.3rah.ir/api")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://mm.3rah.ir/api")
 API_TOKEN = os.getenv("API_TOKEN", "YOUR_BOT_TOKEN_HERE")
 
 # Spotify Credentials

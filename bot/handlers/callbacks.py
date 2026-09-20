@@ -7,9 +7,9 @@ from bot.handlers.search import handle_search, quick_search, PENDING_SEARCHES
 from bot.handlers.preview import send_voice_preview
 from bot.handlers.lyrics import handle_lyrics_request
 import crawlers.utils
-from bot.keyboards import get_settings_keyboard, get_quality_keyboard, get_confirmation_keyboard, create_close_button
+from bot.keyboards import get_settings_keyboard, get_quality_keyboard, get_confirmation_keyboard, create_close_button, get_my_hub_keyboard
 from utils.messages import send_message, edit_message, safe_delete
-from core.config import OFFLINE_MODE
+from core.config import OFFLINE_MODE, DEEP_LINK_BASE
 from core.logger import logger
 import asyncio
 import time
@@ -58,6 +58,292 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
 
     if data == "ignore":
         await bot.answer_callback_query(callback_query.id, text="")
+        return
+
+    # Hub and Discovery Callbacks
+    if data == "my_hub":
+        text = "👤 *مرکز مدیریت شخصی کاربر*\n\nاز این بخش می‌توانید به کتابخانه، لیست‌های پخش شخصی، هنرمندان دنبال شده و تاریخچه پخش خود دسترسی داشته باشید."
+        await edit_message(callback_query.message, text, reply_markup=get_my_hub_keyboard(user_id))
+        return
+
+    if data.startswith("my_lib"):
+        res = await api_client.get_library(user_id)
+        items = res.get("items", []) if res.get("success") else []
+        text = "📌 *کتابخانه شخصی شما:*\n\n"
+        markup = []
+        if not items:
+            text += "کتابخانه شما خالی است."
+        else:
+            for item in items[:15]:
+                etype = item.get("entityType")
+                eid = item.get("entityId")
+                text += f"🔹 {etype}: `{eid}`\n"
+                markup.append([InlineKeyboardButton(text=f"📂 مشاهده {etype} ({eid})", callback_data=f"{etype}:{eid}:u{user_id}")])
+        markup.append([InlineKeyboardButton(text="🔙 بازگشت به هاب شخصی", callback_data=f"my_hub:u{user_id}")])
+        await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
+        return
+
+    if data == "create_pl_prompt":
+        num_res = await api_client.get_my_playlists(user_id)
+        count = len(num_res.get("playlists", [])) + 1 if num_res.get("success") else 1
+        new_name = f"لیست پخش {count}"
+        c_res = await api_client.create_playlist(user_id, name=new_name)
+        if c_res.get("success"):
+            await bot.answer_callback_query(callback_query.id, text=f"✅ لیست پخش '{new_name}' ساخته شد.")
+        else:
+            await bot.answer_callback_query(callback_query.id, text="⚠️ خطا در ساخت لیست پخش.", show_alert=True)
+
+        res = await api_client.get_my_playlists(user_id)
+        playlists = res.get("playlists", []) if res.get("success") else []
+        text = "🎶 *لیست‌های پخش شما:*\n\n"
+        markup = []
+        for p in playlists:
+            pid = p.get("playlistId")
+            pname = p.get("name")
+            tcount = p.get("trackCount", 0)
+            text += f"🔹 *{pname}* ({tcount} آهنگ)\n"
+            markup.append([InlineKeyboardButton(text=f"🎶 {pname} ({tcount} قطعه)", callback_data=f"view_pl:{pid}:u{user_id}")])
+        markup.append([InlineKeyboardButton(text="➕ ساخت لیست پخش جدید", callback_data=f"create_pl_prompt:u{user_id}")])
+        markup.append([InlineKeyboardButton(text="🔙 بازگشت به هاب شخصی", callback_data=f"my_hub:u{user_id}")])
+        await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
+        return
+
+    if data == "my_playlists":
+        res = await api_client.get_my_playlists(user_id)
+        playlists = res.get("playlists", []) if res.get("success") else []
+        text = "🎶 *لیست‌های پخش شما:*\n\n"
+        markup = []
+        if not playlists:
+            text += "شما هنوز هیچ لیست پخشی نساخته‌اید."
+        else:
+            for p in playlists:
+                pid = p.get("playlistId")
+                pname = p.get("name")
+                tcount = p.get("trackCount", 0)
+                text += f"🔹 *{pname}* ({tcount} آهنگ)\n"
+                markup.append([InlineKeyboardButton(text=f"🎶 {pname} ({tcount} قطعه)", callback_data=f"view_pl:{pid}:u{user_id}")])
+        markup.append([InlineKeyboardButton(text="➕ ساخت لیست پخش جدید", callback_data=f"create_pl_prompt:u{user_id}")])
+        markup.append([InlineKeyboardButton(text="🔙 بازگشت به هاب شخصی", callback_data=f"my_hub:u{user_id}")])
+        await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
+        return
+
+    if data == "my_artists":
+        res = await api_client.get_my_artists(user_id)
+        artists = res.get("artists", []) if res.get("success") else []
+        text = "🎤 *هنرمندان دنبال شده شما:*\n\n"
+        markup = []
+        if not artists:
+            text += "شما هیچ هنرمندی را دنبال نکرده‌اید."
+        else:
+            for a in artists:
+                aid = a.get("artistId")
+                text += f"🎤 کد هنرمند: `{aid}`\n"
+                markup.append([InlineKeyboardButton(text=f"🎤 هنرمند {aid}", callback_data=f"artist:{aid}:u{user_id}")])
+        markup.append([InlineKeyboardButton(text="🔙 بازگشت به هاب شخصی", callback_data=f"my_hub:u{user_id}")])
+        await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
+        return
+
+    if data == "my_history":
+        res = await api_client.get_history(user_id, limit=10)
+        history = res.get("history", []) if res.get("success") else []
+        text = "📜 *تاریخچه پخش شما:*\n\n"
+        markup = []
+        if not history:
+            text += "تاریخچه‌ای یافت نشد."
+        else:
+            for i, item in enumerate(history, 1):
+                tid = item.get("trackId")
+                text += f"{i}. آهنگ `{tid}`\n"
+                markup.append([InlineKeyboardButton(text=f"🎵 آهنگ {tid}", callback_data=f"track:{tid}:u{user_id}")])
+            markup.append([InlineKeyboardButton(text="🗑️ پاک‌سازی تاریخچه", callback_data=f"clear_history_prompt:u{user_id}")])
+        markup.append([InlineKeyboardButton(text="🔙 بازگشت به هاب شخصی", callback_data=f"my_hub:u{user_id}")])
+        await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
+        return
+
+    if data == "clear_history_prompt":
+        text = "❓ *آیا از پاک‌سازی تمام تاریخچه پخش خود اطمینان دارید؟*"
+        markup = [
+            [InlineKeyboardButton(text="✅ بله، پاک شود", callback_data=f"confirm_clear_history:u{user_id}"),
+             InlineKeyboardButton(text="❌ انصراف", callback_data=f"my_history:u{user_id}")]
+        ]
+        await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
+        return
+
+    if data == "confirm_clear_history":
+        await api_client.clear_history(user_id)
+        await bot.answer_callback_query(callback_query.id, text="✅ تاریخچه با موفقیت پاک شد.")
+        text = "📜 تاریخچه پخش شما پاک شد."
+        markup = [[InlineKeyboardButton(text="🔙 بازگشت به هاب شخصی", callback_data=f"my_hub:u{user_id}")]]
+        await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
+        return
+
+    if data == "popular_tracks":
+        res = await api_client.get_popular(limit=10)
+        tracks = res.get("results", []) if res.get("success") else []
+        text = "🔥 *محبوب‌ترین آهنگ‌ها:*\n\n"
+        markup = []
+        for i, t in enumerate(tracks, 1):
+            tid = t.get("trackId")
+            tname = t.get("trackName", "نامشخص")
+            aname = t.get("artistName", "نامشخص")
+            text += f"{i}. {tname} - {aname}\n"
+            markup.append([InlineKeyboardButton(text=f"{i}. {tname[:28]}", callback_data=f"track:{tid}:u{user_id}")])
+        markup.append([create_close_button(user_id)])
+        await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
+        return
+
+    if data == "fresh_tracks":
+        res = await api_client.get_fresh(limit=10)
+        tracks = res.get("results", []) if res.get("success") else []
+        text = "🆕 *تازه‌ترین آهنگ‌های اضافه شده:*\n\n"
+        markup = []
+        for i, t in enumerate(tracks, 1):
+            tid = t.get("trackId")
+            tname = t.get("trackName", "نامشخص")
+            aname = t.get("artistName", "نامشخص")
+            text += f"{i}. {tname} - {aname}\n"
+            markup.append([InlineKeyboardButton(text=f"{i}. {tname[:28]}", callback_data=f"track:{tid}:u{user_id}")])
+        markup.append([create_close_button(user_id)])
+        await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
+        return
+
+    # Social Interaction Callbacks
+    if data.startswith("like_toggle:"):
+        etype, eid = parts[1], parts[2]
+        status = await api_client.get_like_status(etype, eid, user_id)
+        if status.get("liked"):
+            await api_client.unlike_entity(user_id, etype, eid)
+            await bot.answer_callback_query(callback_query.id, text="💔 از پسندیده‌ها حذف شد.")
+        else:
+            await api_client.like_entity(user_id, etype, eid)
+            await bot.answer_callback_query(callback_query.id, text="❤️ پسندیده شد!")
+
+        # Refresh page
+        if etype == "track": await show_track_page(bot, chat_id, eid, artwork_service, user_id, message_to_edit=callback_query.message, api_client=api_client)
+        elif etype == "collection": await show_collection_page(bot, chat_id, eid, 1, artwork_service, user_id, message_to_edit=callback_query.message, api_client=api_client)
+        return
+
+    if data.startswith("lib_toggle:"):
+        etype, eid = parts[1], parts[2]
+        lib_res = await api_client.get_library(user_id, etype)
+        lib_ids = [str(x.get("entityId")) for x in lib_res.get("items", [])] if lib_res.get("success") else []
+        if str(eid) in lib_ids:
+            await api_client.remove_from_library(user_id, etype, eid)
+            await bot.answer_callback_query(callback_query.id, text="🗑️ از کتابخانه حذف شد.")
+        else:
+            await api_client.save_to_library(user_id, etype, eid)
+            await bot.answer_callback_query(callback_query.id, text="📌 به کتابخانه شما اضافه شد.")
+
+        if etype == "track": await show_track_page(bot, chat_id, eid, artwork_service, user_id, message_to_edit=callback_query.message, api_client=api_client)
+        elif etype == "collection": await show_collection_page(bot, chat_id, eid, 1, artwork_service, user_id, message_to_edit=callback_query.message, api_client=api_client)
+        return
+
+    if data.startswith("follow_artist_toggle:"):
+        aid = parts[1]
+        res = await api_client.get_my_artists(user_id)
+        followed_ids = [str(a.get("artistId")) for a in res.get("artists", [])] if res.get("success") else []
+        if str(aid) in followed_ids:
+            await api_client.unfollow_artist(user_id, aid)
+            await bot.answer_callback_query(callback_query.id, text="➖ هنرمند از لیست دنبال‌شده‌ها حذف شد.")
+        else:
+            await api_client.follow_artist(user_id, aid)
+            await bot.answer_callback_query(callback_query.id, text="➕ هنرمند به لیست دنبال‌شده‌ها اضافه شد.")
+
+        await show_artist_page(bot, chat_id, aid, 1, artwork_service, user_id, message_to_edit=callback_query.message, api_client=api_client)
+        return
+
+    if data.startswith("artist_tracks:"):
+        aid = parts[1]
+        page = int(parts[2]) if len(parts) > 2 else 1
+        res = await api_client.get_artist_tracks(aid, page=page, limit=10)
+        tracks = res.get("results", []) if res.get("success") else []
+        total = res.get("total", len(tracks))
+        text = f"🎤 *تمام آهنگ‌های هنرمند (مجموع {total} قطعه):*\n\n"
+        markup = []
+        for i, t in enumerate(tracks, 1):
+            tid = t.get("trackId")
+            tname = t.get("trackName", "نامشخص")
+            text += f"{i}. {tname}\n"
+            markup.append([InlineKeyboardButton(text=f"{i}. {tname[:30]} 🎵", callback_data=f"track:{tid}:u{user_id}")])
+
+        pages = res.get("pages", 1)
+        if pages > 1:
+            from bot.keyboards import create_pagination_row
+            pag_row = create_pagination_row(f"artist_tracks:{aid}", page, pages, user_id=user_id)
+            if pag_row: markup.append(pag_row)
+
+        markup.append([InlineKeyboardButton(text="🔙 بازگشت به صفحه هنرمند", callback_data=f"artist:{aid}:u{user_id}")])
+        await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
+        return
+
+    if data.startswith("add_to_pl:"):
+        track_id = parts[1]
+        res = await api_client.get_my_playlists(user_id)
+        playlists = res.get("playlists", []) if res.get("success") else []
+        text = "➕ *انتخاب لیست پخش برای افزودن آهنگ:*\n\n"
+        markup = []
+        if not playlists:
+            text += "شما هنوز هیچ لیست پخشی نساخته‌اید."
+        else:
+            for p in playlists:
+                pid = p.get("playlistId")
+                pname = p.get("name")
+                markup.append([InlineKeyboardButton(text=f"🎶 {pname}", callback_data=f"pl_add_track:{pid}:{track_id}:u{user_id}")])
+
+        markup.append([InlineKeyboardButton(text="🔙 بازگشت به آهنگ", callback_data=f"track:{track_id}:u{user_id}")])
+        await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
+        return
+
+    if data.startswith("pl_add_track:"):
+        pid, track_id = parts[1], parts[2]
+        res = await api_client.add_track_to_playlist(user_id, pid, track_id)
+        if res.get("success"):
+            await bot.answer_callback_query(callback_query.id, text="✅ آهنگ به لیست پخش اضافه شد.")
+        else:
+            await bot.answer_callback_query(callback_query.id, text=f"⚠️ {res.get('message', 'خطا در افزودن')}", show_alert=True)
+        await show_track_page(bot, chat_id, track_id, artwork_service, user_id, message_to_edit=callback_query.message, api_client=api_client)
+        return
+
+    if data.startswith("view_pl:"):
+        pid = parts[1]
+        pl_res = await api_client.get_playlist(pid)
+        pl = pl_res.get("playlist", {}) if pl_res.get("success") else {}
+        tracks_res = await api_client.get_playlist_tracks(pid)
+        tracks = tracks_res.get("tracks", []) if tracks_res.get("success") else []
+
+        pname = pl.get("name", "لیست پخش")
+        text = f"🎶 *لیست پخش:* {pname}\n"
+        if pl.get("description"): text += f"📝 {pl.get('description')}\n"
+        text += f"\n🎵 *قطعات ({len(tracks)} مورد):*\n"
+
+        markup = []
+        for i, t in enumerate(tracks, 1):
+            tid = t.get("trackId")
+            tname = t.get("trackName", f"آهنگ {tid}")
+            text += f"{i}. {tname}\n"
+            markup.append([InlineKeyboardButton(text=f"{i}. {tname[:30]} 🎵", callback_data=f"track:{tid}:u{user_id}")])
+
+        markup.append([InlineKeyboardButton(text="🔙 بازگشت به لیست‌های پخش", callback_data=f"my_playlists:u{user_id}")])
+        await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
+        return
+
+    if data.startswith("comments:"):
+        etype, eid = parts[1], parts[2]
+        res = await api_client.get_comments(etype, eid)
+        comments = res.get("comments", []) if res.get("success") else []
+        text = f"💬 *نظرات کاربران:*\n\n"
+        if not comments:
+            text += "هنوز نظری ثبت نشده است."
+        else:
+            for c in comments[:10]:
+                uname = c.get("displayName") or c.get("username") or "کاربر"
+                cbody = c.get("content", "")
+                text += f"👤 *{uname}:* {cbody}\n\n"
+
+        markup = [
+            [InlineKeyboardButton(text="🔙 بازگشت", callback_data=f"{etype}:{eid}:u{user_id}")]
+        ]
+        await edit_message(callback_query.message, text, reply_markup=InlineKeyboard(*markup))
         return
 
     # Settings menus with Confirmation
@@ -135,38 +421,38 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         artist_id = parts[1]
         if artist_id.isdigit(): artist_id = int(artist_id)
         page = int(parts[2]) if len(parts) > 2 else 1
-        is_pag = (len(parts) > 2 and parts[2].isdigit()) # Only True if it's explicitly a page click
+        is_pag = (len(parts) > 2 and parts[2].isdigit())
         msg_to_edit = callback_query.message if is_pag else None
-        await show_artist_page(bot, chat_id, artist_id, page, artwork_service, user_id, msg_to_edit, is_pagination=is_pag)
+        await show_artist_page(bot, chat_id, artist_id, page, artwork_service, user_id, msg_to_edit, is_pagination=is_pag, api_client=api_client)
     elif data.startswith("collection:"):
         coll_id = parts[1]
         if coll_id.isdigit(): coll_id = int(coll_id)
         page = int(parts[2]) if len(parts) > 2 else 1
-        is_pag = (len(parts) > 2 and parts[2].isdigit()) # Only True if it's explicitly a page click
+        is_pag = (len(parts) > 2 and parts[2].isdigit())
         msg_to_edit = callback_query.message if is_pag else None
-        await show_collection_page(bot, chat_id, coll_id, page, artwork_service, user_id, msg_to_edit, is_pagination=is_pag)
+        await show_collection_page(bot, chat_id, coll_id, page, artwork_service, user_id, msg_to_edit, is_pagination=is_pag, api_client=api_client)
     elif data.startswith("track:"):
         track_id = parts[1]
         if track_id.isdigit(): track_id = int(track_id)
-        await show_track_page(bot, chat_id, track_id, artwork_service, user_id)
+        await show_track_page(bot, chat_id, track_id, artwork_service, user_id, api_client=api_client)
     elif data.startswith("single_album:"):
         coll_id = parts[1]
         if coll_id.isdigit(): coll_id = int(coll_id)
         tracks_data = await crawlers.utils.get_or_crawl_collection_tracks(coll_id)
         if tracks_data and tracks_data.get("results"):
             track_id = tracks_data["results"][0].get("trackId")
-            if track_id: await show_track_page(bot, chat_id, track_id, artwork_service, user_id)
+            if track_id: await show_track_page(bot, chat_id, track_id, artwork_service, user_id, api_client=api_client)
             else: await bot.answer_callback_query(callback_query.id, text="❌ خطایی رخ داد", show_alert=True)
     elif data.startswith("recrawl:"):
         type_, eid = parts[1], parts[2]
         if eid.isdigit(): eid = int(eid)
-        if type_ == "artist": await show_artist_page(bot, chat_id, eid, 1, artwork_service, user_id, callback_query.message, force=True)
-        elif type_ == "collection": await show_collection_page(bot, chat_id, eid, 1, artwork_service, user_id, callback_query.message, force=True)
+        if type_ == "artist": await show_artist_page(bot, chat_id, eid, 1, artwork_service, user_id, callback_query.message, force=True, api_client=api_client)
+        elif type_ == "collection": await show_collection_page(bot, chat_id, eid, 1, artwork_service, user_id, callback_query.message, force=True, api_client=api_client)
 
     elif data.startswith("lyrics:"):
         track_id = parts[1]
         if track_id.isdigit(): track_id = int(track_id)
-        await handle_lyrics_request(bot, chat_id, track_id, user_id, message_to_edit=None) # Start fresh or edit? Better fresh for long lyrics.
+        await handle_lyrics_request(bot, chat_id, track_id, user_id, message_to_edit=None)
         await bot.answer_callback_query(callback_query.id, text="")
 
     # Searches
@@ -238,7 +524,6 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         quality, track_id = parts[1], parts[2]
         if track_id.isdigit(): track_id = int(track_id)
         await bot.answer_callback_query(callback_query.id, text=f"⏳ دانلود با کیفیت {quality}...")
-        # Don't delete, reuse the message as status_msg
         status_msg, _ = await download_service.download_and_send_track(chat_id, track_id, user_id, selected_quality=quality, status_msg=callback_query.message)
 
     elif data.startswith("dl_fb:"):
@@ -273,7 +558,6 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         quality, coll_id = parts[1], parts[2]
         if coll_id.isdigit(): coll_id = int(coll_id)
         await bot.answer_callback_query(callback_query.id, text=f"📀 شروع دانلود با کیفیت {quality}...")
-        # Don't delete, reuse the message as parent status msg in download_album
         asyncio.create_task(download_album(bot, chat_id, coll_id, user_id, download_service, quality=quality, status_msg=callback_query.message))
 
     elif data.startswith("retry_failed:"):
@@ -282,7 +566,6 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         settings = await user_settings_service.get_settings(user_id)
         quality_value = settings.download_quality.value
         if quality_value == "ask": quality_value = "192"
-        # Call download_album with retry_ids for systematic batch retry
         asyncio.create_task(download_album(bot, chat_id, None, user_id, download_service, quality=quality_value, status_msg=callback_query.message, retry_ids=failed_ids))
 
     elif data.startswith("cancel_album:"):
@@ -292,10 +575,8 @@ async def handle_callback(bot, callback_query: CallbackQuery, api_client, user_s
         await bot.answer_callback_query(callback_query.id, text="⏹️ توقف دانلود...")
 
     elif data.startswith("force_artwork:"):
-        # Logic to force download/upload artwork
         await bot.answer_callback_query(callback_query.id, text="⏳ تلاش مجدد با دانلود مستقیم...")
         etype, eid, cap = parts[1], int(parts[2]), ":".join(parts[3:])
-        # Use artworkService logic to force it
         await artwork_service.force_manual_artwork(bot, chat_id, etype, eid, cap, user_id)
         await safe_delete(callback_query.message)
 
