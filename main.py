@@ -21,7 +21,10 @@ from services.registration_service import UserRegistrationService
 from services.direct_download_service import DirectDownloadService
 from services.odesli_service import OdesliService
 
-from bot.handlers.commands import start_command, help_command, about_command
+from bot.handlers.commands import (
+    start_command, help_command, about_command,
+    my_command, popular_command, fresh_command, playlists_command, history_command
+)
 from bot.handlers.settings import settings_command, stats_command
 from bot.handlers.search import handle_search, quick_search, ask_search_choice
 from bot.handlers.callbacks import handle_callback
@@ -124,9 +127,9 @@ async def on_message(message: Message):
             if "_" in start_param:
                 type_, item_id = start_param.split("_", 1)
                 if item_id.isdigit(): item_id = int(item_id)
-                if type_ == "artist": await show_artist_page(bot, chat_id, item_id, 1, artwork_service, user_id, reply_to=message.id)
-                elif type_ == "collection": await show_collection_page(bot, chat_id, item_id, 1, artwork_service, user_id, reply_to=message.id)
-                elif type_ == "track": await show_track_page(bot, chat_id, item_id, artwork_service, user_id, reply_to=message.id)
+                if type_ == "artist": await show_artist_page(bot, chat_id, item_id, 1, artwork_service, user_id, reply_to=message.id, api_client=api_client)
+                elif type_ == "collection": await show_collection_page(bot, chat_id, item_id, 1, artwork_service, user_id, reply_to=message.id, api_client=api_client)
+                elif type_ == "track": await show_track_page(bot, chat_id, item_id, artwork_service, user_id, reply_to=message.id, api_client=api_client)
                 return
         await start_command(bot, message)
     elif text.startswith("/help"):
@@ -139,6 +142,16 @@ async def on_message(message: Message):
         else: await stats_command(bot, message, api_client, rate_limiter, download_rate_limiter)
     elif text.startswith("/about"):
         await about_command(bot, message)
+    elif text.startswith("/my"):
+        await my_command(bot, message)
+    elif text.startswith("/popular"):
+        await popular_command(bot, message, api_client)
+    elif text.startswith("/fresh"):
+        await fresh_command(bot, message, api_client)
+    elif text.startswith("/playlists"):
+        await playlists_command(bot, message, api_client)
+    elif text.startswith("/history"):
+        await history_command(bot, message, api_client)
     else:
         query = await parse_search_query(text)
         if query:
@@ -162,11 +175,11 @@ async def on_message(message: Message):
             elif type_ == "quick" or settings.quick_mode:
                 await quick_search(bot, chat_id, user_id, term, api_client, user_settings_service, download_service, reply_to=message.id)
             elif type_ == "itunes_track":
-                await show_track_page(bot, chat_id, int(term), artwork_service, user_id, reply_to=message.id)
+                await show_track_page(bot, chat_id, int(term), artwork_service, user_id, reply_to=message.id, api_client=api_client)
             elif type_ == "itunes_album":
-                await show_collection_page(bot, chat_id, int(term), 1, artwork_service, user_id, reply_to=message.id)
+                await show_collection_page(bot, chat_id, int(term), 1, artwork_service, user_id, reply_to=message.id, api_client=api_client)
             elif type_ == "itunes_artist":
-                await show_artist_page(bot, chat_id, int(term), 1, artwork_service, user_id, reply_to=message.id)
+                await show_artist_page(bot, chat_id, int(term), 1, artwork_service, user_id, reply_to=message.id, api_client=api_client)
             elif type_ == "music_link":
                 status_msg = await send_message(bot, chat_id, "🔍 *در حال بررسی پیوند...*", reply_to_message_id=message.id)
                 resolved = await OdesliService.resolve_link(term)
@@ -179,31 +192,28 @@ async def on_message(message: Message):
 
                 if itunes_id:
                     if res_type == "track":
-                        await show_track_page(bot, chat_id, itunes_id, artwork_service, user_id, message_to_edit=status_msg)
+                        await show_track_page(bot, chat_id, itunes_id, artwork_service, user_id, message_to_edit=status_msg, api_client=api_client)
                     elif res_type == "collection":
-                        await show_collection_page(bot, chat_id, itunes_id, 1, artwork_service, user_id, message_to_edit=status_msg)
+                        await show_collection_page(bot, chat_id, itunes_id, 1, artwork_service, user_id, message_to_edit=status_msg, api_client=api_client)
                     elif res_type == "artist":
-                        await show_artist_page(bot, chat_id, itunes_id, 1, artwork_service, user_id, message_to_edit=status_msg)
+                        await show_artist_page(bot, chat_id, itunes_id, 1, artwork_service, user_id, message_to_edit=status_msg, api_client=api_client)
                 else:
-                    # No iTunes ID found, try fallback to YouTube/YouTube Music
                     yt_url = resolved.get("youtube_url")
                     if yt_url:
-                        # Extract video ID if possible for show_track_page
                         m = re.search(r'(?:v=|\/)([a-zA-Z0-9_-]{11})(?:&|\?|$)', yt_url)
                         if m:
-                            await show_track_page(bot, chat_id, f"yt_{m.group(1)}", artwork_service, user_id, message_to_edit=status_msg)
+                            await show_track_page(bot, chat_id, f"yt_{m.group(1)}", artwork_service, user_id, message_to_edit=status_msg, api_client=api_client)
                         else:
                             await safe_delete(status_msg)
                             await direct_download_service.ask_confirmation(chat_id, yt_url, user_id=user_id)
                     else:
-                        # No link at all, try searching
                         title, artist = resolved.get("title"), resolved.get("artist")
                         if title and artist:
                             status_msg = await edit_message(status_msg, f"🔍 *در حال جستجوی آهنگ در یوتیوب...*\n\n🎵 {title} - {artist}")
                             from crawlers.youtube import search_youtube_track
                             vid_id = await search_youtube_track(title, artist, resolved.get("album", ""), "")
                             if vid_id:
-                                await show_track_page(bot, chat_id, f"yt_{vid_id}", artwork_service, user_id, message_to_edit=status_msg)
+                                await show_track_page(bot, chat_id, f"yt_{vid_id}", artwork_service, user_id, message_to_edit=status_msg, api_client=api_client)
                             else:
                                 status_msg = await edit_message(status_msg, "❌ متأسفانه نسخه قابل دانلودی یافت نشد.")
                         else:
@@ -213,9 +223,9 @@ async def on_message(message: Message):
                 sc_m = re.search(r'soundcloud\.com\/([a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+)', term)
 
                 if yt_m:
-                    await show_track_page(bot, chat_id, f"yt_{yt_m.group(1)}", artwork_service, user_id, reply_to=message.id)
+                    await show_track_page(bot, chat_id, f"yt_{yt_m.group(1)}", artwork_service, user_id, reply_to=message.id, api_client=api_client)
                 elif sc_m:
-                    await show_track_page(bot, chat_id, f"sc_{sc_m.group(1)}", artwork_service, user_id, reply_to=message.id)
+                    await show_track_page(bot, chat_id, f"sc_{sc_m.group(1)}", artwork_service, user_id, reply_to=message.id, api_client=api_client)
                 else:
                     await direct_download_service.ask_confirmation(chat_id, term, user_id=user_id, reply_to=message.id)
             elif type_ in ["track", "album", "artist", "ytm", "sc", "quick","all"]:
@@ -227,7 +237,6 @@ async def on_message(message: Message):
                 if text.startswith("/"):
                     await send_message(bot, chat_id, "⚠️ *دستور وارد شده معتبر نیست.*\n\nبرای مشاهده راهنما از /help استفاده کنید.")
                 else:
-                    # Generic search fallback
                     if not is_group:
                         await ask_search_choice(bot, chat_id, user_id, "track", text, reply_to=message.id)
                     else:

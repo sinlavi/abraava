@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any, Literal, List, Union, Tuple
 from pathlib import Path
 import aiosqlite
 
-from core.config import ITUNES_BASE_URL, OFFLINE_MODE, PROXY, FOOTER, PROXY_3RAH
+from core.config import ITUNES_BASE_URL, API_TOKEN, PLATFORM, OFFLINE_MODE, PROXY, FOOTER, PROXY_3RAH
 from core.logger import logger
 from core.http_client import HttpClient
 from balethon.objects import Message
@@ -115,7 +115,10 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
     if OFFLINE_MODE: return None
 
     # Endpoints that are specific to 3rah API and not available on official iTunes
-    is_3rah_specific = any(endpoint.startswith(p) for p in ["mirror", "lyrics", "track/save", "song/save", "collection/save", "album/save", "artist/save"])
+    is_3rah_specific = any(endpoint.startswith(p) for p in [
+        "mirror", "lyrics", "track/save", "song/save", "collection/save", "album/save", "artist/save",
+        "popular", "fresh", "suggest", "like", "comment", "playlist", "library", "history", "follow"
+    ])
     max_attempts = 1 if is_3rah_specific else 3
 
     for attempt in range(max_attempts):
@@ -126,18 +129,22 @@ async def fetch_itunes(endpoint: str, params: dict = None, bypass_cache: bool = 
         api_path = f"/{endpoint}" if not endpoint.startswith("/") else endpoint
         url = f"{base_url}{api_path}"
 
-        # Determine proxy usage
         use_proxy = True
         if "3rah.ir" in base_url:
             use_proxy = PROXY_3RAH
 
         session = await HttpClient.get_session(use_proxy=use_proxy)
 
-        headers = {"User-Agent": random.choice(USER_AGENTS)}
+        headers = {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Platform": PLATFORM,
+            "Authorization": f"Bearer {API_TOKEN}"
+        }
+        if quality:
+            headers["Quality"] = str(quality)
+
         logger.info(f"iTunes/3rah Request [{method}]: {url} - Params: {params}")
         try:
-            # Note: HttpClient session already uses ProxyConnector if PROXY is SOCKS
-            # We only pass proxy to session call if it's an HTTP proxy
             current_proxy = PROXY if (use_proxy and PROXY and not PROXY.startswith("socks")) else None
             if method == "GET":
                 async with session.get(url, params=params, headers=headers, ssl=False, proxy=current_proxy, timeout=10) as resp:
@@ -184,7 +191,13 @@ async def lookup_itunes(id: Union[int, str], entity: Optional[str] = None, bypas
 
 async def set_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, mirror_url: str,
                      quality: str = None) -> Optional[Dict[str, Any]]:
-    payload = {"entityType": entity_type, "entityId": str(entity_id), "urlType": url_type, "mirrorUrl": mirror_url}
+    payload = {
+        "entityType": entity_type,
+        "entityId": str(entity_id),
+        "urlType": url_type,
+        "mirrorUrl": mirror_url,
+        "platform": PLATFORM
+    }
     if quality: payload["quality"] = quality
     logger.info(f"Setting mirror: {entity_type} {entity_id} {url_type} -> {mirror_url} ({quality})")
     result = await fetch_itunes("mirror/set", method="POST", payload=payload)
@@ -198,47 +211,53 @@ def extract_file_id(url: Optional[str]) -> Optional[str]:
     if not url: return None
     if '<token>/' in url:
         return url.split('<token>/')[-1]
+    if url.startswith('tg://file/'):
+        return url.replace('tg://file/', '')
     return url
 
 
 async def get_mirror(entity_type: str, entity_id: Union[int, str], url_type: str, quality: str = None) -> Optional[
     Dict[str, Any]]:
     logger.info(f"Checking mirror for {entity_type} {entity_id} {url_type} ({quality})")
-    # New 3rah API: mirrorUrls are included in lookup response
     data = await lookup_itunes(entity_id, entity=entity_type, quality=quality)
     if data and data.get("results"):
         entity = data["results"][0]
-        return entity.get("mirrorUrls")
+        attachments = entity.get("attachments") or entity.get("mirrorUrls") or {}
+        return attachments
     return None
 
 
 async def get_cached_audio(track_id: Union[int, str], quality: str = None) -> Optional[str]:
-    mirrors = await get_mirror('track', track_id, 'audioUrl', quality=quality or "192")
-    if mirrors and mirrors.get('audioUrl'):
-        audio_mirror = mirrors['audioUrl']
-        if str(audio_mirror.get('quality', '')) != str(quality or "192"):
-            return None
-        url = audio_mirror.get('url')
-        if not url: return None
-        logger.info(f"Cached audio found for {track_id}: {url}")
-        return extract_file_id(url)
+    attachments = await get_mirror('track', track_id, 'audioUrl', quality=quality or "192")
+    if attachments and attachments.get('audioUrls'):
+        for item in attachments['audioUrls']:
+            item_qual = str(item.get('quality', '192'))
+            if item_qual == str(quality or "192"):
+                url = item.get('url')
+                if url:
+                    logger.info(f"Cached audio found for {track_id}: {url}")
+                    return extract_file_id(url)
     logger.info(f"No cached audio for {track_id} with quality {quality or '192'}")
     return None
 
 
 async def get_cached_artwork(entity_type: str, entity_id: Union[int, str]) -> Optional[str]:
-    mirrors = await get_mirror(entity_type, entity_id, 'artworkUrl')
-    if mirrors and mirrors.get('artworkUrl'):
-        url = mirrors['artworkUrl'].get('url')
-        return extract_file_id(url)
+    attachments = await get_mirror(entity_type, entity_id, 'artworkUrl')
+    if attachments and attachments.get('artworkUrls'):
+        for item in attachments['artworkUrls']:
+            url = item.get('url')
+            if url and (url.startswith('tg://') or '<token>' in url or 'bale' in url):
+                return extract_file_id(url)
     return None
 
 
 async def get_cached_preview(track_id: Union[int, str]) -> Optional[str]:
-    mirrors = await get_mirror('track', track_id, 'previewUrl')
-    if mirrors and mirrors.get('previewUrl'):
-        url = mirrors['previewUrl'].get('url')
-        return extract_file_id(url)
+    attachments = await get_mirror('track', track_id, 'previewUrl')
+    if attachments and attachments.get('previewUrls'):
+        for item in attachments['previewUrls']:
+            url = item.get('url')
+            if url:
+                return extract_file_id(url)
     return None
 
 
